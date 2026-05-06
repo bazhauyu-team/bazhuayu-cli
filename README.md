@@ -1,15 +1,14 @@
 # octo-engine-cli
 
-Command-line runner for Octoparse/Bazhuayu collection tasks.
+Command-line runner for Bazhuayu collection tasks.
 
-`octo-engine` can list cloud tasks, run tasks locally with an independent Chrome
-browser, control active local runs, and export collected data.
+`octo-engine` can list cloud tasks, run tasks locally, control active local
+runs, and export collected data.
 
 ## Requirements
 
 - Node.js 20 or newer
-- Google Chrome or a Chromium-compatible browser
-- A valid Octoparse/Bazhuayu API key
+- A valid Bazhuayu API key
 
 ## Quick start
 
@@ -36,20 +35,14 @@ octo-engine doctor
 
 ### 2. Log in with an API key
 
-Most commands require an Octoparse/Bazhuayu API key. Run:
+Most commands require a Bazhuayu API key. Run:
 
 ```bash
 octo-engine auth login
 ```
 
-The CLI opens the API key page automatically:
-
-```text
-https://www.bazhuayu.com/console/account-center/api-keys
-```
-
-Create an API key in the browser, copy it, then paste it into the terminal.
-The key is verified before it is saved locally.
+Create an API key in the Bazhuayu console, copy it, then paste it into the
+terminal. The key is verified before it is saved locally.
 
 For CI or scripts, set the key with an environment variable instead:
 
@@ -165,8 +158,7 @@ For interactive use:
 octo-engine auth login
 ```
 
-Interactive login opens the API key page automatically. Use `--no-open` if you
-want to copy the URL manually:
+Use `--no-open` if you want to copy the URL manually:
 
 ```bash
 octo-engine auth login --no-open
@@ -201,8 +193,7 @@ Supported local task file types:
 - `.xml`
 - `.otd`
 
-Standalone local runs support independent Chrome only. Kernel browser tasks are
-not supported in this CLI.
+Kernel browser tasks are not supported in this CLI.
 
 ## Machine-readable output
 
@@ -239,7 +230,7 @@ octo-engine doctor
 octo-engine browser doctor
 ```
 
-If Chrome is not detected automatically, pass its path:
+If the browser is not detected automatically, pass its path:
 
 ```bash
 octo-engine run <taskId> --chrome-path "/path/to/chrome"

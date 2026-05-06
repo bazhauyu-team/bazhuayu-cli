@@ -1,7 +1,7 @@
 {
   "name": "bazhuayu-cli",
   "version": "0.1.5",
-  "description": "Standalone Octoparse engine CLI that runs local Chrome-based collection without the Electron client.",
+  "description": "Standalone Bazhuayu engine CLI that runs local collection without the Electron client.",
   "private": false,
   "type": "module",
   "repository": {
