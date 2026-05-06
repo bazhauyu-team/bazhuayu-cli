@@ -16,9 +16,8 @@
  */
 import { EventEmitter } from 'node:events';
 import { createRequire } from 'node:module';
-import type { CaptchaRequest, RunOptions, RunSummary, TaskDefinition } from '../types.js';
+import type { RunOptions, RunSummary, TaskDefinition } from '../types.js';
 import { BridgeHub } from './bridge-hub.js';
-import { collectProxyLog, resolveProxy, solveCaptcha } from './run-services.js';
 import { maybePrintRuntimeSecurityNotice } from './security-notice.js';
 
 const require = createRequire(import.meta.url);
@@ -33,8 +32,6 @@ export interface EngineHostEvents {
   'run.started': { runId: string; lotId: string; taskId: string; taskName: string };
   row: { runId: string; total: number; data: Record<string, unknown> };
   log: { runId: string; level: string; message: string };
-  captcha: { runId: string; request: CaptchaRequest };
-  proxy: { runId: string };
   'run.paused': { runId: string; taskId: string };
   'run.resumed': { runId: string; taskId: string };
   'run.stopped': RunSummary;
@@ -126,24 +123,18 @@ export class EngineHost extends EventEmitter {
     });
 
     workflow.on(WorkflowEvents.Captcha, (message: any) => {
-      const request = normalizeCaptchaRequest(message?.data ?? message);
-      this.emit('captcha', { runId, request });
-      void this.resolveCaptcha(workflow, request, task, lotId, options, runId);
+      this.emit('log', {
+        runId,
+        level: 'warn',
+        message: `captcha requested: ${JSON.stringify(message?.data ?? message)}`
+      });
     });
 
     workflow.on(WorkflowEvents.GetProxy, () => {
-      this.emit('proxy', { runId });
-      void this.resolveProxy(workflow, task, lotId, options, runId);
-    });
-
-    workflow.on(WorkflowEvents.CollectProxyLog, (message: any) => {
-      const proxyInfo = Array.isArray(message?.data) ? message.data[0] : message?.data;
-      void collectProxyLog(proxyInfo).catch((error) => {
-        this.emit('log', {
-          runId,
-          level: 'warn',
-          message: `proxy log upload failed: ${error instanceof Error ? error.message : String(error)}`
-        });
+      this.emit('log', {
+        runId,
+        level: 'warn',
+        message: 'proxy requested but no proxy provider is configured'
       });
     });
 
@@ -257,143 +248,6 @@ export class EngineHost extends EventEmitter {
         message: `bridge.event ${event.sessionId} ${event.type}`
       });
     });
-  }
-
-  private async resolveCaptcha(
-    workflow: any,
-    request: CaptchaRequest,
-    task: TaskDefinition,
-    lotId: string,
-    options: RunOptions,
-    runId: string
-  ): Promise<void> {
-    try {
-      const answer = await solveCaptcha(request, task, lotId);
-      if (answer === undefined) return;
-      workflow.capthcaToken({
-        captchaType: numericCaptchaType(request.captchaType),
-        ...answer
-      });
-      this.emit('log', {
-        runId,
-        level: 'info',
-        message: `captcha resolved type=${String(request.captchaType ?? 'unknown')}`
-      });
-    } catch (error) {
-      this.emit('log', {
-        runId,
-        level: 'error',
-        message: `captcha resolve failed: ${error instanceof Error ? error.message : String(error)}`
-      });
-      if (!options.json && !options.jsonl) {
-        throw error;
-      }
-    }
-  }
-
-  private async resolveProxy(
-    workflow: any,
-    task: TaskDefinition,
-    lotId: string,
-    options: RunOptions,
-    runId: string
-  ): Promise<void> {
-    try {
-      const answer = await resolveProxy(task, lotId);
-      if (!answer) return;
-      workflow.sendProxy(answer);
-      this.emit('log', {
-        runId,
-        level: 'info',
-        message: 'proxy resolved'
-      });
-    } catch (error) {
-      this.emit('log', {
-        runId,
-        level: 'error',
-        message: `proxy resolve failed: ${error instanceof Error ? error.message : String(error)}`
-      });
-      if (!options.json && !options.jsonl) {
-        throw error;
-      }
-    }
-  }
-}
-
-function normalizeCaptchaRequest(data: any): CaptchaRequest {
-  const payload = Array.isArray(data) ? data[0] : data;
-  if (!payload || typeof payload !== 'object') {
-    return { data: payload, captchaType: 'unknown' };
-  }
-
-  const captchaType = normalizeCaptchaType((payload as Record<string, unknown>).captchaType);
-  return {
-    captchaType,
-    url: typeof (payload as Record<string, unknown>).url === 'string' ? String((payload as Record<string, unknown>).url) : undefined,
-    key: typeof (payload as Record<string, unknown>).key === 'string' ? String((payload as Record<string, unknown>).key) : undefined,
-    action: typeof (payload as Record<string, unknown>).action === 'string' ? String((payload as Record<string, unknown>).action) : undefined,
-    image: typeof (payload as Record<string, unknown>).image === 'string' ? String((payload as Record<string, unknown>).image) : undefined,
-    image2: typeof (payload as Record<string, unknown>).image2 === 'string' ? String((payload as Record<string, unknown>).image2) : undefined,
-    data: payload
-  };
-}
-
-function normalizeCaptchaType(value: unknown): CaptchaRequest['captchaType'] {
-  switch (value) {
-    case 0:
-      return 'image';
-    case 1:
-      return 'unknown';
-    case 2:
-      return 'slider';
-    case 3:
-      return 'recaptcha-v2';
-    case 4:
-      return 'hcaptcha';
-    case 63:
-      return 'recaptcha-v3';
-    case 64:
-      return 'slider';
-    case 65:
-      return 'click';
-    case 100:
-      return 'recaptcha-v2-callback';
-    case 101:
-      return 'hcaptcha-callback';
-    case 102:
-      return 'recaptcha-v3-callback';
-    case 999:
-      return 'cloudflare';
-    default:
-      return typeof value === 'number' ? 'unknown' : value === undefined ? 'unknown' : String(value) as CaptchaRequest['captchaType'];
-  }
-}
-
-function numericCaptchaType(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  switch (value) {
-    case 'image':
-      return 0;
-    case 'slider':
-      return 64;
-    case 'click':
-      return 65;
-    case 'recaptcha-v2':
-      return 3;
-    case 'hcaptcha':
-      return 4;
-    case 'recaptcha-v3':
-      return 63;
-    case 'recaptcha-v2-callback':
-      return 100;
-    case 'hcaptcha-callback':
-      return 101;
-    case 'recaptcha-v3-callback':
-      return 102;
-    case 'cloudflare':
-      return 999;
-    default:
-      return 0;
   }
 }
 

@@ -14,8 +14,6 @@
         "log",
         "run.paused",
         "run.resumed",
-        "captcha",
-        "proxy",
         "run.stopping",
         "run.stopped"
       ]
