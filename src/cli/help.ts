@@ -14,7 +14,7 @@ Purpose:
 Authentication:
   Does not require an API key. Functional commands do.
 `,
-    auth: `Usage:
+  auth: `Usage:
   octo-engine auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
   octo-engine auth status [--json]
   octo-engine auth logout [--json]
@@ -22,6 +22,7 @@ Authentication:
 API key:
   Create one at ${API_KEYS_URL}
   Interactive login opens this page automatically, then verifies and stores the key.
+  If the browser does not open, copy the URL above and open it manually.
 
 Agent notes:
   Use "auth login --stdin" for non-interactive setup.
@@ -58,6 +59,7 @@ Agent notes:
   Requires a configured API key even when --task-file points to a local JSON, XML, or OTD file.
   Use --detach for background local collection.
   Use --jsonl for foreground event streams.
+  JSONL now includes captcha and proxy request events when the runtime asks for them.
   run only starts local collection. Use data export <taskId> --lot-id <lotId> for files.
 `,
     cloud: `Usage:
