@@ -101,6 +101,8 @@ test('functional commands require API key even for local task files', async () =
   const payload = parseJson(result.stdout);
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, 'AUTH_REQUIRED');
+  assert.match(payload.error.message, /bazhuayu\.com\/console\/account-center\/api-keys/);
+  assert.match(payload.error.message, /octo-engine auth login/);
 });
 
 test('capabilities is available before authentication and documents API key contract', async () => {
@@ -267,6 +269,12 @@ test('root and run help clearly state API key requirement', async () => {
   const root = await runCli(['--help']);
   assert.equal(root.code, 0);
   assert.match(root.stdout, /API key is required for all functional commands/);
+  assert.match(root.stdout, /bazhuayu\.com\/console\/account-center\/api-keys/);
+
+  const auth = await runCli(['auth', '--help']);
+  assert.equal(auth.code, 0);
+  assert.match(auth.stdout, /Interactive login opens this page automatically/);
+  assert.match(auth.stdout, /--no-open/);
 
   const run = await runCli(['run', '--help']);
   assert.equal(run.code, 0);

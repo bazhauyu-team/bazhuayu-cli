@@ -5,7 +5,17 @@ Command-line runner for Octoparse/Bazhuayu collection tasks.
 `octo-engine` can list cloud tasks, run tasks locally with an independent Chrome
 browser, control active local runs, and export collected data.
 
-## Install
+## Requirements
+
+- Node.js 20 or newer
+- Google Chrome or a Chromium-compatible browser
+- A valid Octoparse/Bazhuayu API key
+
+## Quick start
+
+### 1. Install
+
+Install the CLI globally:
 
 ```bash
 npm install -g bazhuayu-cli
@@ -24,19 +34,30 @@ octo-engine --version
 octo-engine doctor
 ```
 
-## Requirements
+### 2. Log in with an API key
 
-- Node.js 20 or newer
-- Google Chrome or a Chromium-compatible browser
-- A valid Octoparse/Bazhuayu API key
-
-## Quick start
-
-Log in once:
+Most commands require an Octoparse/Bazhuayu API key. Run:
 
 ```bash
 octo-engine auth login
 ```
+
+The CLI opens the API key page automatically:
+
+```text
+https://www.bazhuayu.com/console/account-center/api-keys
+```
+
+Create an API key in the browser, copy it, then paste it into the terminal.
+The key is verified before it is saved locally.
+
+For CI or scripts, set the key with an environment variable instead:
+
+```bash
+OCTO_ENGINE_API_KEY=xxx octo-engine task list --json
+```
+
+### 3. Use the CLI
 
 List your cloud tasks:
 
@@ -132,10 +153,23 @@ Most commands require an API key. Only setup and diagnostic commands such as
 `--help`, `--version`, `doctor`, `browser doctor`, `capabilities`, and `auth`
 can run before login.
 
+Create API keys in the Bazhuayu console:
+
+```text
+https://www.bazhuayu.com/console/account-center/api-keys
+```
+
 For interactive use:
 
 ```bash
 octo-engine auth login
+```
+
+Interactive login opens the API key page automatically. Use `--no-open` if you
+want to copy the URL manually:
+
+```bash
+octo-engine auth login --no-open
 ```
 
 For CI or scripts:

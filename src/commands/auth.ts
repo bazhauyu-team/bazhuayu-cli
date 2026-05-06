@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { hasFlag, valueAfter } from '../cli/args.js';
@@ -5,6 +6,8 @@ import { printEnvelope, printUsageError } from '../cli/output.js';
 import { API_BASE_URL_ENV, ApiRequestError, validateApiKey } from '../runtime/api-client.js';
 import { API_KEY_ENV, maskApiKey, removeApiKey, resolveAuth, saveApiKey } from '../runtime/auth.js';
 import { EXIT_OK, EXIT_OPERATION_FAILED } from '../types.js';
+
+export const API_KEYS_URL = 'https://www.bazhuayu.com/console/account-center/api-keys';
 
 export async function authCommand(subcommand: string | undefined, args: string[]): Promise<number> {
   const json = hasFlag([subcommand ?? '', ...args], '--json');
@@ -31,11 +34,23 @@ export async function ensureAuthenticated(json: boolean): Promise<number> {
 }
 
 export function printAuthRequired(json: boolean): number {
-  const message = `API key required. Run "octo-engine auth login" or set ${API_KEY_ENV}.`;
+  const message = [
+    'API key required.',
+    `Create one at ${API_KEYS_URL}, then run "octo-engine auth login".`,
+    `For CI, set ${API_KEY_ENV}.`
+  ].join(' ');
   if (json) {
     printEnvelope(false, undefined, 'AUTH_REQUIRED', message);
   } else {
-    console.error(`认证失败: ${message}`);
+    console.error('认证失败: 需要 API key 才能继续。');
+    console.error('');
+    console.error('获取 API key:');
+    console.error(`  ${API_KEYS_URL}`);
+    console.error('');
+    console.error('然后运行:');
+    console.error('  octo-engine auth login');
+    console.error('');
+    console.error(`CI / 脚本环境可以设置 ${API_KEY_ENV}。`);
   }
   return EXIT_OPERATION_FAILED;
 }
@@ -43,11 +58,18 @@ export function printAuthRequired(json: boolean): number {
 async function authLogin(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const readFromStdin = hasFlag(args, '--stdin');
+  const shouldOpen = shouldOpenApiKeyPage(args, json, readFromStdin);
 
   try {
+    if (!readFromStdin && !json) {
+      printLoginInstructions(shouldOpen);
+    }
+    if (shouldOpen) {
+      await openUrl(API_KEYS_URL);
+    }
     const apiKey = readFromStdin
       ? await readApiKeyFromStdin()
-      : await readSecretFromTty('Enter API key: ');
+      : await readSecretFromTty('Paste API key: ');
     const validation = await validateApiKey({ apiKey, baseUrl: valueAfter(args, '--api-base-url') });
     const credentials = await saveApiKey(apiKey);
     const status = {
@@ -65,6 +87,9 @@ async function authLogin(args: string[]): Promise<number> {
       console.log(`API key verified and saved: ${status.keyPreview}`);
       console.log(`API: ${status.apiBaseUrl}`);
       console.log(`Credentials: ${status.credentialsFile}`);
+      console.log('');
+      console.log('Next:');
+      console.log('  octo-engine task list');
     }
     return EXIT_OK;
   } catch (error) {
@@ -75,11 +100,60 @@ async function authLogin(args: string[]): Promise<number> {
       console.error(`登录失败: ${message}`);
       console.error('API key 未保存。');
       if (code === 'AUTH_INVALID') {
-        console.error(`请确认 API key 是否正确，或检查 ${API_BASE_URL_ENV} / env status。`);
+        console.error('');
+        console.error('请检查:');
+        console.error('  1. 是否复制了完整 API key');
+        console.error(`  2. API key 是否来自当前 API 环境，或检查 ${API_BASE_URL_ENV} / env status`);
+        console.error(`  3. 可重新创建 API key: ${API_KEYS_URL}`);
       }
     }
     return EXIT_OPERATION_FAILED;
   }
+}
+
+function printLoginInstructions(willOpenBrowser: boolean): void {
+  console.log('Octo Engine 需要使用八爪鱼 API key 验证账号并访问任务。');
+  console.log('');
+  if (willOpenBrowser) {
+    console.log('Opening API key page:');
+  } else {
+    console.log('Create API key:');
+  }
+  console.log(`  ${API_KEYS_URL}`);
+  console.log('');
+  if (willOpenBrowser) {
+    console.log('If the browser did not open, copy the URL above.');
+  }
+  console.log('Create an API key in the browser, then paste it here.');
+  console.log('The key will be verified before it is saved locally.');
+  console.log('');
+}
+
+function shouldOpenApiKeyPage(args: string[], json: boolean, readFromStdin: boolean): boolean {
+  if (json || readFromStdin || hasFlag(args, '--no-open')) return false;
+  if (process.env.CI === 'true') return false;
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
+function openUrl(url: string): Promise<void> {
+  const command = process.platform === 'darwin'
+    ? 'open'
+    : process.platform === 'win32'
+      ? 'cmd'
+      : 'xdg-open';
+  const args = process.platform === 'win32'
+    ? ['/c', 'start', '', url]
+    : [url];
+
+  return new Promise((resolveOpen) => {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: 'ignore'
+    });
+    child.on('error', () => resolveOpen());
+    child.unref();
+    resolveOpen();
+  });
 }
 
 async function authStatus(args: string[]): Promise<number> {

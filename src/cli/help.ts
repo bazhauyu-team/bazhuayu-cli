@@ -1,5 +1,6 @@
 import { API_BASE_URL_ENV } from '../runtime/api-client.js';
 import { API_KEY_ENV } from '../runtime/auth.js';
+import { API_KEYS_URL } from '../commands/auth.js';
 
 export function printCommandHelp(command: string, subcommand?: string): void {
   const key = subcommand && !subcommand.startsWith('-') ? `${command} ${subcommand}` : command;
@@ -14,9 +15,13 @@ Authentication:
   Does not require an API key. Functional commands do.
 `,
     auth: `Usage:
-  octo-engine auth login [--stdin] [--api-base-url <url>] [--json]
+  octo-engine auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
   octo-engine auth status [--json]
   octo-engine auth logout [--json]
+
+API key:
+  Create one at ${API_KEYS_URL}
+  Interactive login opens this page automatically, then verifies and stores the key.
 
 Agent notes:
   Use "auth login --stdin" for non-interactive setup.
@@ -120,7 +125,7 @@ Standalone Octoparse engine CLI.
 Usage:
   octo-engine capabilities [--json]
   octo-engine doctor [--chrome-path <path>] [--json]
-  octo-engine auth login [--stdin] [--api-base-url <url>] [--json]
+  octo-engine auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
   octo-engine auth status [--json]
   octo-engine auth logout [--json]
   octo-engine browser doctor [--chrome-path <path>] [--json]
@@ -165,8 +170,10 @@ Design:
 Authentication:
   API key is required for all functional commands, including local --task-file and .otd runs.
   Only setup/diagnostic commands can run without it: --help, --version, capabilities, doctor, browser doctor, auth, env.
-  octo-engine auth login          verify and store API key in ~/.octo-engine/credentials.json
+  API key page:                   ${API_KEYS_URL}
+  octo-engine auth login          open API key page, verify pasted key, then store it
   octo-engine auth login --stdin  read API key from stdin, verify it, then store it
+  octo-engine auth login --no-open do not open the browser during interactive login
   ${API_KEY_ENV}                  overrides stored credentials
   ${API_BASE_URL_ENV}             overrides API base URL; default is the production API
 
