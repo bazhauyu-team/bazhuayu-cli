@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { ApiRequestError, fetchAccountInfo, validateApiKey } from '../dist/runtime/api-client.js';
+import { localDataExportCommand } from '../dist/commands/run.js';
 import { TaskDefinitionProvider } from '../dist/runtime/task-definition-provider.js';
 
 const execFileAsync = promisify(execFile);
@@ -459,6 +460,13 @@ test('run rejects --format and points users to data export', async () => {
   const jsonlPayload = parseJson(jsonl.stdout);
   assert.equal(jsonlPayload.ok, false);
   assert.equal(jsonlPayload.error.code, 'RUN_FORMAT_UNSUPPORTED');
+});
+
+test('run completion prints a copyable local data export command', () => {
+  assert.equal(
+    localDataExportCommand({ taskId: 'task-1', lotId: '1778123456789' }),
+    'octo-engine data export task-1 --source local --lot-id 1778123456789'
+  );
 });
 
 test('detached startup failure writes bootstrap artifact', async () => {

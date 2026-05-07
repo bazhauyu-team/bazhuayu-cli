@@ -380,6 +380,7 @@ async function executeTask(
       console.log(`Task: ${summary.taskId}`);
       console.log(`Rows: ${summary.total}`);
       console.log(`Artifacts: ${runDir}`);
+      console.log(`View data: ${localDataExportCommand(summary)}`);
     }
     return EXIT_OK;
   } catch (error) {
@@ -419,6 +420,10 @@ async function executeTask(
     }
     return EXIT_RUNTIME_FAILED;
   }
+}
+
+export function localDataExportCommand(summary: Pick<RunSummary, 'taskId' | 'lotId'>): string {
+  return `octo-engine data export ${summary.taskId} --source local --lot-id ${summary.lotId}`;
 }
 
 function parseRunOptions(taskId: string, args: string[]): RunOptions {
