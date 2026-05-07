@@ -17,6 +17,10 @@ export function printEnvelope<T>(ok: boolean, data?: T, code?: string, message?:
   console.log(JSON.stringify(payload));
 }
 
+export function printJsonLine(value: unknown): void {
+  console.log(JSON.stringify(value));
+}
+
 export function printMissingRun(json: boolean, runId: string): number {
   if (json) {
     printEnvelope(false, undefined, 'RUN_NOT_FOUND', `Run not found: ${runId}`);

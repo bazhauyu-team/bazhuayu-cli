@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, open, readFile, writeFile, type FileHandle } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { hasFlag, parsePositiveInt, valueAfter } from '../cli/args.js';
-import { printEnvelope, printUsageError } from '../cli/output.js';
+import { printEnvelope, printJsonLine, printUsageError } from '../cli/output.js';
 import { resolveCNLocalRunPolicy } from '../runtime/account-capabilities.js';
 import { ApiRequestError, fetchAccountInfo } from '../runtime/api-client.js';
 import { appendJsonLine, ensureRunDir, writeRunSummary } from '../runtime/artifacts.js';
@@ -255,20 +255,20 @@ async function executeTask(
             host.pause();
             runStatus = 'paused';
             appendRunArtifact('events.jsonl', { event: 'run.paused', runId: event.runId, taskId: event.taskId });
-            if (options.jsonl) console.log(JSON.stringify({ event: 'run.paused', runId: event.runId, taskId: event.taskId }));
+            if (options.jsonl) printJsonLine({ event: 'run.paused', runId: event.runId, taskId: event.taskId });
             return runStatus;
           }
           if (command === 'resume') {
             host.resume();
             runStatus = 'running';
             appendRunArtifact('events.jsonl', { event: 'run.resumed', runId: event.runId, taskId: event.taskId });
-            if (options.jsonl) console.log(JSON.stringify({ event: 'run.resumed', runId: event.runId, taskId: event.taskId }));
+            if (options.jsonl) printJsonLine({ event: 'run.resumed', runId: event.runId, taskId: event.taskId });
             return runStatus;
           }
           host.stop();
           runStatus = 'stopping';
           appendRunArtifact('events.jsonl', { event: 'run.stopping', runId: event.runId, taskId: event.taskId });
-          if (options.jsonl) console.log(JSON.stringify({ event: 'run.stopping', runId: event.runId, taskId: event.taskId }));
+          if (options.jsonl) printJsonLine({ event: 'run.stopping', runId: event.runId, taskId: event.taskId });
           return runStatus;
         }
       });
@@ -277,22 +277,32 @@ async function executeTask(
     });
     void controlServerReady.catch(() => undefined);
     appendRunArtifact('events.jsonl', { event: 'run.started', ...event });
-    if (options.jsonl) console.log(JSON.stringify({ event: 'run.started', ...event }));
+    if (options.jsonl) printJsonLine({ event: 'run.started', ...event });
   });
 
   host.on('row', (event) => {
     appendRunArtifact('rows.jsonl', event.data);
     appendRunArtifact('events.jsonl', { event: 'row', ...event });
-    if (options.jsonl) console.log(JSON.stringify({ event: 'row', ...event }));
+    if (options.jsonl) printJsonLine({ event: 'row', ...event });
   });
 
   host.on('log', (event) => {
     appendRunArtifact('logs.jsonl', event);
     appendRunArtifact('events.jsonl', { event: 'log', ...event });
-    if (options.jsonl) console.log(JSON.stringify({ event: 'log', ...event }));
+    if (options.jsonl) printJsonLine({ event: 'log', ...event });
     else if (!options.json && (options.debugBridge || event.message.startsWith('runtime.'))) {
       console.error(event.message);
     }
+  });
+
+  host.on('captcha', (event) => {
+    appendRunArtifact('events.jsonl', { event: 'captcha', ...event });
+    if (options.jsonl) printJsonLine({ event: 'captcha', ...event });
+  });
+
+  host.on('proxy', (event) => {
+    appendRunArtifact('events.jsonl', { event: 'proxy', ...event });
+    if (options.jsonl) printJsonLine({ event: 'proxy', ...event });
   });
 
   try {
@@ -362,7 +372,7 @@ async function executeTask(
     }
 
     if (options.jsonl) {
-      console.log(JSON.stringify({ event: 'run.stopped', ...summary, outputDir: runDir }));
+      printJsonLine({ event: 'run.stopped', ...summary, outputDir: runDir });
     } else if (options.json) {
       printEnvelope(true, { ...summary, outputDir: runDir });
     } else {

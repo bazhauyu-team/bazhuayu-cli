@@ -41,8 +41,14 @@ Most commands require a Bazhuayu API key. Run:
 octo-engine auth login
 ```
 
-Create an API key in the Bazhuayu console, copy it, then paste it into the
-terminal. The key is verified before it is saved locally.
+`auth login` opens the API key page automatically in a browser when possible,
+then verifies and saves the key locally.
+
+Create the key here:
+
+```text
+https://www.bazhuayu.com/console/account-center/api-keys
+```
 
 For CI or scripts, set the key with an environment variable instead:
 
@@ -209,6 +215,9 @@ Use `--jsonl` for local run event streams:
 ```bash
 octo-engine run <taskId> --jsonl
 ```
+
+The stream includes `captcha` and `proxy` events when the runtime asks the CLI
+to resolve CAPTCHA or proxy resources automatically.
 
 Local run artifacts are written under `~/.octo-engine/runs` by default, or under
 the selected `--output` directory when configured:

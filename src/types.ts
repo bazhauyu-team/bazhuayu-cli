@@ -47,6 +47,48 @@ export interface RunSummary {
   stoppedAt?: string;
 }
 
+export type CaptchaType =
+  | 'image'
+  | 'slider'
+  | 'click'
+  | 'recaptcha-v2'
+  | 'recaptcha-v2-callback'
+  | 'recaptcha-v3'
+  | 'recaptcha-v3-callback'
+  | 'hcaptcha'
+  | 'hcaptcha-callback'
+  | 'cloudflare'
+  | 'unknown';
+
+export interface CaptchaRequest {
+  captchaType?: CaptchaType | number;
+  url?: string;
+  key?: string;
+  action?: string;
+  image?: string;
+  image2?: string;
+  data?: unknown;
+}
+
+export interface ProxyRequest {
+  taskId: string;
+}
+
+export interface ProxyResponse {
+  proxyIp: {
+    ip: string;
+    port?: number;
+    account?: string;
+    password?: string;
+    user?: string;
+    host?: string;
+    protocol?: number;
+    encryptIp?: string;
+    encryptAccount?: string;
+    encryptPassword?: string;
+  };
+}
+
 export interface JsonEnvelope<T> {
   ok: boolean;
   data?: T;
