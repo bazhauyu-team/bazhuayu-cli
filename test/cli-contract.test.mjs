@@ -5,8 +5,10 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
+import { authCommand } from '../dist/commands/auth.js';
 import { ApiRequestError, fetchAccountInfo, validateApiKey } from '../dist/runtime/api-client.js';
 import { localDataExportCommand } from '../dist/commands/run.js';
+import { formatTaskListLine } from '../dist/commands/task.js';
 import { TaskDefinitionProvider } from '../dist/runtime/task-definition-provider.js';
 
 const execFileAsync = promisify(execFile);
@@ -147,6 +149,49 @@ test('auth login verifies API key before saving', async () => {
   );
   assertJsonFailure(result, 'AUTH_LOGIN_FAILED');
   await assert.rejects(access(join(home, '.octo-engine', 'credentials.json')));
+});
+
+test('auth login accepts API key as a positional argument', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'octo-auth-arg-'));
+  const originalHome = process.env.HOME;
+  const seen = [];
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  process.env.HOME = home;
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), headers: init?.headers ?? {} });
+    return new Response(JSON.stringify({
+      isSuccess: true,
+      data: {
+        userId: 'u_arg',
+        email: 'arg@example.com'
+      }
+    }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = () => undefined;
+  try {
+    const code = await authCommand('login', [
+      'arg-key-123',
+      '--json',
+      '--api-base-url',
+      'https://example.invalid'
+    ]);
+    assert.equal(code, 0);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, 'https://example.invalid/api/account/getAccount');
+    assert.equal(seen[0].headers['x-api-key'], 'arg-key-123');
+    const credentials = JSON.parse(await readFile(join(home, '.octo-engine', 'credentials.json'), 'utf8'));
+    assert.equal(credentials.apiKey, 'arg-key-123');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  }
 });
 
 test('invalid API key maps to friendly auth error', async () => {
@@ -471,6 +516,19 @@ test('run completion prints a copyable local data export command', () => {
     localDataExportCommand({ taskId: 'task-1', lotId: '1778123456789' }),
     'octo-engine data export task-1 --source local --lot-id 1778123456789'
   );
+});
+
+test('task list text output hides internal workflow metadata', () => {
+  const line = formatTaskListLine({
+    taskId: 'task-1',
+    taskName: 'Demo Task',
+    status: 1,
+    workflowType: 1,
+    workFlowType: 1
+  });
+  assert.equal(line, '  task-1  Demo Task');
+  assert.doesNotMatch(line, /workflow=/);
+  assert.doesNotMatch(line, /status=/);
 });
 
 test('detached startup failure writes bootstrap artifact', async () => {

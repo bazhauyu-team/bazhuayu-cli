@@ -15,6 +15,7 @@ Authentication:
   Does not require an API key. Functional commands do.
 `,
   auth: `Usage:
+  octo-engine auth login <apiKey> [--api-base-url <url>] [--json]
   octo-engine auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
   octo-engine auth status [--json]
   octo-engine auth logout [--json]
@@ -25,6 +26,7 @@ API key:
   If the browser does not open, copy the URL above and open it manually.
 
 Agent notes:
+  Use "auth login <apiKey>" to verify and save a copied key directly.
   Use "auth login --stdin" for non-interactive setup.
   login verifies the API key before saving; invalid keys are not stored.
   ${API_KEY_ENV} overrides stored credentials.
@@ -127,6 +129,7 @@ Standalone Octoparse engine CLI.
 Usage:
   octo-engine capabilities [--json]
   octo-engine doctor [--chrome-path <path>] [--json]
+  octo-engine auth login <apiKey> [--api-base-url <url>] [--json]
   octo-engine auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
   octo-engine auth status [--json]
   octo-engine auth logout [--json]
@@ -173,6 +176,7 @@ Authentication:
   API key is required for all functional commands, including local --task-file and .otd runs.
   Only setup/diagnostic commands can run without it: --help, --version, capabilities, doctor, browser doctor, auth, env.
   API key page:                   ${API_KEYS_URL}
+  octo-engine auth login <key>     verify and store a copied API key directly
   octo-engine auth login          open API key page, verify pasted key, then store it
   octo-engine auth login --stdin  read API key from stdin, verify it, then store it
   octo-engine auth login --no-open do not open the browser during interactive login

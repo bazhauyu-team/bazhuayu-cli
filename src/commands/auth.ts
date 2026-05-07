@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { hasFlag, valueAfter } from '../cli/args.js';
+import { firstPositionalArg, hasFlag, valueAfter } from '../cli/args.js';
 import { printEnvelope, printUsageError } from '../cli/output.js';
 import { API_BASE_URL_ENV, ApiRequestError, validateApiKey } from '../runtime/api-client.js';
-import { API_KEY_ENV, maskApiKey, removeApiKey, resolveAuth, saveApiKey } from '../runtime/auth.js';
+import { API_KEY_ENV, maskApiKey, normalizeApiKey, removeApiKey, resolveAuth, saveApiKey } from '../runtime/auth.js';
 import { EXIT_OK, EXIT_OPERATION_FAILED } from '../types.js';
 
 export const API_KEYS_URL = 'https://www.bazhuayu.com/console/account-center/api-keys';
@@ -58,18 +58,21 @@ export function printAuthRequired(json: boolean): number {
 async function authLogin(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const readFromStdin = hasFlag(args, '--stdin');
-  const shouldOpen = shouldOpenApiKeyPage(args, json, readFromStdin);
+  const providedApiKey = normalizeApiKey(firstPositionalArg(args, ['--api-base-url']) ?? '');
+  const shouldOpen = shouldOpenApiKeyPage(args, json, readFromStdin, Boolean(providedApiKey));
 
   try {
-    if (!readFromStdin && !json) {
+    if (!providedApiKey && !readFromStdin && !json) {
       printLoginInstructions(shouldOpen);
     }
     if (shouldOpen) {
       await openUrl(API_KEYS_URL);
     }
-    const apiKey = readFromStdin
-      ? await readApiKeyFromStdin()
-      : await readSecretFromTty('Paste API key: ');
+    const apiKey = providedApiKey
+      ? providedApiKey
+      : readFromStdin
+        ? await readApiKeyFromStdin()
+        : await readSecretFromTty('Paste API key: ');
     const validation = await validateApiKey({ apiKey, baseUrl: valueAfter(args, '--api-base-url') });
     const credentials = await saveApiKey(apiKey);
     const status = {
@@ -129,8 +132,8 @@ function printLoginInstructions(willOpenBrowser: boolean): void {
   console.log('');
 }
 
-function shouldOpenApiKeyPage(args: string[], json: boolean, readFromStdin: boolean): boolean {
-  if (json || readFromStdin || hasFlag(args, '--no-open')) return false;
+function shouldOpenApiKeyPage(args: string[], json: boolean, readFromStdin: boolean, hasProvidedApiKey: boolean): boolean {
+  if (json || readFromStdin || hasProvidedApiKey || hasFlag(args, '--no-open')) return false;
   if (process.env.CI === 'true') return false;
   return Boolean(process.stdin.isTTY && process.stdout.isTTY);
 }

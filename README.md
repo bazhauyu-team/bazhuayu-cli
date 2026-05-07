@@ -50,6 +50,12 @@ Create the key here:
 https://www.bazhuayu.com/console/account-center/api-keys
 ```
 
+If you already copied the key, you can save time and pass it directly:
+
+```bash
+octo-engine auth login XXXXX
+```
+
 For CI or scripts, set the key with an environment variable instead:
 
 ```bash
@@ -106,6 +112,7 @@ octo-engine browser doctor
 
 # Authentication
 octo-engine auth login
+octo-engine auth login XXXXX
 octo-engine auth status
 octo-engine auth logout
 
@@ -162,6 +169,12 @@ For interactive use:
 
 ```bash
 octo-engine auth login
+```
+
+If the API key is already copied:
+
+```bash
+octo-engine auth login XXXXX
 ```
 
 Use `--no-open` if you want to copy the URL manually:

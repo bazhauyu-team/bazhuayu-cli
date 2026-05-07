@@ -42,16 +42,7 @@ export async function taskList(args: string[]): Promise<number> {
     }
 
     for (const task of result.tasks) {
-      const item = task && typeof task === 'object' ? task as Record<string, unknown> : {};
-      const taskId = String(item.taskId ?? item.id ?? '');
-      const taskName = String(item.taskName ?? item.name ?? '');
-      const status = item.status ?? item.cloudStatus;
-      const workflowType = item.workFlowType ?? item.workflowType;
-      const suffix = [
-        status === undefined ? '' : `status=${String(status)}`,
-        workflowType === undefined ? '' : `workflow=${String(workflowType)}`
-      ].filter(Boolean).join(' ');
-      console.log(`  ${taskId}  ${taskName}${suffix ? `  ${suffix}` : ''}`);
+      console.log(formatTaskListLine(task));
     }
     return EXIT_OK;
   } catch (error) {
@@ -67,6 +58,13 @@ export async function taskList(args: string[]): Promise<number> {
     }
     return EXIT_OPERATION_FAILED;
   }
+}
+
+export function formatTaskListLine(task: unknown): string {
+  const item = task && typeof task === 'object' ? task as Record<string, unknown> : {};
+  const taskId = String(item.taskId ?? item.id ?? '');
+  const taskName = String(item.taskName ?? item.name ?? '');
+  return `  ${taskId}  ${taskName}`;
 }
 
 export async function taskInspect(command: string, args: string[]): Promise<number> {
