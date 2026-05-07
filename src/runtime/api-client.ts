@@ -13,6 +13,7 @@
  * proprietary runtime components without authorization.
  */
 import { readCliConfig } from './config.js';
+import { clientHeaders } from './client-headers.js';
 
 export const API_BASE_URL_ENV = 'OCTO_ENGINE_API_BASE_URL';
 export const PROD_API_BASE_URL = 'https://v2.clientapi.bazhuayu.com';
@@ -136,8 +137,7 @@ export async function fetchTaskList(options: TaskListOptions): Promise<TaskListR
     headers: {
       Accept: 'application/json',
       'Accept-Language': 'zh-CN',
-      'x-client-id': 'Octopus',
-      'x-client-verison': 'octo-engine-cli',
+      ...clientHeaders(),
       'x-api-key': options.apiKey
     }
   });
@@ -319,8 +319,7 @@ async function apiRequest(options: {
     headers: {
       Accept: 'application/json',
       'Accept-Language': 'zh-CN',
-      'x-client-id': 'Octopus',
-      'x-client-verison': 'octo-engine-cli',
+      ...clientHeaders(),
       'x-api-key': options.apiKey
     }
   });

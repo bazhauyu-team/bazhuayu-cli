@@ -1,6 +1,7 @@
 import { createDecipheriv } from 'node:crypto';
 import { ApiRequestError, resolveApiBaseUrl } from './api-client.js';
 import { resolveAuth } from './auth.js';
+import { clientHeaders } from './client-headers.js';
 import type { CaptchaRequest, ProxyResponse, TaskDefinition } from '../types.js';
 
 const CAPTCHA_SUCCESS = 1;
@@ -271,8 +272,7 @@ async function apiRequest(options: {
       Accept: 'application/json',
       'Accept-Language': 'zh-CN',
       'Content-Type': bodyFormat === 'form' ? 'application/x-www-form-urlencoded' : 'application/json',
-      'x-client-id': 'Octopus',
-      'x-client-verison': 'octo-engine-cli',
+      ...clientHeaders(),
       'x-api-key': auth.apiKey
     },
     body: options.method === 'POST' ? encodeRequestBody(options.body ?? {}, bodyFormat) : undefined
