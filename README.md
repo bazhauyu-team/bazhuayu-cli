@@ -64,13 +64,13 @@ OCTOPUS_API_KEY=xxx octopus task list --json
 
 ### 3. Use the CLI
 
-List your cloud tasks:
+Query the task list:
 
 ```bash
 octopus task list
 ```
 
-Inspect a task:
+Query a single task:
 
 ```bash
 octopus task inspect <taskId>
@@ -88,7 +88,7 @@ Run in the background:
 octopus run <taskId> --detach
 ```
 
-Check or stop an active local run:
+Query the local run status, or stop the local process running a task:
 
 ```bash
 octopus local status <taskId>

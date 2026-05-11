@@ -55,11 +55,12 @@ Purpose:
   octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
 `,
     run: `Usage:
-  octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--detach] [--json|--jsonl]
+  octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
 
 Agent notes:
   Requires a configured API key even when --task-file points to a local JSON, XML, or OTD file.
   Use --detach for background local collection.
+  Use --max-rows <n> to stop automatically after saving n rows.
   Use --jsonl for foreground event streams.
   JSONL now includes captcha and proxy request events when the runtime asks for them.
   run only starts local collection. Use data export <taskId> --lot-id <lotId> for files.
@@ -74,7 +75,7 @@ Notes:
   Cloud collection only supports start/stop. There is no cloud pause/resume.
 `,
     local: `Usage:
-  octopus local status <taskId> [--json]
+  octopus local status <taskId> [--output <dir>] [--json]
   octopus local pause <taskId> [--json]
   octopus local resume <taskId> [--json]
   octopus local stop <taskId> [--json]
@@ -137,12 +138,12 @@ Usage:
   octopus task list [--page <n>] [--page-size <n>] [--keyword <text>] [--json]
   octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
   octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
-  octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--detach] [--json|--jsonl]
+  octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
   octopus cloud start <taskId> [--json]
   octopus cloud stop <taskId> [--json]
   octopus cloud status <taskId> [--json]
   octopus cloud history <taskId> [--json]
-  octopus local status <taskId> [--json]
+  octopus local status <taskId> [--output <dir>] [--json]
   octopus local pause <taskId> [--json]
   octopus local resume <taskId> [--json]
   octopus local stop <taskId> [--json]
@@ -186,6 +187,7 @@ Authentication:
 Run diagnostics:
   --timeout-ms <ms>            overall foreground run timeout, default 600000
   --extension-timeout-ms <ms>  runtime extension registration timeout, default 15000
+  --max-rows <n>               stop local collection after saving n rows
   --debug-bridge              include extension bridge command/response logs
 
 Agent contract:
