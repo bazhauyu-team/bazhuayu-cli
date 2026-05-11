@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://octo-engine.local/schemas/detached-bootstrap-v1.schema.json",
-  "title": "Octo Engine Detached Bootstrap v1",
+  "$id": "https://octopus.local/schemas/detached-bootstrap-v1.schema.json",
+  "title": "Octopus Detached Bootstrap v1",
   "description": "bootstrap.json written under <output>/.detach_<taskId>_<timestamp>/ for detached run startup observability.",
   "type": "object",
   "properties": {

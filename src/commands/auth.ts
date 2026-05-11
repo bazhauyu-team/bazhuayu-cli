@@ -23,7 +23,7 @@ export async function authCommand(subcommand: string | undefined, args: string[]
     return authLogout(args);
   }
 
-  return printUsageError(json, '错误: auth 子命令无效', '用法: octo-engine auth <login|status|logout> [--json]');
+  return printUsageError(json, '错误: auth 子命令无效', '用法: octopus auth <login|status|logout> [--json]');
 }
 
 export async function ensureAuthenticated(json: boolean): Promise<number> {
@@ -36,7 +36,7 @@ export async function ensureAuthenticated(json: boolean): Promise<number> {
 export function printAuthRequired(json: boolean): number {
   const message = [
     'API key required.',
-    `Create one at ${API_KEYS_URL}, then run "octo-engine auth login".`,
+    `Create one at ${API_KEYS_URL}, then run "octopus auth login".`,
     `For CI, set ${API_KEY_ENV}.`
   ].join(' ');
   if (json) {
@@ -48,7 +48,7 @@ export function printAuthRequired(json: boolean): number {
     console.error(`  ${API_KEYS_URL}`);
     console.error('');
     console.error('然后运行:');
-    console.error('  octo-engine auth login');
+    console.error('  octopus auth login');
     console.error('');
     console.error(`CI / 脚本环境可以设置 ${API_KEY_ENV}。`);
   }
@@ -79,7 +79,7 @@ async function authLogin(args: string[]): Promise<number> {
       authenticated: true,
       source: 'file',
       keyPreview: maskApiKey(credentials.apiKey),
-      credentialsFile: join(homedir(), '.octo-engine', 'credentials.json'),
+      credentialsFile: join(homedir(), '.octopus', 'credentials.json'),
       verified: true,
       apiBaseUrl: validation.baseUrl
     };
@@ -92,7 +92,7 @@ async function authLogin(args: string[]): Promise<number> {
       console.log(`Credentials: ${status.credentialsFile}`);
       console.log('');
       console.log('Next:');
-      console.log('  octo-engine task list');
+      console.log('  octopus task list');
     }
     return EXIT_OK;
   } catch (error) {
@@ -115,7 +115,7 @@ async function authLogin(args: string[]): Promise<number> {
 }
 
 function printLoginInstructions(willOpenBrowser: boolean): void {
-  console.log('Octo Engine 需要使用八爪鱼 API key 验证账号并访问任务。');
+  console.log('Octopus 需要使用八爪鱼 API key 验证账号并访问任务。');
   console.log('');
   if (willOpenBrowser) {
     console.log('Opening API key page:');
@@ -170,7 +170,7 @@ async function authStatus(args: string[]): Promise<number> {
 
   if (!status.authenticated) {
     console.log('Not authenticated');
-    console.log('Run: octo-engine auth login');
+    console.log('Run: octopus auth login');
     return EXIT_OK;
   }
 

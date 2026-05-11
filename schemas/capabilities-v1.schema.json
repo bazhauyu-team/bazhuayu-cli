@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://octo-engine.local/schemas/capabilities-v1.schema.json",
-  "title": "Octo Engine Capabilities Response v1",
-  "description": "Full response shape for octo-engine capabilities --json.",
+  "$id": "https://octopus.local/schemas/capabilities-v1.schema.json",
+  "title": "Octopus Capabilities Response v1",
+  "description": "Full response shape for octopus capabilities --json.",
   "type": "object",
   "required": ["ok", "data"],
   "properties": {
@@ -23,7 +23,7 @@
         "env"
       ],
       "properties": {
-        "name": { "const": "octo-engine" },
+        "name": { "const": "octopus" },
         "version": {
           "type": "string",
           "minLength": 1
@@ -50,7 +50,7 @@
               "type": "array",
               "items": { "type": "string" }
             },
-            "env": { "const": "OCTO_ENGINE_API_KEY" },
+            "env": { "const": "OCTOPUS_API_KEY" },
             "file": { "type": "string" }
           },
           "additionalProperties": true
@@ -221,8 +221,8 @@
           "type": "object",
           "required": ["apiKey", "apiBaseUrl"],
           "properties": {
-            "apiKey": { "const": "OCTO_ENGINE_API_KEY" },
-            "apiBaseUrl": { "const": "OCTO_ENGINE_API_BASE_URL" }
+            "apiKey": { "const": "OCTOPUS_API_KEY" },
+            "apiBaseUrl": { "const": "OCTOPUS_API_BASE_URL" }
           },
           "additionalProperties": true
         }

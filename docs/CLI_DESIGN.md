@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-`octo-engine` runs Octoparse task definitions locally through the embedded `@octopus/engine` and independent Chrome, without depending on the Electron client.
+`octopus` runs Octoparse task definitions locally through the embedded `@octopus/engine` and independent Chrome, without depending on the Electron client.
 
 ## 2. Classification
 
@@ -39,26 +39,26 @@ Optimize for a reliable, inspectable, local engine runtime that can run one task
 Recommended top-level shape:
 
 ```bash
-octo-engine doctor
-octo-engine browser doctor
-octo-engine task list
-octo-engine task inspect <taskId>
+octopus doctor
+octopus browser doctor
+octopus task list
+octopus task inspect <taskId>
 
-octo-engine run <taskId>
-octo-engine run <taskId> --detach
-octo-engine cloud start <taskId>
-octo-engine cloud stop <taskId>
-octo-engine cloud status <taskId>
-octo-engine cloud history <taskId>
-octo-engine local status <taskId>
-octo-engine local pause <taskId>
-octo-engine local resume <taskId>
-octo-engine local stop <taskId>
-octo-engine local history <taskId>
-octo-engine local export <taskId>
-octo-engine local export <taskId> --lot-id <lotId>
-octo-engine data history <taskId> --source local|cloud
-octo-engine data export <taskId> --source local|cloud
+octopus run <taskId>
+octopus run <taskId> --detach
+octopus cloud start <taskId>
+octopus cloud stop <taskId>
+octopus cloud status <taskId>
+octopus cloud history <taskId>
+octopus local status <taskId>
+octopus local pause <taskId>
+octopus local resume <taskId>
+octopus local stop <taskId>
+octopus local history <taskId>
+octopus local export <taskId>
+octopus local export <taskId> --lot-id <lotId>
+octopus data history <taskId> --source local|cloud
+octopus data export <taskId> --source local|cloud
 ```
 
 The singular `run` starts a new runtime execution. Active local control and local data export are addressed by `taskId`. Repeated local collections of the same task are exposed as `lotId` batches for history/export selection. Internal `runId` remains an artifact implementation detail.
@@ -68,13 +68,13 @@ The singular `run` starts a new runtime execution. Active local control and loca
 Use flags-first input for human and script use:
 
 ```bash
-octo-engine run <taskId> --jsonl --headless
+octopus run <taskId> --jsonl --headless
 ```
 
 Add raw payload input later only if agents need to submit full task definitions:
 
 ```bash
-octo-engine run --task-file task.json
+octopus run --task-file task.json
 ```
 
 Do not require raw JSON for ordinary runs.

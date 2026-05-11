@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://octo-engine.local/schemas/run-event-v1.schema.json",
-  "title": "Octo Engine Run JSONL Event v1",
-  "description": "One line from octo-engine run <taskId> --jsonl. The event field is stable; additional fields may be added.",
+  "$id": "https://octopus.local/schemas/run-event-v1.schema.json",
+  "title": "Octopus Run JSONL Event v1",
+  "description": "One line from octopus run <taskId> --jsonl. The event field is stable; additional fields may be added.",
   "type": "object",
   "required": ["event"],
   "properties": {

@@ -6,7 +6,7 @@ const versionArg = args.find((arg) => !arg.startsWith('-'));
 const dryRun = args.includes('--dry-run');
 const noPush = args.includes('--no-push');
 const npmTag = valueAfter('--tag') ?? 'latest';
-const cacheDir = process.env.NPM_CONFIG_CACHE || '/tmp/octo-engine-npm-cache';
+const cacheDir = process.env.NPM_CONFIG_CACHE || '/tmp/octopus-npm-cache';
 
 if (!versionArg) {
   usage();

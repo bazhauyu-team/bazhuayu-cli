@@ -28,7 +28,7 @@ export async function hiddenEnvCommand(subcommand: string | undefined, args: str
 
   const next = resolveEnvTarget(subcommand);
   if (!next) {
-    const message = '用法: octo-engine env <pre|prod|online|status> [--json]';
+    const message = '用法: octopus env <pre|prod|online|status> [--json]';
     if (json) printEnvelope(false, undefined, 'INVALID_ENV', message);
     else console.error(message);
     return EXIT_OPERATION_FAILED;

@@ -62,7 +62,7 @@ If npm asks for a one-time password and the script fails after creating the
 version commit/tag, finish manually:
 
 ```bash
-npm --cache /tmp/octo-engine-npm-cache publish --access public --otp=<code>
+npm --cache /tmp/octopus-npm-cache publish --access public --otp=<code>
 git push origin HEAD --tags
 ```
 
@@ -79,7 +79,7 @@ Inspect the dry-run output before publishing. If your local npm cache has
 permission problems, use a temporary cache:
 
 ```bash
-npm --cache /tmp/octo-engine-npm-cache pack --dry-run
+npm --cache /tmp/octopus-npm-cache pack --dry-run
 ```
 
 ## Publish
@@ -88,7 +88,7 @@ For public npm:
 
 ```bash
 npm login
-npm --cache /tmp/octo-engine-npm-cache publish --access public
+npm --cache /tmp/octopus-npm-cache publish --access public
 ```
 
 For scoped packages, make sure the package name, organization, and visibility
@@ -100,8 +100,8 @@ Use a clean directory or clean machine:
 
 ```bash
 npm install -g bazhuayu-cli
-octo-engine --help
-octo-engine doctor
+octopus --help
+octopus doctor
 ```
 
 If `@octopus/engine` is not publicly installable, publish or replace that

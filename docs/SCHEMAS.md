@@ -7,11 +7,11 @@ Current schemas:
 | Schema | Purpose |
 | --- | --- |
 | `schemas/json-envelope-v1.schema.json` | Common `--json` success/failure envelope. |
-| `schemas/capabilities-v1.schema.json` | Full `octo-engine capabilities --json` response. |
-| `schemas/run-event-v1.schema.json` | One line from `octo-engine run <taskId> --jsonl`. |
+| `schemas/capabilities-v1.schema.json` | Full `octopus capabilities --json` response. |
+| `schemas/run-event-v1.schema.json` | One line from `octopus run <taskId> --jsonl`. |
 | `schemas/detached-bootstrap-v1.schema.json` | Detached startup `bootstrap.json` artifact. |
 
-`octo-engine capabilities --json` publishes these paths under:
+`octopus capabilities --json` publishes these paths under:
 
 ```text
 data.machineContract.schemas

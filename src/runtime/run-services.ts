@@ -258,7 +258,7 @@ async function apiRequest(options: {
   bodyFormat?: 'json' | 'form';
 }): Promise<unknown> {
   const auth = await resolveAuth();
-  if (!auth.apiKey) throw new ApiRequestError('API key required. Run "octo-engine auth login".', 'AUTH_REQUIRED');
+  if (!auth.apiKey) throw new ApiRequestError('API key required. Run "octopus auth login".', 'AUTH_REQUIRED');
   const baseUrl = await resolveApiBaseUrl();
   const url = new URL(options.endpoint, `${baseUrl}/`);
   for (const [key, value] of Object.entries(options.query ?? {})) {

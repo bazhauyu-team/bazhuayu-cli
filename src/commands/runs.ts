@@ -66,7 +66,7 @@ export async function runsStatus(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const outputDir = resolve(valueAfter(args, '--output') ?? defaultRunsDir());
   if (!runId) {
-    return printUsageError(json, '错误: 缺少 runId', '用法: octo-engine runs status <runId> [--output <dir>] [--json]');
+    return printUsageError(json, '错误: 缺少 runId', '用法: octopus runs status <runId> [--output <dir>] [--json]');
   }
 
   const summary = await readRunSummary(outputDir, runId) ?? await readActiveRunSummary(outputDir, runId);
@@ -88,7 +88,7 @@ export async function runsControl(command: 'pause' | 'resume' | 'stop', args: st
   const json = hasFlag(args, '--json');
   const outputDir = resolve(valueAfter(args, '--output') ?? defaultRunsDir());
   if (!runId) {
-    return printUsageError(json, '错误: 缺少 runId', `用法: octo-engine runs ${command} <runId> [--output <dir>] [--json]`);
+    return printUsageError(json, '错误: 缺少 runId', `用法: octopus runs ${command} <runId> [--output <dir>] [--json]`);
   }
 
   try {
@@ -113,7 +113,7 @@ export async function runsLogs(args: string[]): Promise<number> {
   const outputDir = resolve(valueAfter(args, '--output') ?? defaultRunsDir());
   const limit = parsePositiveInt(valueAfter(args, '--limit'), 100);
   if (!runId) {
-    return printUsageError(json, '错误: 缺少 runId', '用法: octo-engine runs logs <runId> [--output <dir>] [--limit 100] [--json]');
+    return printUsageError(json, '错误: 缺少 runId', '用法: octopus runs logs <runId> [--output <dir>] [--limit 100] [--json]');
   }
 
   const runDir = join(outputDir, runId);
@@ -138,7 +138,7 @@ export async function runsData(args: string[]): Promise<number> {
   const outputDir = resolve(valueAfter(args, '--output') ?? defaultRunsDir());
   const limit = parsePositiveInt(valueAfter(args, '--limit'), 100);
   if (!runId) {
-    return printUsageError(json, '错误: 缺少 runId', '用法: octo-engine runs data <runId> [--output <dir>] [--limit 100] [--json]');
+    return printUsageError(json, '错误: 缺少 runId', '用法: octopus runs data <runId> [--output <dir>] [--limit 100] [--json]');
   }
 
   const runDir = join(outputDir, runId);
@@ -166,7 +166,7 @@ export async function runsExport(args: string[]): Promise<number> {
     return printUsageError(
       json,
       !runId ? '错误: 缺少 runId' : '错误: 缺少 --file',
-      '用法: octo-engine runs export <runId> --file <result.xlsx> [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]'
+      '用法: octopus runs export <runId> --file <result.xlsx> [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]'
     );
   }
   const format = normalizeDataExportFormat(valueAfter(args, '--format'), targetFile);

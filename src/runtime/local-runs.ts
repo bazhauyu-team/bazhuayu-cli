@@ -6,7 +6,7 @@ import type { RunSummary } from '../types.js';
 import { controlStateToSummary, isRunControlReachable, readRunControlState } from './run-control.js';
 
 export function defaultRunsDir(): string {
-  return join(homedir(), '.octo-engine', 'runs');
+  return join(homedir(), '.octopus', 'runs');
 }
 
 export function runMetaExists(outputDir: string, runId: string): boolean {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://octo-engine.local/schemas/json-envelope-v1.schema.json",
-  "title": "Octo Engine JSON Envelope v1",
+  "$id": "https://octopus.local/schemas/json-envelope-v1.schema.json",
+  "title": "Octopus JSON Envelope v1",
   "description": "Common --json response envelope. Commands return exactly one object matching either the success or failure branch.",
   "oneOf": [
     {

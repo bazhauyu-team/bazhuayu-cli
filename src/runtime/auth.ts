@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-export const API_KEY_ENV = 'OCTO_ENGINE_API_KEY';
+export const API_KEY_ENV = 'OCTOPUS_API_KEY';
 
 export type AuthSource = 'env' | 'file' | 'none';
 
@@ -25,7 +25,7 @@ export interface ResolvedAuth extends AuthStatus {
 }
 
 export function credentialsFilePath(): string {
-  return join(homedir(), '.octo-engine', 'credentials.json');
+  return join(homedir(), '.octopus', 'credentials.json');
 }
 
 export function normalizeApiKey(apiKey: string): string {

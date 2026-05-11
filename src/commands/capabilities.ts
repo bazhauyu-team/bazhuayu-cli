@@ -7,7 +7,7 @@ import { EXIT_OK } from '../types.js';
 
 export async function capabilitiesCommand(version: string, json: boolean): Promise<number> {
   const data = {
-    name: 'octo-engine',
+    name: 'octopus',
     version,
     agentContractVersion: 1,
     authentication: {
@@ -16,7 +16,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
       setupCommandsWithoutAuth: ['auth login', 'auth status', 'auth logout', 'env status', 'env pre', 'env prod', 'env online'],
       diagnosticCommandsWithoutAuth: ['--help', '--version', 'capabilities', 'doctor', 'browser doctor'],
       env: API_KEY_ENV,
-      file: join(homedir(), '.octo-engine', 'credentials.json')
+      file: join(homedir(), '.octopus', 'credentials.json')
     },
     output: {
       jsonEnvelope: { success: { ok: true, data: {} }, failure: { ok: false, error: { code: 'ERROR_CODE', message: 'message' } } },

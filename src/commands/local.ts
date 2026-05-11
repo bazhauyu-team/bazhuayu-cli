@@ -35,14 +35,14 @@ export async function localCommand(subcommand: string | undefined, args: string[
     return localControl(subcommand, args);
   }
 
-  return printUsageError(json, '错误: local 子命令无效', '用法: octo-engine local <status|pause|resume|stop|history|export|cleanup> <taskId> [--json]');
+  return printUsageError(json, '错误: local 子命令无效', '用法: octopus local <status|pause|resume|stop|history|export|cleanup> <taskId> [--json]');
 }
 
 async function localStatus(args: string[]): Promise<number> {
   const taskId = firstPositionalArg(args);
   const json = hasFlag(args, '--json');
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octo-engine local status <taskId> [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus local status <taskId> [--json]');
   }
 
   const state = await readTaskControlState(taskId);
@@ -101,7 +101,7 @@ async function localControl(command: 'pause' | 'resume' | 'stop', args: string[]
   const taskId = firstPositionalArg(args);
   const json = hasFlag(args, '--json');
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', `用法: octo-engine local ${command} <taskId> [--json]`);
+    return printUsageError(json, '错误: 缺少 taskId', `用法: octopus local ${command} <taskId> [--json]`);
   }
 
   try {

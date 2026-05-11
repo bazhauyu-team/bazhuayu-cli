@@ -10,7 +10,7 @@ export interface CliConfig {
 }
 
 export function configFilePath(): string {
-  return join(homedir(), '.octo-engine', 'config.json');
+  return join(homedir(), '.octopus', 'config.json');
 }
 
 export async function readCliConfig(): Promise<CliConfig> {

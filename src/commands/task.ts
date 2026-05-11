@@ -9,7 +9,7 @@ export async function taskList(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const auth = await resolveAuth();
   if (!auth.authenticated || !auth.apiKey) {
-    const message = `API key required. Run "octo-engine auth login" or set ${API_KEY_ENV}.`;
+    const message = `API key required. Run "octopus auth login" or set ${API_KEY_ENV}.`;
     if (json) printEnvelope(false, undefined, 'AUTH_REQUIRED', message);
     else console.error(`认证失败: ${message}`);
     return EXIT_OPERATION_FAILED;
@@ -76,7 +76,7 @@ export async function taskInspect(command: string, args: string[]): Promise<numb
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      `用法: octo-engine task ${command} <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]`
+      `用法: octopus task ${command} <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]`
     );
   }
 

@@ -17,7 +17,7 @@ export async function localHistory(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const outputDir = resolve(valueAfter(args, '--output') ?? defaultRunsDir());
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octo-engine local history <taskId> [--output <dir>] [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus local history <taskId> [--output <dir>] [--json]');
   }
 
   const lots = await listLocalLots(outputDir, taskId);
@@ -49,7 +49,7 @@ export async function localExport(args: string[]): Promise<number> {
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      '用法: octo-engine local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]'
+      '用法: octopus local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]'
     );
   }
 
@@ -113,7 +113,7 @@ async function cloudDataExport(args: string[]): Promise<number> {
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      '用法: octo-engine data export <taskId> --source cloud [--file <result.xlsx>] [--lot-id <lotId>] [--format xlsx|csv|html|json|xml] [--json]'
+      '用法: octopus data export <taskId> --source cloud [--file <result.xlsx>] [--lot-id <lotId>] [--format xlsx|csv|html|json|xml] [--json]'
     );
   }
 

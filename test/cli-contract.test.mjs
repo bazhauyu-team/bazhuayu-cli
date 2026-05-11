@@ -19,9 +19,9 @@ async function runCli(args, options = {}) {
     const result = await execFileAsync(process.execPath, [cli, ...args], {
       env: {
         PATH: process.env.PATH,
-        HOME: options.home ?? await mkdtemp(join(tmpdir(), 'octo-home-')),
-        ...(options.apiKey ? { OCTO_ENGINE_API_KEY: options.apiKey } : {}),
-        ...(options.apiBaseUrl ? { OCTO_ENGINE_API_BASE_URL: options.apiBaseUrl } : {})
+        HOME: options.home ?? await mkdtemp(join(tmpdir(), 'octopus-home-')),
+        ...(options.apiKey ? { OCTOPUS_API_KEY: options.apiKey } : {}),
+        ...(options.apiBaseUrl ? { OCTOPUS_API_BASE_URL: options.apiBaseUrl } : {})
       },
       timeout: options.timeout ?? 20_000
     });
@@ -41,7 +41,7 @@ async function runCliWithStdin(args, input, options = {}) {
       env: {
         PATH: process.env.PATH,
         HOME: options.home ?? '',
-        ...(options.apiBaseUrl ? { OCTO_ENGINE_API_BASE_URL: options.apiBaseUrl } : {})
+        ...(options.apiBaseUrl ? { OCTOPUS_API_BASE_URL: options.apiBaseUrl } : {})
       },
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -105,7 +105,7 @@ test('functional commands require API key even for local task files', async () =
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, 'AUTH_REQUIRED');
   assert.match(payload.error.message, /bazhuayu\.com\/console\/account-center\/api-keys/);
-  assert.match(payload.error.message, /octo-engine auth login/);
+  assert.match(payload.error.message, /octopus auth login/);
 });
 
 test('capabilities is available before authentication and documents API key contract', async () => {
@@ -116,7 +116,7 @@ test('capabilities is available before authentication and documents API key cont
   assert.equal(payload.ok, true);
   assert.equal(payload.data.authentication.requiredForUse, true);
   assert.equal(payload.data.authentication.loginVerifiesKeyBeforeSaving, true);
-  assert.equal(payload.data.authentication.env, 'OCTO_ENGINE_API_KEY');
+  assert.equal(payload.data.authentication.env, 'OCTOPUS_API_KEY');
   assert.ok(payload.data.authentication.diagnosticCommandsWithoutAuth.includes('capabilities'));
   assert.ok(payload.data.commands.find((item) => item.command === 'run <taskId>')?.authRequired);
   assert.equal(payload.data.machineContract.stable, true);
@@ -136,7 +136,7 @@ test('capabilities is available before authentication and documents API key cont
   for (const schemaPath of Object.values(schemas)) {
     const schema = JSON.parse(await readFile(resolve(schemaPath), 'utf8'));
     assert.equal(schema.$schema, 'https://json-schema.org/draft/2020-12/schema');
-    assert.match(schema.$id, /^https:\/\/octo-engine\.local\/schemas\//);
+    assert.match(schema.$id, /^https:\/\/octopus\.local\/schemas\//);
   }
 });
 
@@ -148,7 +148,7 @@ test('auth login verifies API key before saving', async () => {
     { home }
   );
   assertJsonFailure(result, 'AUTH_LOGIN_FAILED');
-  await assert.rejects(access(join(home, '.octo-engine', 'credentials.json')));
+  await assert.rejects(access(join(home, '.octopus', 'credentials.json')));
 });
 
 test('auth login accepts API key as a positional argument', async () => {
@@ -184,7 +184,7 @@ test('auth login accepts API key as a positional argument', async () => {
     assert.equal(seen.length, 1);
     assert.equal(seen[0].url, 'https://example.invalid/api/account/getAccount');
     assert.equal(seen[0].headers['x-api-key'], 'arg-key-123');
-    const credentials = JSON.parse(await readFile(join(home, '.octo-engine', 'credentials.json'), 'utf8'));
+    const credentials = JSON.parse(await readFile(join(home, '.octopus', 'credentials.json'), 'utf8'));
     assert.equal(credentials.apiKey, 'arg-key-123');
   } finally {
     globalThis.fetch = originalFetch;
@@ -263,8 +263,8 @@ test('account info uses electron getAccount endpoint', async () => {
 
 test('remote task not found suggests a nearby listed task id', async () => {
   const originalFetch = globalThis.fetch;
-  const originalApiKey = process.env.OCTO_ENGINE_API_KEY;
-  process.env.OCTO_ENGINE_API_KEY = 'dummy';
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  process.env.OCTOPUS_API_KEY = 'dummy';
   globalThis.fetch = async (url) => {
     const parsed = new URL(String(url));
     if (parsed.pathname === '/api/task/getTask') {
@@ -304,14 +304,14 @@ test('remote task not found suggests a nearby listed task id', async () => {
       (error) => {
         assert.match(error.message, /你是不是想运行/);
         assert.match(error.message, /6aeabf8f73ef/);
-        assert.match(error.message, /octo-engine run 2dca8f7d-c689-c5dd-a0d4-6aeabf8f73ef/);
+        assert.match(error.message, /octopus run 2dca8f7d-c689-c5dd-a0d4-6aeabf8f73ef/);
         return true;
       }
     );
   } finally {
     globalThis.fetch = originalFetch;
-    if (originalApiKey === undefined) delete process.env.OCTO_ENGINE_API_KEY;
-    else process.env.OCTO_ENGINE_API_KEY = originalApiKey;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
   }
 });
 
@@ -386,10 +386,10 @@ test('agent-facing commands expose json envelopes for key contract paths', async
 });
 
 test('cleanup commands remove orphaned local control state', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'octo-cleanup-'));
+  const root = await mkdtemp(join(tmpdir(), 'octopus-cleanup-'));
   const home = join(root, 'home');
   const output = join(root, 'runs');
-  const activeDir = join(home, '.octo-engine', 'active-local');
+  const activeDir = join(home, '.octopus', 'active-local');
   const runDir = join(output, 'run_stale');
   await mkdir(activeDir, { recursive: true });
   await mkdir(runDir, { recursive: true });
@@ -514,7 +514,7 @@ test('run rejects --format and points users to data export', async () => {
 test('run completion prints a copyable local data export command', () => {
   assert.equal(
     localDataExportCommand({ taskId: 'task-1', lotId: '1778123456789' }),
-    'octo-engine data export task-1 --source local --lot-id 1778123456789'
+    'octopus data export task-1 --source local --lot-id 1778123456789'
   );
 });
 

@@ -28,8 +28,8 @@ import {
   type TaskDefinition
 } from '../types.js';
 
-const DETACHED_CHILD_ENV = 'OCTO_ENGINE_DETACHED_CHILD';
-const DETACHED_BOOTSTRAP_DIR_ENV = 'OCTO_ENGINE_DETACHED_BOOTSTRAP_DIR';
+const DETACHED_CHILD_ENV = 'OCTOPUS_DETACHED_CHILD';
+const DETACHED_BOOTSTRAP_DIR_ENV = 'OCTOPUS_DETACHED_BOOTSTRAP_DIR';
 
 export async function runTask(taskId: string | undefined, args: string[]): Promise<number> {
   const json = hasFlag([taskId ?? '', ...args], '--json') || hasFlag([taskId ?? '', ...args], '--jsonl');
@@ -37,7 +37,7 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      '用法: octo-engine run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--detach] [--json|--jsonl]'
+      '用法: octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--detach] [--json|--jsonl]'
     );
   }
 
@@ -45,7 +45,7 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
     return printUsageError(
       json,
       'run 没有 export 子命令；run 只负责启动本地采集。',
-      '导出数据请使用: octo-engine data export <taskId> [--source local|cloud] [--lot-id <lotId>] [--file <result.xlsx>] [--format xlsx|csv|html|json|xml]'
+      '导出数据请使用: octopus data export <taskId> [--source local|cloud] [--lot-id <lotId>] [--file <result.xlsx>] [--format xlsx|csv|html|json|xml]'
     );
   }
 
@@ -177,7 +177,7 @@ async function startDetachedRun(taskId: string, args: string[], options: RunOpti
     console.log(`Status: ${data.status}`);
     if (data.outputDir) console.log(`Output: ${data.outputDir}`);
     console.log(`Bootstrap: ${bootstrap.dir}`);
-    console.log(`Control: octo-engine local status ${taskId}`);
+    console.log(`Control: octopus local status ${taskId}`);
   }
   return EXIT_OK;
 }
@@ -423,7 +423,7 @@ async function executeTask(
 }
 
 export function localDataExportCommand(summary: Pick<RunSummary, 'taskId' | 'lotId'>): string {
-  return `octo-engine data export ${summary.taskId} --source local --lot-id ${summary.lotId}`;
+  return `octopus data export ${summary.taskId} --source local --lot-id ${summary.lotId}`;
 }
 
 function parseRunOptions(taskId: string, args: string[]): RunOptions {

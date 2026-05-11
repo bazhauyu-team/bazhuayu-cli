@@ -294,7 +294,7 @@ function taskControlFilePath(taskId: string): string {
 }
 
 function taskControlDir(): string {
-  return join(homedir(), '.octo-engine', 'active-local');
+  return join(homedir(), '.octopus', 'active-local');
 }
 
 async function cleanupControlFile(

@@ -13,7 +13,7 @@ generated credential files.
 Local credentials are stored outside the repository under:
 
 ```text
-~/.octo-engine/
+~/.octopus/
 ```
 
 If a secret is committed accidentally:

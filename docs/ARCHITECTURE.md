@@ -62,7 +62,7 @@ Current status:
 ## Run artifact layout
 
 ```text
-.octo-engine/runs/<runId>/
+.octopus/runs/<runId>/
   meta.json
   events.jsonl
   rows.jsonl

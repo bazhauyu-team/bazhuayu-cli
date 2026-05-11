@@ -1,8 +1,8 @@
-# octo-engine-cli
+# octopus-cli
 
 Command-line runner for Bazhuayu collection tasks.
 
-`octo-engine` can list cloud tasks, run tasks locally, control active local
+`octopus` can list cloud tasks, run tasks locally, control active local
 runs, and export collected data.
 
 ## Requirements
@@ -23,14 +23,14 @@ npm install -g bazhuayu-cli
 The installed command is:
 
 ```bash
-octo-engine
+octopus
 ```
 
 Check the installation:
 
 ```bash
-octo-engine --version
-octo-engine doctor
+octopus --version
+octopus doctor
 ```
 
 ### 2. Log in with an API key
@@ -38,7 +38,7 @@ octo-engine doctor
 Most commands require a Bazhuayu API key. Run:
 
 ```bash
-octo-engine auth login
+octopus auth login
 ```
 
 `auth login` opens the API key page automatically in a browser when possible,
@@ -53,13 +53,13 @@ https://www.bazhuayu.com/console/account-center/api-keys
 If you already copied the key, you can save time and pass it directly:
 
 ```bash
-octo-engine auth login XXXXX
+octopus auth login XXXXX
 ```
 
 For CI or scripts, set the key with an environment variable instead:
 
 ```bash
-OCTO_ENGINE_API_KEY=xxx octo-engine task list --json
+OCTOPUS_API_KEY=xxx octopus task list --json
 ```
 
 ### 3. Use the CLI
@@ -67,90 +67,90 @@ OCTO_ENGINE_API_KEY=xxx octo-engine task list --json
 List your cloud tasks:
 
 ```bash
-octo-engine task list
+octopus task list
 ```
 
 Inspect a task:
 
 ```bash
-octo-engine task inspect <taskId>
+octopus task inspect <taskId>
 ```
 
 Run a task locally:
 
 ```bash
-octo-engine run <taskId>
+octopus run <taskId>
 ```
 
 Run in the background:
 
 ```bash
-octo-engine run <taskId> --detach
+octopus run <taskId> --detach
 ```
 
 Check or stop an active local run:
 
 ```bash
-octo-engine local status <taskId>
-octo-engine local stop <taskId>
+octopus local status <taskId>
+octopus local stop <taskId>
 ```
 
 Export data:
 
 ```bash
-octo-engine data export <taskId> --source local --format xlsx
-octo-engine data export <taskId> --source cloud --format csv
+octopus data export <taskId> --source local --format xlsx
+octopus data export <taskId> --source cloud --format csv
 ```
 
 ## Common commands
 
 ```bash
 # Help and diagnostics
-octo-engine --help
-octo-engine doctor
-octo-engine browser doctor
+octopus --help
+octopus doctor
+octopus browser doctor
 
 # Authentication
-octo-engine auth login
-octo-engine auth login XXXXX
-octo-engine auth status
-octo-engine auth logout
+octopus auth login
+octopus auth login XXXXX
+octopus auth status
+octopus auth logout
 
 # Task discovery
-octo-engine task list
-octo-engine task list --keyword news --page-size 10
-octo-engine task inspect <taskId>
+octopus task list
+octopus task list --keyword news --page-size 10
+octopus task inspect <taskId>
 
 # Local collection
-octo-engine run <taskId>
-octo-engine run <taskId> --jsonl
-octo-engine run <taskId> --detach
-octo-engine local status <taskId>
-octo-engine local pause <taskId>
-octo-engine local resume <taskId>
-octo-engine local stop <taskId>
+octopus run <taskId>
+octopus run <taskId> --jsonl
+octopus run <taskId> --detach
+octopus local status <taskId>
+octopus local pause <taskId>
+octopus local resume <taskId>
+octopus local stop <taskId>
 
 # Cloud collection
-octo-engine cloud start <taskId>
-octo-engine cloud stop <taskId>
-octo-engine cloud status <taskId>
-octo-engine cloud history <taskId>
+octopus cloud start <taskId>
+octopus cloud stop <taskId>
+octopus cloud status <taskId>
+octopus cloud history <taskId>
 
 # Data
-octo-engine data history <taskId> --source local
-octo-engine data history <taskId> --source cloud
-octo-engine data export <taskId> --source local --format xlsx
-octo-engine data export <taskId> --source cloud --format csv
+octopus data history <taskId> --source local
+octopus data history <taskId> --source cloud
+octopus data export <taskId> --source local --format xlsx
+octopus data export <taskId> --source cloud --format csv
 ```
 
-By default, local run artifacts are stored in `~/.octo-engine/runs`. If you
+By default, local run artifacts are stored in `~/.octopus/runs`. If you
 customize the run artifact directory with `--output`, use the same `--output`
 again when reading local history or exporting local data:
 
 ```bash
-octo-engine run <taskId> --output ./runs
-octo-engine data history <taskId> --source local --output ./runs
-octo-engine data export <taskId> --source local --output ./runs --format xlsx
+octopus run <taskId> --output ./runs
+octopus data history <taskId> --source local --output ./runs
+octopus data export <taskId> --source local --output ./runs --format xlsx
 ```
 
 ## API key
@@ -168,32 +168,32 @@ https://www.bazhuayu.com/console/account-center/api-keys
 For interactive use:
 
 ```bash
-octo-engine auth login
+octopus auth login
 ```
 
 If the API key is already copied:
 
 ```bash
-octo-engine auth login XXXXX
+octopus auth login XXXXX
 ```
 
 Use `--no-open` if you want to copy the URL manually:
 
 ```bash
-octo-engine auth login --no-open
+octopus auth login --no-open
 ```
 
 For CI or scripts:
 
 ```bash
-OCTO_ENGINE_API_KEY=xxx octo-engine task list --json
+OCTOPUS_API_KEY=xxx octopus task list --json
 ```
 
 Credential precedence:
 
 ```text
-1. OCTO_ENGINE_API_KEY
-2. ~/.octo-engine/credentials.json
+1. OCTOPUS_API_KEY
+2. ~/.octopus/credentials.json
 ```
 
 ## Local task files
@@ -201,9 +201,9 @@ Credential precedence:
 You can run or validate a local task definition file:
 
 ```bash
-octo-engine task validate <taskId> --task-file ./task.json
-octo-engine run <taskId> --task-file ./task.json
-octo-engine run baidu --task-file ./百度一下，你就知道.otd
+octopus task validate <taskId> --task-file ./task.json
+octopus run <taskId> --task-file ./task.json
+octopus run baidu --task-file ./百度一下，你就知道.otd
 ```
 
 Supported local task file types:
@@ -219,20 +219,20 @@ Kernel browser tasks are not supported in this CLI.
 Use `--json` for one JSON response:
 
 ```bash
-octo-engine task list --json
-octo-engine local status <taskId> --json
+octopus task list --json
+octopus local status <taskId> --json
 ```
 
 Use `--jsonl` for local run event streams:
 
 ```bash
-octo-engine run <taskId> --jsonl
+octopus run <taskId> --jsonl
 ```
 
 The stream includes `captcha` and `proxy` events when the runtime asks the CLI
 to resolve CAPTCHA or proxy resources automatically.
 
-Local run artifacts are written under `~/.octo-engine/runs` by default, or under
+Local run artifacts are written under `~/.octopus/runs` by default, or under
 the selected `--output` directory when configured:
 
 ```text
@@ -248,21 +248,21 @@ the selected `--output` directory when configured:
 Check the local environment:
 
 ```bash
-octo-engine doctor
-octo-engine browser doctor
+octopus doctor
+octopus browser doctor
 ```
 
 If the browser is not detected automatically, pass its path:
 
 ```bash
-octo-engine run <taskId> --chrome-path "/path/to/chrome"
+octopus run <taskId> --chrome-path "/path/to/chrome"
 ```
 
 Clean stale local control state:
 
 ```bash
-octo-engine local cleanup
-octo-engine runs cleanup
+octopus local cleanup
+octopus runs cleanup
 ```
 
 ## More documentation

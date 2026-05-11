@@ -29,7 +29,7 @@ export async function cloudCommand(subcommand: string | undefined, args: string[
   return printUsageError(
     json,
     '错误: cloud 子命令无效；云采集只支持 start/stop，没有 pause/resume。',
-    '用法: octo-engine cloud <start|stop|status|history> <taskId> [--json]'
+    '用法: octopus cloud <start|stop|status|history> <taskId> [--json]'
   );
 }
 
@@ -37,7 +37,7 @@ async function cloudAction(command: 'start' | 'stop', args: string[]): Promise<n
   const taskId = firstPositionalArg(args, ['--api-base-url']);
   const json = hasFlag(args, '--json');
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', `用法: octo-engine cloud ${command} <taskId> [--json]`);
+    return printUsageError(json, '错误: 缺少 taskId', `用法: octopus cloud ${command} <taskId> [--json]`);
   }
 
   const auth = await resolveAuth();
@@ -65,7 +65,7 @@ async function cloudStatus(args: string[]): Promise<number> {
   const taskId = firstPositionalArg(args, ['--api-base-url']);
   const json = hasFlag(args, '--json');
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octo-engine cloud status <taskId> [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus cloud status <taskId> [--json]');
   }
 
   const auth = await resolveAuth();
@@ -90,7 +90,7 @@ export async function cloudHistory(args: string[]): Promise<number> {
   const taskId = firstPositionalArg(args, ['--api-base-url', '--source']);
   const json = hasFlag(args, '--json');
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octo-engine cloud history <taskId> [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus cloud history <taskId> [--json]');
   }
 
   const auth = await resolveAuth();

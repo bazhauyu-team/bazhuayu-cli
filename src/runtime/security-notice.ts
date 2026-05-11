@@ -74,7 +74,7 @@ CRIMINAL LIABILITY, ACCOUNT TERMINATION, ACCESS REVOCATION, AND LEGAL ACTION.
 `.trim();
 
 export function maybePrintRuntimeSecurityNotice(): void {
-  if (process.env.OCTO_ENGINE_SECURITY_NOTICE === '1') {
+  if (process.env.OCTOPUS_SECURITY_NOTICE === '1') {
     console.error(RUNTIME_SECURITY_NOTICE);
   }
 }
