@@ -95,6 +95,9 @@ octopus local status <taskId>
 octopus local stop <taskId>
 ```
 
+Note: local run status is tracked by this CLI only and is not synchronized with
+the Bazhuayu desktop client status.
+
 Export data:
 
 ```bash
