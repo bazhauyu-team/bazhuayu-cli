@@ -68,6 +68,7 @@ Query the task list:
 
 ```bash
 octopus task list
+octopus task list --page 2 --page-size 20
 ```
 
 Query a single task:
@@ -80,6 +81,12 @@ Run a task locally:
 
 ```bash
 octopus run <taskId>
+```
+
+Stop automatically after saving a fixed number of rows:
+
+```bash
+octopus run <taskId> --max-rows 100
 ```
 
 Run in the background:
@@ -121,11 +128,13 @@ octopus auth logout
 
 # Task discovery
 octopus task list
-octopus task list --keyword news --page-size 10
+octopus task list --page 2 --page-size 20
+octopus task list --keyword news --page 2 --page-size 10
 octopus task inspect <taskId>
 
 # Local collection
 octopus run <taskId>
+octopus run <taskId> --max-rows 100
 octopus run <taskId> --jsonl
 octopus run <taskId> --detach
 octopus local status <taskId>

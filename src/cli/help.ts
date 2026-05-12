@@ -33,20 +33,32 @@ Agent notes:
   Functional commands require a configured API key, including local task-file and OTD runs.
 `,
     env: `Usage:
-  octopus env pre [--json]
   octopus env prod [--json]
+  octopus env online [--json]
   octopus env status [--json]
 
 Purpose:
   Hidden internal command for switching API environment.
 `,
     task: `Usage:
-  octopus task list [--page <n>] [--page-size <n>] [--keyword <text>] [--json]
+  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--json]
   octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
   octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
 `,
     'task list': `Usage:
-  octopus task list [--page <n>] [--page-size <n>] [--keyword <text>] [--json]
+  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--json]
+
+Options:
+  --page <n>          Page number to fetch. Defaults to 1.
+  --page-size <n>     Number of tasks per page. Defaults to 20.
+  --limit <n>         Alias for --page-size.
+  --keyword <text>    Filter tasks by keyword.
+  --json              Print a machine-readable JSON envelope.
+
+Examples:
+  octopus task list
+  octopus task list --page 2 --page-size 20
+  octopus task list --keyword news --page 2 --page-size 10
 `,
     'task inspect': `Usage:
   octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
@@ -135,7 +147,7 @@ Usage:
   octopus auth status [--json]
   octopus auth logout [--json]
   octopus browser doctor [--chrome-path <path>] [--json]
-  octopus task list [--page <n>] [--page-size <n>] [--keyword <text>] [--json]
+  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--json]
   octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
   octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
   octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]

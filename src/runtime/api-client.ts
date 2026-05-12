@@ -18,7 +18,6 @@ import { clientHeaders } from './client-headers.js';
 export const API_BASE_URL_ENV = 'OCTOPUS_API_BASE_URL';
 export const PROD_API_BASE_URL = 'https://v2.clientapi.bazhuayu.com';
 export const DEFAULT_API_BASE_URL = PROD_API_BASE_URL;
-export const PRE_API_BASE_URL = process.env.OCTOPUS_PRE_API_BASE_URL ?? PROD_API_BASE_URL;
 
 export interface TaskListOptions {
   apiKey: string;
