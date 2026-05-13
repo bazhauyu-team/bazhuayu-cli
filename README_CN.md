@@ -269,10 +269,3 @@ octopus run <taskId> --chrome-path "/path/to/chrome"
 octopus local cleanup
 octopus runs cleanup
 ```
-
-## 更多文档
-
-- Agent 与自动化协议：[`docs/AGENT_USAGE.md`](docs/AGENT_USAGE.md)
-- JSON Schema：[`docs/SCHEMAS.md`](docs/SCHEMAS.md)
-- CLI 设计说明：[`docs/CLI_DESIGN.md`](docs/CLI_DESIGN.md)
-- 发布说明：[`docs/PUBLISHING.md`](docs/PUBLISHING.md)
