@@ -124,8 +124,13 @@ test('capabilities is available before authentication and documents API key cont
   assert.equal(payload.data.machineContract.json.usageErrorsUseEnvelope, true);
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('AUTH_REQUIRED'));
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('AUTH_INVALID'));
+  assert.equal(payload.data.machineContract.json.commonErrorCodes.includes('LOCAL_RUN_LIMIT_EXCEEDED'), false);
+  assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('warning'));
   assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('run.stopped'));
   assert.equal(payload.data.machineContract.lifecycle.daemonRequired, false);
+  assert.equal(payload.data.machineContract.lifecycle.accountLocalRunLimit, false);
+  assert.equal(payload.data.machineContract.lifecycle.localRunResourceWarning.code, 'LOCAL_RUN_RESOURCE_WARNING');
+  assert.equal(payload.data.machineContract.lifecycle.localRunResourceWarning.blocking, false);
   assert.ok(payload.data.machineContract.lifecycle.cleanupCommands.includes('local cleanup'));
   const schemas = payload.data.machineContract.schemas;
   assert.deepEqual(Object.keys(schemas).sort(), [

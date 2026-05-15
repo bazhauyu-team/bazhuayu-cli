@@ -20,7 +20,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
     },
     output: {
       jsonEnvelope: { success: { ok: true, data: {} }, failure: { ok: false, error: { code: 'ERROR_CODE', message: 'message' } } },
-      jsonlEvents: ['run.started', 'row', 'log', 'run.paused', 'run.resumed', 'run.stopping', 'run.stopped'],
+      jsonlEvents: ['warning', 'run.started', 'row', 'log', 'run.paused', 'run.resumed', 'run.stopping', 'run.stopped'],
       detachedBootstrap: ['bootstrap.json', 'stdout.log', 'stderr.log'],
       stdout: 'machine data only in --json/--jsonl mode',
       stderr: 'human diagnostics and failures'
@@ -51,7 +51,6 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           'DETACHED_RUN_FAILED',
           'ENGINE_RUN_FAILED',
           'LOCAL_RUN_ALREADY_RUNNING',
-          'LOCAL_RUN_LIMIT_EXCEEDED',
           'LOCAL_RUN_CONTROL_FAILED',
           'RUN_CONTROL_FAILED',
           'RUN_NOT_FOUND',
@@ -63,7 +62,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
         flag: '--jsonl',
         command: 'run <taskId>',
         eventField: 'event',
-        stableEvents: ['run.started', 'row', 'log', 'run.paused', 'run.resumed', 'run.stopping', 'run.stopped'],
+        stableEvents: ['warning', 'run.started', 'row', 'log', 'run.paused', 'run.resumed', 'run.stopping', 'run.stopped'],
         rowLimitFlag: '--max-rows'
       },
       artifacts: {
@@ -75,6 +74,13 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
         daemonRequired: false,
         activeRunIdentity: 'taskId',
         artifactRunIdentity: 'runId',
+        accountLocalRunLimit: false,
+        localRunResourceWarning: {
+          code: 'LOCAL_RUN_RESOURCE_WARNING',
+          threshold: 4,
+          strongThreshold: 6,
+          blocking: false
+        },
         maxActiveLocalRunsPerTaskId: 1,
         orphanDetection: true,
         cleanupCommands: ['local cleanup', 'runs cleanup']

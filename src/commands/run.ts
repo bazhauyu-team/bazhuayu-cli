@@ -3,10 +3,7 @@ import { mkdir, open, readFile, writeFile, type FileHandle } from 'node:fs/promi
 import { join, resolve } from 'node:path';
 import { hasFlag, parsePositiveInt, valueAfter } from '../cli/args.js';
 import { printEnvelope, printUsageError } from '../cli/output.js';
-import { resolveCNLocalRunPolicy } from '../runtime/account-capabilities.js';
-import { ApiRequestError, fetchAccountInfo } from '../runtime/api-client.js';
 import { appendJsonLine, ensureRunDir, writeRunSummary } from '../runtime/artifacts.js';
-import { resolveAuth } from '../runtime/auth.js';
 import { EngineHost } from '../runtime/engine-host.js';
 import { defaultRunsDir } from '../runtime/local-runs.js';
 import { safeFileName } from '../runtime/naming.js';
@@ -30,6 +27,17 @@ import {
 
 const DETACHED_CHILD_ENV = 'OCTOPUS_DETACHED_CHILD';
 const DETACHED_BOOTSTRAP_DIR_ENV = 'OCTOPUS_DETACHED_BOOTSTRAP_DIR';
+const LOCAL_RUN_WARNING_THRESHOLD = 4;
+const LOCAL_RUN_STRONG_WARNING_THRESHOLD = 6;
+
+export interface LocalRunResourceWarning {
+  code: 'LOCAL_RUN_RESOURCE_WARNING';
+  severity: 'warning' | 'strong_warning';
+  activeLocalRuns: number;
+  requestedLocalRuns: number;
+  projectedLocalRuns: number;
+  message: string;
+}
 
 export async function runTask(taskId: string | undefined, args: string[]): Promise<number> {
   const json = hasFlag([taskId ?? '', ...args], '--json') || hasFlag([taskId ?? '', ...args], '--jsonl');
@@ -78,57 +86,77 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
     return EXIT_OPERATION_FAILED;
   }
 
-  if (process.env[DETACHED_CHILD_ENV] !== '1') {
-    const limitExitCode = await enforceLocalRunLimit(args, options);
-    if (limitExitCode !== EXIT_OK) return limitExitCode;
-  }
+  const resourceWarning = process.env[DETACHED_CHILD_ENV] !== '1'
+    ? await resolveLocalRunResourceWarning(1)
+    : undefined;
 
   if (options.detach && process.env[DETACHED_CHILD_ENV] !== '1') {
-    return startDetachedRun(taskId, args, options);
+    printLocalRunResourceWarning(options, resourceWarning);
+    return startDetachedRun(taskId, args, options, resourceWarning);
   }
 
+  printLocalRunResourceWarning(options, resourceWarning);
   const provider = new TaskDefinitionProvider();
-  return executeTask(taskId, options, () => provider.getTask(taskId, options.taskFile));
+  return executeTask(taskId, options, () => provider.getTask(taskId, options.taskFile), resourceWarning);
 }
 
-async function enforceLocalRunLimit(args: string[], options: RunOptions): Promise<number> {
-  try {
-    const auth = await resolveAuth();
-    if (!auth.apiKey) return EXIT_OK;
+async function resolveLocalRunResourceWarning(requestedLocalRuns: number): Promise<LocalRunResourceWarning | undefined> {
+  const activeRuns = await listActiveTaskControlStates();
+  return buildLocalRunResourceWarning(activeRuns.length, requestedLocalRuns);
+}
 
-    const account = await fetchAccountInfo({
-      apiKey: auth.apiKey,
-      baseUrl: valueAfter(args, '--api-base-url')
+export function buildLocalRunResourceWarning(
+  activeLocalRuns: number,
+  requestedLocalRuns: number
+): LocalRunResourceWarning | undefined {
+  const projectedLocalRuns = activeLocalRuns + requestedLocalRuns;
+  if (projectedLocalRuns < LOCAL_RUN_WARNING_THRESHOLD) return undefined;
+
+  const severity = projectedLocalRuns >= LOCAL_RUN_STRONG_WARNING_THRESHOLD ? 'strong_warning' : 'warning';
+  return {
+    code: 'LOCAL_RUN_RESOURCE_WARNING',
+    severity,
+    activeLocalRuns,
+    requestedLocalRuns,
+    projectedLocalRuns,
+    message: [
+      `${activeLocalRuns} local collection task${activeLocalRuns === 1 ? ' is' : 's are'} already running; `,
+      `starting this task will bring the total to ${projectedLocalRuns}. `,
+      'Each task starts an independent Chrome process. Too many local runs can consume significant memory and CPU, ',
+      'slow collection, crash browser pages, or make the system unresponsive. ',
+      'Consider stopping tasks you no longer need with octopus local status and octopus local stop.'
+    ].join('')
+  };
+}
+
+function printLocalRunResourceWarning(options: RunOptions, warning: LocalRunResourceWarning | undefined): void {
+  if (!warning) return;
+  if (options.json) return;
+  if (options.jsonl) {
+    printEnvelopeLikeJsonLine({
+      event: 'warning',
+      code: warning.code,
+      severity: warning.severity,
+      activeLocalRuns: warning.activeLocalRuns,
+      requestedLocalRuns: warning.requestedLocalRuns,
+      projectedLocalRuns: warning.projectedLocalRuns,
+      message: warning.message
     });
-    const policy = resolveCNLocalRunPolicy(account.data);
-    if (policy.maxActiveLocalRuns === undefined || policy.maxActiveLocalRuns === null) {
-      return EXIT_OK;
-    }
-
-    const activeRuns = await listActiveTaskControlStates();
-    if (activeRuns.length < policy.maxActiveLocalRuns) {
-      return EXIT_OK;
-    }
-
-    const message = `本地采集并发已达当前账号上限（${policy.maxActiveLocalRuns}）。请停止一个正在运行的任务后再启动。`;
-    if (options.json || options.jsonl) {
-      printEnvelope(false, undefined, 'LOCAL_RUN_LIMIT_EXCEEDED', message);
-    } else {
-      console.error(message);
-    }
-    return EXIT_OPERATION_FAILED;
-  } catch (error) {
-    if (error instanceof ApiRequestError && error.code === 'AUTH_INVALID') {
-      const message = error.message;
-      if (options.json || options.jsonl) printEnvelope(false, undefined, error.code, message);
-      else console.error(`认证失败: ${message}`);
-      return EXIT_OPERATION_FAILED;
-    }
-    return EXIT_OK;
+    return;
   }
+  console.error(`Warning: ${warning.message}`);
 }
 
-async function startDetachedRun(taskId: string, args: string[], options: RunOptions): Promise<number> {
+function printEnvelopeLikeJsonLine(value: unknown): void {
+  console.log(JSON.stringify(value));
+}
+
+async function startDetachedRun(
+  taskId: string,
+  args: string[],
+  options: RunOptions,
+  resourceWarning?: LocalRunResourceWarning
+): Promise<number> {
   const bootstrap = await createDetachedBootstrap(taskId, options.outputDir);
   const childArgs = [
     process.argv[1],
@@ -182,7 +210,8 @@ async function startDetachedRun(taskId: string, args: string[], options: RunOpti
     outputDir: state?.outputDir,
     bootstrapDir: bootstrap.dir,
     stdout: bootstrap.stdoutPath,
-    stderr: bootstrap.stderrPath
+    stderr: bootstrap.stderrPath,
+    warnings: resourceWarning ? [resourceWarning] : []
   };
 
   if (options.json) {
@@ -201,7 +230,8 @@ async function startDetachedRun(taskId: string, args: string[], options: RunOpti
 async function executeTask(
   taskId: string,
   options: RunOptions,
-  loadTask: () => Promise<TaskDefinition>
+  loadTask: () => Promise<TaskDefinition>,
+  resourceWarning?: LocalRunResourceWarning
 ): Promise<number> {
   const host = new EngineHost();
   let currentRunDir = '';
@@ -442,7 +472,11 @@ async function executeTask(
     if (options.jsonl) {
       printRunJsonLine(runtimeConsole, { event: 'run.stopped', ...finalSummary, outputDir: runDir });
     } else if (options.json) {
-      printRunEnvelope(runtimeConsole, true, { ...finalSummary, outputDir: runDir });
+      printRunEnvelope(runtimeConsole, true, {
+        ...finalSummary,
+        outputDir: runDir,
+        warnings: resourceWarning ? [resourceWarning] : []
+      });
     } else {
       runtimeConsole.stdout(`Run completed: ${finalSummary.runId}`);
       runtimeConsole.stdout(`Task: ${finalSummary.taskId}`);
