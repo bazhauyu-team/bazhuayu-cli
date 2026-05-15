@@ -246,6 +246,28 @@ octopus run <taskId> --jsonl
 The stream includes `captcha` and `proxy` events when the runtime asks the CLI
 to resolve CAPTCHA or proxy resources automatically.
 
+## Paid capabilities
+
+Some task features can consume paid account balance or resource packages:
+
+- Paid templates can block `octopus run` before startup when the account cannot
+  start the template or the balance is below the required charging granularity.
+- Premium proxy IP can block `octopus run` before startup when the task is
+  configured to use premium proxy IP and the balance is below the client
+  threshold.
+- CAPTCHA solving can emit a low-balance warning before startup, and can fail
+  during the run if the CAPTCHA service reports no balance or a daily limit.
+- `octopus cloud start` maps cloud startup status codes to readable JSON errors
+  such as `CLOUD_BALANCE_NOT_ENOUGH` and `CLOUD_PROXY_BALANCE_NOT_ENOUGH`.
+
+Foreground `--jsonl` runs emit structured billing events:
+
+```json
+{"event":"billing.error","code":"CAPTCHA_BALANCE_NOT_ENOUGH","message":"验证码余额不足，请充值后重试。"}
+```
+
+The same events are written to `events.jsonl`, including detached runs.
+
 Local run artifacts are written under `~/.octopus/runs` by default, or under
 the selected `--output` directory when configured:
 

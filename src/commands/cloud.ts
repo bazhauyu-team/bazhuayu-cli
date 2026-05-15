@@ -50,6 +50,17 @@ async function cloudAction(command: 'start' | 'stop', args: string[]): Promise<n
     const result = command === 'start'
       ? await startCloudTask({ apiKey: auth.apiKey, taskId, baseUrl: valueAfter(args, '--api-base-url') })
       : await stopCloudTask({ apiKey: auth.apiKey, taskId, baseUrl: valueAfter(args, '--api-base-url') });
+    if (command === 'start') {
+      const failure = cloudStartFailure(result.data);
+      if (failure) {
+        if (json) {
+          printEnvelope(false, undefined, failure.code, failure.message);
+        } else {
+          console.error(`云采集启动失败: ${failure.message}`);
+        }
+        return EXIT_OPERATION_FAILED;
+      }
+    }
     if (json) {
       printEnvelope(true, { taskId, action: command, ...result });
     } else {
@@ -60,6 +71,40 @@ async function cloudAction(command: 'start' | 'stop', args: string[]): Promise<n
   } catch (error) {
     return printApiError(json, `云采集${command === 'start' ? '启动' : '停止'}失败`, error);
   }
+}
+
+function cloudStartFailure(data: unknown): { code: string; message: string } | null {
+  const status = startCloudStatusValue(data);
+  if (status === null || status === 1) return null;
+  switch (status) {
+    case 2:
+      return { code: 'CLOUD_TASK_ALREADY_RUNNING', message: '任务已在云采集中运行。' };
+    case 5:
+      return { code: 'CLOUD_TASK_NOT_COMPLETED', message: '任务未完成，无法启动云采集。' };
+    case 6:
+      return { code: 'CLOUD_FEATURE_UNAVAILABLE', message: '当前账号或任务无权使用云采集，请检查套餐权益。' };
+    case 7:
+      return { code: 'CLOUD_APP_TASK_LIMIT', message: 'App 任务云采集数量已达上限。' };
+    case 8:
+      return { code: 'CLOUD_PROXY_BALANCE_NOT_ENOUGH', message: '代理 IP 余额不足，无法启动云采集。请充值后重试。' };
+    case 10:
+      return { code: 'TEMPLATE_START_LIMIT_REACHED', message: '模板任务启动次数已达上限。' };
+    case 12:
+      return { code: 'CLOUD_BALANCE_NOT_ENOUGH', message: '云采集余额不足，请充值后重试。' };
+    case 13:
+      return { code: 'TEMPLATE_DAILY_LIMIT_REACHED', message: '模板任务今日启动次数已达上限。' };
+    case 100:
+      return { code: 'CLOUD_SERVER_ERROR', message: '云采集服务暂时不可用，请稍后重试。' };
+    default:
+      return { code: 'CLOUD_START_FAILED', message: `云采集启动失败，状态码: ${status}。` };
+  }
+}
+
+function startCloudStatusValue(data: unknown): number | null {
+  const direct = numberValue(data);
+  if (direct !== null) return direct;
+  const record = asRecord(data);
+  return numberValue(record.status) ?? numberValue(record.startStatus) ?? numberValue(record.code);
 }
 
 async function cloudStatus(args: string[]): Promise<number> {

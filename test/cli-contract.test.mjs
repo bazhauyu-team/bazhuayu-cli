@@ -6,9 +6,10 @@ import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { authCommand } from '../dist/commands/auth.js';
-import { cloudHistory } from '../dist/commands/cloud.js';
+import { cloudCommand, cloudHistory } from '../dist/commands/cloud.js';
 import { ApiRequestError, fetchAccountInfo, validateApiKey } from '../dist/runtime/api-client.js';
-import { localDataExportCommand } from '../dist/commands/run.js';
+import { localDataExportCommand, runTask } from '../dist/commands/run.js';
+import { BillingRuntimeError } from '../dist/runtime/run-services.js';
 import { formatTaskListLine } from '../dist/commands/task.js';
 import { TaskDefinitionProvider } from '../dist/runtime/task-definition-provider.js';
 
@@ -124,8 +125,16 @@ test('capabilities is available before authentication and documents API key cont
   assert.equal(payload.data.machineContract.json.usageErrorsUseEnvelope, true);
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('AUTH_REQUIRED'));
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('AUTH_INVALID'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('CAPTCHA_BALANCE_NOT_ENOUGH'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('CLOUD_BALANCE_NOT_ENOUGH'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('CLOUD_PROXY_BALANCE_NOT_ENOUGH'));
   assert.equal(payload.data.machineContract.json.commonErrorCodes.includes('LOCAL_RUN_LIMIT_EXCEEDED'), false);
   assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('warning'));
+  assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('billing.warning'));
+  assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('billing.error'));
+  assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('captcha'));
+  assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('proxy'));
+  assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('run.failed'));
   assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('run.stopped'));
   assert.equal(payload.data.machineContract.lifecycle.daemonRequired, false);
   assert.equal(payload.data.machineContract.lifecycle.accountLocalRunLimit, false);
@@ -186,7 +195,9 @@ test('auth status verifies configured API key before reporting success', async (
       isSuccess: true,
       data: {
         userId: 'u_status',
-        email: 'status@example.com'
+        email: 'status@example.com',
+        currentAccountLevel: 120,
+        accountBalance: 88.5
       }
     }), {
       status: 200,
@@ -208,6 +219,9 @@ test('auth status verifies configured API key before reporting success', async (
     assert.equal(payload.data.source, 'env');
     assert.equal(payload.data.verified, true);
     assert.equal(payload.data.apiBaseUrl, 'https://example.invalid');
+    assert.equal(payload.data.currentAccountLevel, 120);
+    assert.equal(payload.data.currentAccountLevelName, '团队版');
+    assert.equal(payload.data.accountBalance, 88.5);
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
@@ -222,6 +236,7 @@ test('auth login accepts API key as a positional argument', async () => {
   const home = await mkdtemp(join(tmpdir(), 'octo-auth-arg-'));
   const originalHome = process.env.HOME;
   const seen = [];
+  const lines = [];
   const originalFetch = globalThis.fetch;
   const originalLog = console.log;
   process.env.HOME = home;
@@ -231,7 +246,9 @@ test('auth login accepts API key as a positional argument', async () => {
       isSuccess: true,
       data: {
         userId: 'u_arg',
-        email: 'arg@example.com'
+        email: 'arg@example.com',
+        currentAccountLevel: 120,
+        accountBalance: 12.3
       }
     }), {
       status: 200,
@@ -239,7 +256,9 @@ test('auth login accepts API key as a positional argument', async () => {
       headers: { 'content-type': 'application/json' }
     });
   };
-  console.log = () => undefined;
+  console.log = (...args) => {
+    lines.push(args.map((value) => String(value)).join(' '));
+  };
   try {
     const code = await authCommand('login', [
       'arg-key-123',
@@ -251,6 +270,10 @@ test('auth login accepts API key as a positional argument', async () => {
     assert.equal(seen.length, 1);
     assert.equal(seen[0].url, 'https://example.invalid/api/account/getAccount');
     assert.equal(seen[0].headers['x-api-key'], 'arg-key-123');
+    const payload = JSON.parse(lines[0]);
+    assert.equal(payload.data.currentAccountLevel, 120);
+    assert.equal(payload.data.currentAccountLevelName, '团队版');
+    assert.equal(payload.data.accountBalance, 12.3);
     const credentials = JSON.parse(await readFile(join(home, '.octopus', 'credentials.json'), 'utf8'));
     assert.equal(credentials.apiKey, 'arg-key-123');
   } finally {
@@ -258,6 +281,167 @@ test('auth login accepts API key as a positional argument', async () => {
     console.log = originalLog;
     if (originalHome === undefined) delete process.env.HOME;
     else process.env.HOME = originalHome;
+  }
+});
+
+test('auth login prints readable account plan in text output', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'octo-auth-plan-'));
+  const originalHome = process.env.HOME;
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const lines = [];
+  process.env.HOME = home;
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    isSuccess: true,
+    data: {
+      userId: 'u_plan',
+      email: 'plan@example.com',
+      currentAccountLevel: 120,
+      accountBalance: 66
+    }
+  }), {
+    status: 200,
+    statusText: 'OK',
+    headers: { 'content-type': 'application/json' }
+  });
+  console.log = (...args) => {
+    lines.push(args.map((value) => String(value)).join(' '));
+  };
+
+  try {
+    const code = await authCommand('login', [
+      'plan-key-123',
+      '--api-base-url',
+      'https://example.invalid'
+    ]);
+    assert.equal(code, 0);
+    assert.match(lines.join('\n'), /Account plan: 团队版/);
+    assert.match(lines.join('\n'), /Account balance: 66/);
+    assert.doesNotMatch(lines.join('\n'), /Account plan: 团队版 \(120\)/);
+    assert.doesNotMatch(lines.join('\n'), /Current account level: 120/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  }
+});
+
+test('auth login falls back to user balances endpoint when account has no balance field', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'octo-auth-balance-'));
+  const originalHome = process.env.HOME;
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.HOME = home;
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    seen.push(parsed.pathname);
+    if (parsed.pathname === '/api/account/getAccount') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          userId: 'u_balance',
+          email: 'balance@example.com',
+          currentAccountLevel: 120
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/user/balances') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          balance: 7.5,
+          totalBalance: 18.75
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (...args) => {
+    lines.push(args.map((value) => String(value)).join(' '));
+  };
+
+  try {
+    const code = await authCommand('login', [
+      'balance-key-123',
+      '--api-base-url',
+      'https://example.invalid'
+    ]);
+    assert.equal(code, 0);
+    assert.deepEqual(seen, ['/api/account/getAccount', '/api/user/balances']);
+    assert.match(lines.join('\n'), /Account balance: 18\.75/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+  }
+});
+
+test('auth info shows current account details', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalBaseUrl = process.env.OCTOPUS_API_BASE_URL;
+  const originalLog = console.log;
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'info-key';
+  process.env.OCTOPUS_API_BASE_URL = 'https://example.invalid';
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), 'https://example.invalid/api/account/getAccount');
+    assert.equal(init?.headers['x-api-key'], 'info-key');
+    return new Response(JSON.stringify({
+      isSuccess: true,
+      data: {
+        userId: 'u_info',
+        email: 'info@example.com',
+        userName: 'Info User',
+        currentAccountLevel: 120,
+        accountBalance: 99.9,
+        effectiveDate: '2026-12-31T00:00:00Z'
+      }
+    }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (...args) => {
+    lines.push(args.map((value) => String(value)).join(' '));
+  };
+
+  try {
+    const code = await authCommand('info', []);
+    assert.equal(code, 0);
+    const output = lines.join('\n');
+    assert.match(output, /User name: Info User/);
+    assert.match(output, /Email: info@example\.com/);
+    assert.match(output, /Account plan: 团队版/);
+    assert.match(output, /Account balance: 99\.9/);
+    assert.doesNotMatch(output, /团队版 \(120\)/);
+    assert.doesNotMatch(output, /Verified:/);
+    assert.doesNotMatch(output, /API: https:\/\/example\.invalid/);
+    assert.doesNotMatch(output, /Credentials:/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+    if (originalBaseUrl === undefined) delete process.env.OCTOPUS_API_BASE_URL;
+    else process.env.OCTOPUS_API_BASE_URL = originalBaseUrl;
   }
 });
 
@@ -440,6 +624,59 @@ test('cloud history enriches lots with exportable unique row counts', async () =
     assert.ok(seen.includes('/api/progress/task/task-cloud-history'));
     assert.ok(seen.includes('/api/taskData/task-cloud-history/lot/lot_1/exportData'));
     assert.match(lines.join('\n'), /rows=14  uniqueRows=12  duplicateRows=2/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('cloud start maps balance and proxy failures to stable json errors', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'dummy';
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    const taskId = parsed.searchParams.get('taskId');
+    const status = taskId === 'cloud-balance-low' ? 12 : taskId === 'cloud-proxy-low' ? 8 : 1;
+    return new Response(JSON.stringify({
+      isSuccess: true,
+      data: status
+    }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => {
+    lines.push(String(line));
+  };
+
+  try {
+    const balanceCode = await cloudCommand('start', [
+      'cloud-balance-low',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]);
+    const proxyCode = await cloudCommand('start', [
+      'cloud-proxy-low',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]);
+    assert.equal(balanceCode, 1);
+    assert.equal(proxyCode, 1);
+    const payloads = lines.map((line) => parseJson(line));
+    assert.equal(payloads[0].ok, false);
+    assert.equal(payloads[0].error.code, 'CLOUD_BALANCE_NOT_ENOUGH');
+    assert.match(payloads[0].error.message, /云采集余额不足/);
+    assert.equal(payloads[1].ok, false);
+    assert.equal(payloads[1].error.code, 'CLOUD_PROXY_BALANCE_NOT_ENOUGH');
+    assert.match(payloads[1].error.message, /代理 IP 余额不足/);
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
@@ -737,6 +974,401 @@ test('run validates max rows as a positive integer', async () => {
   const result = await runCli(['run', 'minimal', '--max-rows', '0', '--json'], { apiKey: 'dummy' });
   assertJsonFailure(result, 'RUN_MAX_ROWS_INVALID');
   assert.match(parseJson(result.stdout).error.message, /--max-rows/);
+});
+
+test('run preflight blocks paid template when balance is below charging granularity', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const lines = [];
+  const dir = await mkdtemp(join(tmpdir(), 'octopus-paid-template-task-'));
+  const taskFile = join(dir, 'paid-template-task.json');
+  const minimalTask = JSON.parse(await readFile('examples/minimal-task.json', 'utf8'));
+  await writeFile(taskFile, JSON.stringify({
+    ...minimalTask,
+    taskId: 'paid-template-low-balance',
+    taskName: 'Paid Template Low Balance',
+    isTemplate: true,
+    workFlowType: 10,
+    template: {
+      permission: { allowCrossAccountLevelPricing: true },
+      prices: { standard: 1 },
+      pricePerData: 1
+    }
+  }));
+  process.env.OCTOPUS_API_KEY = 'billing-key';
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === '/api/templatecharging/user/canStartTemplateTask/paid-template-low-balance') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          canUse: true,
+          balance: 0,
+          balanceLowThreshold: 20,
+          chargingGranularity: 1
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  process.stdout.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+  process.stderr.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+
+  try {
+    const code = await runTask('paid-template-low-balance', ['--task-file', taskFile, '--json']);
+    assert.equal(code, 2);
+    const payload = lines.map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).find((item) => item?.ok === false);
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'TEMPLATE_BALANCE_NOT_ENOUGH');
+    assert.match(payload.error.message, /付费模板余额不足/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('run preflight skips template billing for non-template task files', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const lines = [];
+  const seen = [];
+  process.env.OCTOPUS_API_KEY = 'billing-key';
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    seen.push(parsed.pathname);
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 500,
+      statusText: 'Server Error',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  process.stdout.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+  process.stderr.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+
+  try {
+    const code = await runTask('minimal', [
+      '--task-file',
+      'examples/minimal-task.json',
+      '--jsonl',
+      '--timeout-ms',
+      '1'
+    ]);
+    assert.equal(code, 2);
+    assert.equal(seen.includes('/api/templatecharging/user/canStartTemplateTask/minimal'), false);
+    const templateWarning = lines.map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).find((item) => item?.code === 'TEMPLATE_BALANCE_LOW');
+    assert.equal(templateWarning, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('run preflight emits jsonl warning for low paid template balance', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const lines = [];
+  const dir = await mkdtemp(join(tmpdir(), 'octopus-paid-template-warning-'));
+  const taskFile = join(dir, 'paid-template-warning.json');
+  const minimalTask = JSON.parse(await readFile('examples/minimal-task.json', 'utf8'));
+  await writeFile(taskFile, JSON.stringify({
+    ...minimalTask,
+    taskId: 'paid-template-warning',
+    taskName: 'Paid Template Warning',
+    isTemplate: true,
+    workFlowType: 10,
+    template: {
+      permission: { allowCrossAccountLevelPricing: true },
+      prices: { standard: 1 },
+      pricePerData: 1
+    }
+  }));
+  process.env.OCTOPUS_API_KEY = 'billing-key';
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === '/api/templatecharging/user/canStartTemplateTask/paid-template-warning') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          canUse: true,
+          balance: 5,
+          balanceLowThreshold: 20,
+          chargingGranularity: 1
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  process.stdout.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+  process.stderr.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+
+  try {
+    const code = await runTask('paid-template-warning', [
+      '--task-file',
+      taskFile,
+      '--jsonl',
+      '--timeout-ms',
+      '1'
+    ]);
+    assert.equal(code, 2);
+    const warning = lines.map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).find((item) => item?.event === 'billing.warning');
+    assert.equal(warning?.code, 'TEMPLATE_BALANCE_LOW');
+    assert.equal(warning?.balance, 5);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('run preflight blocks strong proxy when balance is below threshold', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const lines = [];
+  const seen = [];
+  const dir = await mkdtemp(join(tmpdir(), 'octopus-proxy-task-'));
+  const taskFile = join(dir, 'proxy-task.json');
+  const minimalTask = JSON.parse(await readFile('examples/minimal-task.json', 'utf8'));
+  await writeFile(taskFile, JSON.stringify({
+    ...minimalTask,
+    taskId: 'proxy-low-balance',
+    taskName: 'Proxy Low Balance',
+    brokerSettings: {
+      ipProxySettings: {
+        ipProxyFromType: 1
+      }
+    }
+  }));
+  process.env.OCTOPUS_API_KEY = 'billing-key';
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    seen.push(parsed.pathname);
+    if (parsed.pathname === '/api/user/balances') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: { balance: 3, totalBalance: 3 }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'not found' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  process.stdout.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+  process.stderr.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+
+  try {
+    const code = await runTask('proxy-low-balance', ['--task-file', taskFile, '--json']);
+    assert.equal(code, 2);
+    const payload = lines.map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).find((item) => item?.ok === false);
+    assert.equal(payload?.error.code, 'PROXY_BALANCE_NOT_ENOUGH');
+    assert.match(payload?.error.message, /优质代理 IP 余额不足/);
+    assert.equal(seen.includes('/api/HttpProxy/Balance'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('run preflight warns for captcha balance risk without blocking startup', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const lines = [];
+  const dir = await mkdtemp(join(tmpdir(), 'octopus-captcha-task-'));
+  const taskFile = join(dir, 'captcha-task.json');
+  const minimalTask = JSON.parse(await readFile('examples/minimal-task.json', 'utf8'));
+  await writeFile(taskFile, JSON.stringify({
+    ...minimalTask,
+    taskId: 'captcha-low-balance',
+    taskName: 'Captcha Low Balance',
+    brokerSettings: {
+      captchaSettings: {
+        isAutoCloudflare: true
+      }
+    }
+  }));
+  process.env.OCTOPUS_API_KEY = 'billing-key';
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === '/api/user/balances') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: { balance: 2, totalBalance: 2 }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/Captcha/GetCaptchaRemain') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: 0
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'not found' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  process.stdout.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+  process.stderr.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+
+  try {
+    const code = await runTask('captcha-low-balance', [
+      '--task-file',
+      taskFile,
+      '--jsonl',
+      '--timeout-ms',
+      '1'
+    ]);
+    assert.equal(code, 2);
+    const warning = lines.map((line) => {
+      try { return JSON.parse(line); } catch { return null; }
+    }).find((item) => item?.event === 'billing.warning');
+    assert.equal(warning?.code, 'CAPTCHA_BALANCE_LOW');
+    assert.equal(warning?.balance, 2);
+    assert.equal(warning?.captchaRemain, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('billing runtime errors expose stable codes and readable messages', () => {
+  const captcha = new BillingRuntimeError('CAPTCHA_BALANCE_NOT_ENOUGH', '验证码余额不足，请充值后重试。', 3);
+  const proxy = new BillingRuntimeError('PROXY_BALANCE_NOT_ENOUGH', '代理 IP 余额不足，请充值后重试。', 4);
+  assert.equal(captcha.code, 'CAPTCHA_BALANCE_NOT_ENOUGH');
+  assert.equal(captcha.status, 3);
+  assert.match(captcha.message, /验证码余额不足/);
+  assert.equal(proxy.code, 'PROXY_BALANCE_NOT_ENOUGH');
+  assert.equal(proxy.status, 4);
+  assert.match(proxy.message, /代理 IP 余额不足/);
+});
+
+test('runtime billing service failures are reported as events without forcing run stop', async () => {
+  const source = await readFile('src/runtime/engine-host.ts', 'utf8');
+  assert.match(source, /event: 'billing\.error'|'billing\.error'/);
+  assert.match(source, /phase: 'failed'/);
+  assert.doesNotMatch(source, /workflow\.stop\?\.\(\);/);
+  assert.doesNotMatch(source, /runtime\.error/);
 });
 
 test('run completion prints a copyable local data export command', () => {

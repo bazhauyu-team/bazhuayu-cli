@@ -14,6 +14,17 @@ const PROXY_CBC_KEY = Int8Array.from([
 ]);
 const PROXY_CBC_IV = Int8Array.from([75, 77, 13, 73, 107, 74, 134, 35, 251, 32, 92, 14, 44, 177, 14, 80]);
 
+export class BillingRuntimeError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+    readonly status?: number
+  ) {
+    super(message);
+    this.name = 'BillingRuntimeError';
+  }
+}
+
 export type CaptchaAnswer =
   | { token: string }
   | { distance: number; status: number; isAvailable: boolean }
@@ -93,7 +104,7 @@ export async function resolveProxy(task: TaskDefinition, lotId: string, webPageU
   if (!data) throw new Error('proxy response is missing data');
   const status = numberValue(data.status) ?? PROXY_OK;
   if (status !== PROXY_OK) {
-    throw new Error(`proxy service returned status ${status}`);
+    throw proxyStatusError(status);
   }
 
   const encryptedIp = stringValue(data.ip);
@@ -241,7 +252,7 @@ async function postCaptcha(endpoint: string, body: Record<string, unknown>, body
   const data = getRecord(getRecord(result)?.data);
   const status = numberValue(data?.status) ?? 0;
   if (status !== CAPTCHA_SUCCESS) {
-    throw new Error(`captcha service returned status ${status}`);
+    throw captchaStatusError(status);
   }
   return {
     status,
@@ -317,6 +328,22 @@ function encodeRequestBody(body: Record<string, unknown>, format: 'json' | 'form
     }
   }
   return form.toString();
+}
+
+function captchaStatusError(status: number): BillingRuntimeError {
+  if (status === 2) return new BillingRuntimeError('CAPTCHA_ACCOUNT_EXPIRED', '验证码服务不可用：当前账号套餐已过期或无可用权益。', status);
+  if (status === 3) return new BillingRuntimeError('CAPTCHA_BALANCE_NOT_ENOUGH', '验证码余额不足，请充值后重试。', status);
+  if (status === 4) return new BillingRuntimeError('CAPTCHA_DAILY_LIMIT_REACHED', '验证码今日使用额度已达上限，请明天再试或调整账号权益。', status);
+  if (status === 9) return new BillingRuntimeError('CAPTCHA_SERVICE_ERROR', '验证码服务暂时不可用，请稍后重试。', status);
+  return new BillingRuntimeError('CAPTCHA_SERVICE_FAILED', `验证码服务返回异常状态: ${status}`, status);
+}
+
+function proxyStatusError(status: number): BillingRuntimeError {
+  if (status === 2 || status === 3) return new BillingRuntimeError('PROXY_LIMIT_REACHED', '代理 IP 使用额度已达上限，请检查账号权益或稍后重试。', status);
+  if (status === 4) return new BillingRuntimeError('PROXY_BALANCE_NOT_ENOUGH', '代理 IP 余额不足，请充值后重试。', status);
+  if (status === 5) return new BillingRuntimeError('PROXY_USER_NOT_ALLOWED', '当前账号无权使用优质代理 IP，请检查套餐权益。', status);
+  if (status === 503) return new BillingRuntimeError('PROXY_SERVICE_UNAVAILABLE', '代理 IP 服务暂时不可用，请稍后重试。', status);
+  return new BillingRuntimeError('PROXY_SERVICE_FAILED', `代理 IP 服务返回异常状态: ${status}`, status);
 }
 
 function numericCaptchaType(value: unknown): number | undefined {

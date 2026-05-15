@@ -69,6 +69,25 @@ octopus run <taskId> --jsonl
 
 Each line is one event object. Agents should switch on the stable `event` field. Stable lifecycle events are published by `capabilities --json`. Runtime-specific operational events such as `captcha` and `proxy` can also appear when the engine requests them.
 
+Billing-related events can appear in the same stream and are also written to the
+run's `events.jsonl` artifact:
+
+```json
+{"event":"billing.warning","code":"CAPTCHA_BALANCE_LOW","message":"验证码余额可能不足，当前账号余额 2，验证码剩余额度 0。运行中需要自动识别验证码时可能失败。"}
+{"event":"billing.error","code":"CAPTCHA_BALANCE_NOT_ENOUGH","message":"验证码余额不足，请充值后重试。","status":3}
+```
+
+Paid templates can block `run` before startup. Premium proxy IP can also block
+startup when the configured task needs premium proxy IP and the balance is below
+the client threshold. CAPTCHA low balance is reported as a warning before
+startup and as `CAPTCHA_BALANCE_NOT_ENOUGH` if the runtime service later returns
+status `3`.
+
+`captcha` and `proxy` runtime events include `phase`, and failures include
+`code`, `status`, and `message` when available. Detached runs write the same
+events to `events.jsonl`; inspect them through the local run artifact directory
+or the `runs` commands.
+
 ## Exit codes
 
 | Code | Meaning |

@@ -4,9 +4,16 @@ import { join, resolve } from 'node:path';
 import { hasFlag, parsePositiveInt, valueAfter } from '../cli/args.js';
 import { printEnvelope, printUsageError } from '../cli/output.js';
 import { appendJsonLine, ensureRunDir, writeRunSummary } from '../runtime/artifacts.js';
+import {
+  BillingPreflightError,
+  checkPaidCapabilityPreflight,
+  checkTemplateBillingPreflight,
+  type BillingWarning
+} from '../runtime/billing.js';
 import { EngineHost } from '../runtime/engine-host.js';
 import { defaultRunsDir } from '../runtime/local-runs.js';
 import { safeFileName } from '../runtime/naming.js';
+import { BillingRuntimeError } from '../runtime/run-services.js';
 import {
   isRunControlReachable,
   listActiveTaskControlStates,
@@ -250,6 +257,7 @@ async function executeTask(
   const runtimeConsole = maybeSuppressRuntimeConsole(options);
   const detachedBootstrapDir = process.env[DETACHED_BOOTSTRAP_DIR_ENV];
   const startedAt = new Date().toISOString();
+  let billingWarnings: BillingWarning[] = [];
 
   const appendRunArtifact = (fileName: string, value: unknown) => {
     if (!runDirReady) return;
@@ -394,8 +402,19 @@ async function executeTask(
     if (options.jsonl) printRunJsonLine(runtimeConsole, { event: 'proxy', ...event });
   });
 
+  host.on('billing.error', (event) => {
+    appendRunArtifact('events.jsonl', { event: 'billing.error', ...event });
+    if (options.jsonl) printRunJsonLine(runtimeConsole, { event: 'billing.error', ...event });
+    else if (!options.json) runtimeConsole.stderr(`Billing error: ${event.message}`);
+  });
+
   try {
     const task = await loadTask();
+    billingWarnings = [
+      ...(await checkTemplateBillingPreflight(task)),
+      ...(await checkPaidCapabilityPreflight(task))
+    ];
+    printBillingWarnings(options, runtimeConsole, billingWarnings);
 
     let interruptCount = 0;
     const interrupted = new Promise<RunSummary>((resolveInterrupted) => {
@@ -475,7 +494,7 @@ async function executeTask(
       printRunEnvelope(runtimeConsole, true, {
         ...finalSummary,
         outputDir: runDir,
-        warnings: resourceWarning ? [resourceWarning] : []
+        warnings: [...(resourceWarning ? [resourceWarning] : []), ...billingWarnings]
       });
     } else {
       runtimeConsole.stdout(`Run completed: ${finalSummary.runId}`);
@@ -491,6 +510,7 @@ async function executeTask(
       signalHandler = null;
     }
     const message = error instanceof Error ? error.message : String(error);
+    const errorCode = runErrorCode(error);
     if (currentRunDir && currentRunId) {
       runStatus = 'failed';
       await waitControlServer();
@@ -500,6 +520,8 @@ async function executeTask(
         event: 'run.failed',
         runId: currentRunId,
         taskId,
+        code: errorCode,
+        status: error instanceof BillingRuntimeError ? error.status : undefined,
         error: message
       }).catch(() => undefined);
       await closeControlServer();
@@ -516,12 +538,33 @@ async function executeTask(
       }).catch(() => undefined);
     }
     if (options.json || options.jsonl) {
-      printRunEnvelope(runtimeConsole, false, undefined, 'ENGINE_RUN_FAILED', message);
+      printRunEnvelope(runtimeConsole, false, undefined, errorCode, message);
     } else {
       runtimeConsole.stderr(`运行失败: ${message}`);
     }
     return EXIT_RUNTIME_FAILED;
   }
+}
+
+function printBillingWarnings(
+  options: RunOptions,
+  runtimeConsole: ReturnType<typeof maybeSuppressRuntimeConsole>,
+  warnings: BillingWarning[]
+): void {
+  for (const warning of warnings) {
+    if (options.json) continue;
+    if (options.jsonl) {
+      printRunJsonLine(runtimeConsole, { event: 'billing.warning', ...warning });
+    } else {
+      runtimeConsole.stderr(`Warning: ${warning.message}`);
+    }
+  }
+}
+
+function runErrorCode(error: unknown): string {
+  if (error instanceof BillingPreflightError) return error.code;
+  if (error instanceof BillingRuntimeError) return error.code;
+  return 'ENGINE_RUN_FAILED';
 }
 
 export function localDataExportCommand(summary: Pick<RunSummary, 'taskId' | 'lotId'>): string {

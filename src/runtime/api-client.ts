@@ -48,6 +48,16 @@ export interface RemoteTaskInfo {
   taskName?: string;
   xoml?: string;
   brokerSettings?: unknown;
+  workflowSetting?: unknown;
+  TaskSettings?: unknown;
+  template?: unknown;
+  Template?: unknown;
+  workFlowType?: number;
+  WorkFlowType?: number;
+  templateVersionId?: string | number;
+  TemplateVersionId?: string | number;
+  isTemplate?: boolean;
+  IsTemplate?: boolean;
   userAgent?: string;
   disableImage?: boolean;
   adBlockEnable?: boolean;
@@ -68,6 +78,8 @@ export interface ApiKeyValidationResult {
   ok: true;
   baseUrl: string;
   endpoint: string;
+  account: AccountInfo;
+  balance?: AccountBalanceInfo;
 }
 
 export interface AccountInfo {
@@ -84,6 +96,25 @@ export interface AccountInfo {
   enterpriseUser?: unknown;
   nonTrialAccountLevel?: number;
   [key: string]: unknown;
+}
+
+export interface AccountBalanceInfo {
+  balance?: number;
+  totalBalance?: number;
+  raw?: unknown;
+}
+
+export interface TemplateBillingInfo {
+  canUse: boolean;
+  balance: number;
+  balanceLowThreshold: number;
+  chargingGranularity: number;
+  raw: unknown;
+}
+
+export interface CaptchaRemainInfo {
+  remain?: number;
+  raw: unknown;
 }
 
 export class ApiRequestError extends Error {
@@ -178,10 +209,19 @@ export async function validateApiKey(options: { apiKey: string; baseUrl?: string
     apiKey: options.apiKey,
     baseUrl: options.baseUrl
   });
+  const balance = typeof result.data.accountBalance === 'number'
+    ? {
+        balance: result.data.accountBalance,
+        totalBalance: result.data.accountBalance,
+        raw: { accountBalance: result.data.accountBalance }
+      }
+    : await fetchAccountBalance({ apiKey: options.apiKey, baseUrl: options.baseUrl }).catch(() => undefined);
   return {
     ok: true,
     baseUrl: result.baseUrl,
-    endpoint: result.endpoint
+    endpoint: result.endpoint,
+    account: result.data,
+    balance
   };
 }
 
@@ -199,6 +239,75 @@ export async function fetchAccountInfo(options: { apiKey: string; baseUrl?: stri
   return {
     ...result,
     data: account as AccountInfo
+  };
+}
+
+export async function fetchAccountBalance(options: { apiKey: string; baseUrl?: string }): Promise<AccountBalanceInfo> {
+  const result = await apiResult<Record<string, unknown> | number>({
+    apiKey: options.apiKey,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/user/balances',
+    method: 'GET'
+  });
+  if (typeof result.data === 'number') {
+    return {
+      balance: result.data,
+      totalBalance: result.data,
+      raw: result.raw
+    };
+  }
+  const data = getRecord(result.data);
+  const balance = numberValue(data?.balance);
+  const totalBalance = numberValue(data?.totalBalance);
+  return {
+    balance,
+    totalBalance: totalBalance ?? balance,
+    raw: result.raw
+  };
+}
+
+export async function fetchTemplateBillingInfo(options: {
+  apiKey: string;
+  taskId: string;
+  baseUrl?: string;
+}): Promise<ApiResult<TemplateBillingInfo>> {
+  const endpoint = `/api/templatecharging/user/canStartTemplateTask/${encodeURIComponent(options.taskId)}`;
+  const result = await apiResult<Record<string, unknown>>({
+    apiKey: options.apiKey,
+    baseUrl: options.baseUrl,
+    endpoint,
+    method: 'GET'
+  });
+  const data = getRecord(result.data);
+  return {
+    ...result,
+    data: {
+      canUse: data?.canUse !== false,
+      balance: numberValue(data?.balance) ?? 0,
+      balanceLowThreshold: numberValue(data?.balanceLowThreshold) ?? 0,
+      chargingGranularity: numberValue(data?.chargingGranularity) ?? 0,
+      raw: result.data
+    }
+  };
+}
+
+export async function fetchCaptchaRemain(options: { apiKey: string; baseUrl?: string }): Promise<CaptchaRemainInfo> {
+  const result = await apiResult<Record<string, unknown> | number>({
+    apiKey: options.apiKey,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/Captcha/GetCaptchaRemain',
+    method: 'GET'
+  });
+  if (typeof result.data === 'number') {
+    return {
+      remain: result.data,
+      raw: result.raw
+    };
+  }
+  const data = getRecord(result.data);
+  return {
+    remain: numberValue(data?.remain) ?? numberValue(data?.balance) ?? numberValue(data?.totalBalance),
+    raw: result.raw
   };
 }
 
@@ -373,6 +482,15 @@ function getAppError(payload: unknown): string {
 
 function toNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function numberValue(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 function trimBody(body: string): string {

@@ -18,6 +18,7 @@ Authentication:
   octopus auth login <apiKey> [--api-base-url <url>] [--json]
   octopus auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
   octopus auth status [--json]
+  octopus auth info [--json]
   octopus auth logout [--json]
 
 API key:
@@ -145,6 +146,7 @@ Usage:
   octopus auth login <apiKey> [--api-base-url <url>] [--json]
   octopus auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
   octopus auth status [--json]
+  octopus auth info [--json]
   octopus auth logout [--json]
   octopus browser doctor [--chrome-path <path>] [--json]
   octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--json]
