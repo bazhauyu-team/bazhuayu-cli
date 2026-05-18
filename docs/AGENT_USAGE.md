@@ -134,6 +134,28 @@ OCTOPUS_API_BASE_URL=https://example.com
 
 `OCTOPUS_API_KEY` overrides stored credentials.
 
+## Test commands
+
+Run the full CLI contract suite:
+
+```bash
+npm run test:cli-contract
+```
+
+Run the billing and fake-engine runtime coverage only:
+
+```bash
+npm run test:billing-runtime
+```
+
+Before handing off billing or runtime changes, run:
+
+```bash
+npm run typecheck
+npm run build
+npm run test:cli-contract
+```
+
 ## Recommended agent workflows
 
 List tasks:

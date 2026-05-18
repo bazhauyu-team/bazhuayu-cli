@@ -28,12 +28,23 @@ import {
 import { maybePrintRuntimeSecurityNotice } from './security-notice.js';
 
 const require = createRequire(import.meta.url);
-const EngineModule = require('@octopus/engine');
-const WorkflowAgent = EngineModule.default ?? EngineModule;
-const WorkflowEvents = EngineModule.WorkflowEvents;
-const resolveChrome = EngineModule.resolveChrome as (options?: {
-  onStatus?: (status: { state: string; progress?: number }) => void;
-}) => Promise<{ executablePath: string }>;
+const defaultEngineModule = require('@octopus/engine');
+
+export interface EngineModuleLike {
+  default?: new (options: Record<string, unknown>) => any;
+  WorkflowEvents: Record<string, string>;
+  resolveChrome: (options?: {
+    onStatus?: (status: { state: string; progress?: number }) => void;
+  }) => Promise<{ executablePath: string }>;
+}
+
+export interface BridgeHubLike extends EventEmitter {
+  createSessionBridge(runId: string): Promise<unknown>;
+  waitForSessionConnected(runId: string, timeoutMs: number): Promise<void>;
+  close(): void;
+}
+
+export type BridgeHubFactory = () => BridgeHubLike;
 
 export interface EngineHostEvents {
   'run.started': { runId: string; lotId: string; taskId: string; taskName: string };
@@ -79,17 +90,27 @@ export interface RuntimeBillingErrorEvent {
 
 export class EngineHost extends EventEmitter {
   private workflow: any | null = null;
-  private bridgeHub: BridgeHub | null = null;
+  private bridgeHub: BridgeHubLike | null = null;
+
+  constructor(
+    private readonly engineModule: EngineModuleLike = defaultEngineModule,
+    private readonly bridgeHubFactory: BridgeHubFactory = () => new BridgeHub()
+  ) {
+    super();
+  }
 
   async start(task: TaskDefinition, options: RunOptions): Promise<RunSummary> {
     maybePrintRuntimeSecurityNotice();
+    const WorkflowAgent = this.engineModule.default ?? this.engineModule as unknown as new (options: Record<string, unknown>) => any;
+    const WorkflowEvents = this.engineModule.WorkflowEvents;
+    const resolveChrome = this.engineModule.resolveChrome;
     const { runId, lotId } = createRunIdentity(task.taskId);
     const startedAt = new Date().toISOString();
     let total = 0;
 
     this.emit('run.started', { runId, lotId, taskId: task.taskId, taskName: task.taskName });
 
-    this.bridgeHub = new BridgeHub();
+    this.bridgeHub = this.bridgeHubFactory();
     this.attachBridgeDiagnostics(this.bridgeHub, runId, options.debugBridge);
     const extensionBridge = await this.bridgeHub.createSessionBridge(runId);
     const chromePath = options.chromePath ?? (await resolveChrome({
@@ -249,7 +270,7 @@ export class EngineHost extends EventEmitter {
     this.bridgeHub = null;
   }
 
-  private attachBridgeDiagnostics(bridgeHub: BridgeHub, runId: string, debugBridge: boolean): void {
+  private attachBridgeDiagnostics(bridgeHub: BridgeHubLike, runId: string, debugBridge: boolean): void {
     bridgeHub.on('bridge.listening', (event: any) => {
       this.emit('log', { runId, level: 'debug', message: `bridge.listening ${event.wsUrl}` });
     });

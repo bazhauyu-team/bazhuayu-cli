@@ -1,6 +1,6 @@
 {
   "name": "bazhuayu-cli",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Standalone Bazhuayu engine CLI that runs local collection without the Electron client.",
   "private": false,
   "type": "module",
@@ -29,7 +29,9 @@
     "prepack": "node scripts/prepare-engine-bundle.mjs",
     "release": "node scripts/release.mjs",
     "start": "node dist/index.js",
-    "test": "npm run build && node --test --test-concurrency=1 test/*.test.mjs",
+    "test": "npm run typecheck && npm run build && node --test --test-concurrency=1 test/*.test.mjs",
+    "test:cli-contract": "node --test --test-concurrency=1 test/cli-contract.test.mjs",
+    "test:billing-runtime": "node --test --test-concurrency=1 --test-name-pattern \"runtime .*success|runtime .*billing.*without forcing|preflight\" test/cli-contract.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "engines": {

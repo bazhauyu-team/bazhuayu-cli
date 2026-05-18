@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -8,7 +9,8 @@ import { promisify } from 'node:util';
 import { authCommand } from '../dist/commands/auth.js';
 import { cloudCommand, cloudHistory } from '../dist/commands/cloud.js';
 import { ApiRequestError, fetchAccountInfo, validateApiKey } from '../dist/runtime/api-client.js';
-import { localDataExportCommand, runTask } from '../dist/commands/run.js';
+import { localDataExportCommand, runTask, setEngineHostFactoryForTesting } from '../dist/commands/run.js';
+import { EngineHost } from '../dist/runtime/engine-host.js';
 import { BillingRuntimeError } from '../dist/runtime/run-services.js';
 import { formatTaskListLine } from '../dist/commands/task.js';
 import { TaskDefinitionProvider } from '../dist/runtime/task-definition-provider.js';
@@ -1085,19 +1087,15 @@ test('run preflight skips template billing for non-template task files', async (
   });
 
   try {
-    const code = await runTask('minimal', [
-      '--task-file',
-      'examples/minimal-task.json',
-      '--jsonl',
-      '--timeout-ms',
-      '1'
-    ]);
-    assert.equal(code, 2);
+    const result = await runWithFakeRuntimeEvent('preflight-ok', {
+      taskFile: 'examples/minimal-task.json',
+      fetch: globalThis.fetch
+    });
+    assert.equal(result.code, 0);
     assert.equal(seen.includes('/api/templatecharging/user/canStartTemplateTask/minimal'), false);
-    const templateWarning = lines.map((line) => {
-      try { return JSON.parse(line); } catch { return null; }
-    }).find((item) => item?.code === 'TEMPLATE_BALANCE_LOW');
+    const templateWarning = result.jsonl.find((item) => item?.code === 'TEMPLATE_BALANCE_LOW');
     assert.equal(templateWarning, undefined);
+    assert.ok(result.events.some((item) => item.event === 'run.stopped'));
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
@@ -1168,19 +1166,16 @@ test('run preflight emits jsonl warning for low paid template balance', async ()
   });
 
   try {
-    const code = await runTask('paid-template-warning', [
-      '--task-file',
+    const result = await runWithFakeRuntimeEvent('paid-template-warning', {
       taskFile,
-      '--jsonl',
-      '--timeout-ms',
-      '1'
-    ]);
-    assert.equal(code, 2);
-    const warning = lines.map((line) => {
-      try { return JSON.parse(line); } catch { return null; }
-    }).find((item) => item?.event === 'billing.warning');
+      fetch: globalThis.fetch
+    });
+    assert.equal(result.code, 0);
+    const warning = result.jsonl.find((item) => item?.event === 'billing.warning');
     assert.equal(warning?.code, 'TEMPLATE_BALANCE_LOW');
     assert.equal(warning?.balance, 5);
+    assert.ok(result.events.some((item) => item.event === 'billing.warning' && item.code === 'TEMPLATE_BALANCE_LOW'));
+    assert.ok(result.events.some((item) => item.event === 'run.stopped'));
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
@@ -1327,20 +1322,17 @@ test('run preflight warns for captcha balance risk without blocking startup', as
   });
 
   try {
-    const code = await runTask('captcha-low-balance', [
-      '--task-file',
+    const result = await runWithFakeRuntimeEvent('captcha-low-balance', {
       taskFile,
-      '--jsonl',
-      '--timeout-ms',
-      '1'
-    ]);
-    assert.equal(code, 2);
-    const warning = lines.map((line) => {
-      try { return JSON.parse(line); } catch { return null; }
-    }).find((item) => item?.event === 'billing.warning');
+      fetch: globalThis.fetch
+    });
+    assert.equal(result.code, 0);
+    const warning = result.jsonl.find((item) => item?.event === 'billing.warning');
     assert.equal(warning?.code, 'CAPTCHA_BALANCE_LOW');
     assert.equal(warning?.balance, 2);
     assert.equal(warning?.captchaRemain, 0);
+    assert.ok(result.events.some((item) => item.event === 'billing.warning' && item.code === 'CAPTCHA_BALANCE_LOW'));
+    assert.ok(result.events.some((item) => item.event === 'run.stopped'));
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
@@ -1364,11 +1356,64 @@ test('billing runtime errors expose stable codes and readable messages', () => {
 });
 
 test('runtime billing service failures are reported as events without forcing run stop', async () => {
-  const source = await readFile('src/runtime/engine-host.ts', 'utf8');
-  assert.match(source, /event: 'billing\.error'|'billing\.error'/);
-  assert.match(source, /phase: 'failed'/);
-  assert.doesNotMatch(source, /workflow\.stop\?\.\(\);/);
-  assert.doesNotMatch(source, /runtime\.error/);
+  const result = await runWithFakeRuntimeEvent('captcha-no-balance');
+  assert.equal(result.code, 0);
+  assert.equal(result.workflowStopCalls, 0);
+  assert.equal(result.workflowStopTaskCalls, 0);
+
+  const captchaFailed = result.jsonl.find((item) => item.event === 'captcha' && item.phase === 'failed');
+  assert.equal(captchaFailed?.code, 'CAPTCHA_BALANCE_NOT_ENOUGH');
+  assert.equal(captchaFailed?.status, 3);
+  const billingError = result.jsonl.find((item) => item.event === 'billing.error');
+  assert.equal(billingError?.capability, 'captcha');
+  assert.equal(billingError?.code, 'CAPTCHA_BALANCE_NOT_ENOUGH');
+  assert.equal(billingError?.status, 3);
+  assert.ok(result.events.some((item) => item.event === 'billing.error' && item.code === 'CAPTCHA_BALANCE_NOT_ENOUGH'));
+  assert.ok(result.events.some((item) => item.event === 'run.stopped'));
+});
+
+test('runtime proxy billing failures are reported as events without forcing run stop', async () => {
+  const result = await runWithFakeRuntimeEvent('proxy-no-balance');
+  assert.equal(result.code, 0);
+  assert.equal(result.workflowStopCalls, 0);
+  assert.equal(result.workflowStopTaskCalls, 0);
+
+  const proxyFailed = result.jsonl.find((item) => item.event === 'proxy' && item.phase === 'failed');
+  assert.equal(proxyFailed?.code, 'PROXY_BALANCE_NOT_ENOUGH');
+  assert.equal(proxyFailed?.status, 4);
+  const billingError = result.jsonl.find((item) => item.event === 'billing.error');
+  assert.equal(billingError?.capability, 'proxy');
+  assert.equal(billingError?.code, 'PROXY_BALANCE_NOT_ENOUGH');
+  assert.equal(billingError?.status, 4);
+  assert.ok(result.events.some((item) => item.event === 'billing.error' && item.code === 'PROXY_BALANCE_NOT_ENOUGH'));
+});
+
+test('runtime captcha success is resolved and returned to the workflow', async () => {
+  const result = await runWithFakeRuntimeEvent('captcha-success');
+  assert.equal(result.code, 0);
+  assert.equal(result.workflowStopCalls, 0);
+  assert.equal(result.workflowStopTaskCalls, 0);
+  assert.deepEqual(result.captchaTokens, [{ captchaType: 0, token: 'captcha-token' }]);
+
+  const captchaResolved = result.jsonl.find((item) => item.event === 'captcha' && item.phase === 'resolved');
+  assert.equal(captchaResolved?.numericCaptchaType, 0);
+  assert.equal(result.jsonl.some((item) => item.event === 'billing.error'), false);
+  assert.ok(result.events.some((item) => item.event === 'captcha' && item.phase === 'resolved'));
+});
+
+test('runtime proxy success is resolved and returned to the workflow', async () => {
+  const result = await runWithFakeRuntimeEvent('proxy-success');
+  assert.equal(result.code, 0);
+  assert.equal(result.workflowStopCalls, 0);
+  assert.equal(result.workflowStopTaskCalls, 0);
+  assert.equal(result.sentProxy.length, 1);
+  assert.equal(result.sentProxy[0].proxyIp.ip, '127.0.0.1');
+  assert.equal(result.sentProxy[0].proxyIp.port, 8080);
+
+  assert.ok(result.jsonl.some((item) => item.event === 'proxy' && item.phase === 'resolved' && item.hasProxy === true));
+  assert.ok(result.jsonl.some((item) => item.event === 'proxy' && item.phase === 'sent' && item.hasProxy === true));
+  assert.equal(result.jsonl.some((item) => item.event === 'billing.error'), false);
+  assert.ok(result.events.some((item) => item.event === 'proxy' && item.phase === 'sent'));
 });
 
 test('run completion prints a copyable local data export command', () => {
@@ -1436,3 +1481,200 @@ test('detached startup failure writes bootstrap artifact', async () => {
   assert.match(bootstrap.error, /actionType|Nothing to execute|缺少可执行/);
   assert.equal(bootstrap.taskId, 'invalid-detach');
 });
+
+async function runWithFakeRuntimeEvent(scenario, options = {}) {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const lines = [];
+  const root = await mkdtemp(join(tmpdir(), `octopus-${scenario}-`));
+  const output = join(root, 'runs');
+  let taskFile = options.taskFile;
+  if (!taskFile) {
+    taskFile = join(root, 'task.json');
+    const minimalTask = JSON.parse(await readFile('examples/minimal-task.json', 'utf8'));
+    await writeFile(taskFile, JSON.stringify({
+      ...minimalTask,
+      taskId: scenario,
+      taskName: scenario,
+      ...(scenario === 'proxy-no-balance' || scenario === 'proxy-success'
+        ? {
+            brokerSettings: {
+              ipProxySettings: {
+                ipProxyFromType: 1
+              }
+            }
+          }
+        : {})
+    }));
+  }
+  process.env.OCTOPUS_API_KEY = 'runtime-key';
+
+  let workflowInstance;
+  const workflowEvents = {
+    ExtraData: 'extraData',
+    Log: 'log',
+    Stopped: 'stopped',
+    Captcha: 'captcha',
+    GetProxy: 'getProxy',
+    CollectProxyLog: 'collectProxyLog'
+  };
+  class FakeWorkflow extends EventEmitter {
+    stopCalls = 0;
+    stopTaskCalls = 0;
+    sentProxy = [];
+    captchaTokens = [];
+
+    constructor() {
+      super();
+      workflowInstance = this;
+    }
+
+    async start() {
+      setImmediate(() => {
+        if (scenario === 'captcha-no-balance' || scenario === 'captcha-success') {
+          this.emit(workflowEvents.Captcha, {
+            data: [{
+              captchaType: 'image',
+              image: 'base64-image',
+              url: 'https://example.com'
+            }]
+          });
+        } else if (scenario === 'proxy-no-balance' || scenario === 'proxy-success') {
+          this.emit(workflowEvents.GetProxy, {});
+        }
+        setTimeout(() => {
+          this.emit(workflowEvents.Stopped, { data: { status: 'completed' } });
+        }, 20);
+      });
+    }
+
+    capthcaToken(payload) {
+      this.captchaTokens.push(payload);
+    }
+
+    sendProxy(payload) {
+      this.sentProxy.push(payload);
+    }
+
+    stop() {
+      this.stopCalls += 1;
+    }
+
+    stopTask() {
+      this.stopTaskCalls += 1;
+    }
+
+    pauseTask() {}
+    resumeTask() {}
+    close() {}
+  }
+
+  const fakeEngine = {
+    default: FakeWorkflow,
+    WorkflowEvents: workflowEvents,
+    resolveChrome: async () => ({ executablePath: process.execPath })
+  };
+  const fakeBridgeFactory = () => new FakeBridgeHub();
+
+  globalThis.fetch = options.fetch ?? (async (url) => {
+    const parsed = new URL(String(url));
+    if (parsed.pathname === '/api/Captcha/DoCaptchaV2') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          status: scenario === 'captcha-success' ? 1 : 3,
+          captcha: scenario === 'captcha-success' ? 'captcha-token' : ''
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/HttpProxy') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: scenario === 'proxy-success'
+          ? {
+              status: 0,
+              ip: '127.0.0.1',
+              port: 8080,
+              protocol: 1
+            }
+          : {
+              status: 4
+            }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  });
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  process.stdout.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+  process.stderr.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+  setEngineHostFactoryForTesting(() => new EngineHost(fakeEngine, fakeBridgeFactory));
+
+  try {
+    const code = await runTask(scenario, [
+      '--task-file',
+      taskFile,
+      '--output',
+      output,
+      '--jsonl',
+      '--timeout-ms',
+      '2000'
+    ]);
+    const jsonl = lines.flatMap((line) => {
+      try { return [JSON.parse(line)]; } catch { return []; }
+    });
+    const stopped = jsonl.find((item) => item.event === 'run.stopped');
+    const eventsPath = join(stopped.outputDir, 'events.jsonl');
+    const events = (await readFile(eventsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    return {
+      code,
+      jsonl,
+      events,
+      workflowStopCalls: workflowInstance?.stopCalls ?? 0,
+      workflowStopTaskCalls: workflowInstance?.stopTaskCalls ?? 0,
+      sentProxy: workflowInstance?.sentProxy ?? [],
+      captchaTokens: workflowInstance?.captchaTokens ?? []
+    };
+  } finally {
+    setEngineHostFactoryForTesting(undefined);
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+}
+
+class FakeBridgeHub extends EventEmitter {
+  async createSessionBridge() {
+    return {};
+  }
+
+  async waitForSessionConnected() {}
+
+  close() {}
+}

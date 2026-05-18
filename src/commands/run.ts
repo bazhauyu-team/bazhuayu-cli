@@ -14,6 +14,7 @@ import { EngineHost } from '../runtime/engine-host.js';
 import { defaultRunsDir } from '../runtime/local-runs.js';
 import { safeFileName } from '../runtime/naming.js';
 import { BillingRuntimeError } from '../runtime/run-services.js';
+import { resolveAuth } from '../runtime/auth.js';
 import {
   isRunControlReachable,
   listActiveTaskControlStates,
@@ -23,6 +24,15 @@ import {
   type RunControlServer
 } from '../runtime/run-control.js';
 import { TaskDefinitionProvider } from '../runtime/task-definition-provider.js';
+import {
+  collectEndTrackingEvents,
+  collectStartTrackingEvent,
+  createTrackingClient,
+  createTrackingRunContext,
+  markTrackingRunStarted,
+  markTrackingTaskLoaded,
+  taskSettingsTrackingEvent
+} from '../runtime/tracking.js';
 import {
   EXIT_OK,
   EXIT_OPERATION_FAILED,
@@ -36,6 +46,7 @@ const DETACHED_CHILD_ENV = 'OCTOPUS_DETACHED_CHILD';
 const DETACHED_BOOTSTRAP_DIR_ENV = 'OCTOPUS_DETACHED_BOOTSTRAP_DIR';
 const LOCAL_RUN_WARNING_THRESHOLD = 4;
 const LOCAL_RUN_STRONG_WARNING_THRESHOLD = 6;
+let engineHostFactory = () => new EngineHost();
 
 export interface LocalRunResourceWarning {
   code: 'LOCAL_RUN_RESOURCE_WARNING';
@@ -240,7 +251,7 @@ async function executeTask(
   loadTask: () => Promise<TaskDefinition>,
   resourceWarning?: LocalRunResourceWarning
 ): Promise<number> {
-  const host = new EngineHost();
+  const host = engineHostFactory();
   let currentRunDir = '';
   let currentRunId = '';
   let currentLotId = '';
@@ -252,11 +263,23 @@ async function executeTask(
   let artifactQueue = Promise.resolve();
   let signalHandler: (() => void) | null = null;
   let savedRows = 0;
+  let captchaRequests = 0;
+  let proxyRequests = 0;
   let rowLimitReached = false;
   let stopReason: string | undefined;
   const runtimeConsole = maybeSuppressRuntimeConsole(options);
   const detachedBootstrapDir = process.env[DETACHED_BOOTSTRAP_DIR_ENV];
   const startedAt = new Date().toISOString();
+  const auth = await resolveAuth().catch(() => undefined);
+  const tracking = createTrackingClient({ authSource: auth?.source });
+  const trackingRun = createTrackingRunContext({
+    taskId,
+    runOptions: options,
+    resourceWarningCount: resourceWarning ? 1 : 0,
+    billingWarningCount: 0
+  });
+  let trackingStartSent = false;
+  let loadedTask: TaskDefinition | null = null;
   let billingWarnings: BillingWarning[] = [];
 
   const appendRunArtifact = (fileName: string, value: unknown) => {
@@ -286,6 +309,7 @@ async function executeTask(
     currentRunId = event.runId;
     currentLotId = event.lotId;
     currentTaskName = event.taskName;
+    markTrackingRunStarted(trackingRun, event);
     currentRunDir = join(options.outputDir, event.runId);
     runDirReady = ensureRunDir(options.outputDir, event.runId);
     if (detachedBootstrapDir) {
@@ -335,7 +359,17 @@ async function executeTask(
     });
     void controlServerReady.catch(() => undefined);
     appendRunArtifact('events.jsonl', { event: 'run.started', ...event });
+    for (const warning of billingWarnings) {
+      appendRunArtifact('events.jsonl', { event: 'billing.warning', ...warning });
+    }
     if (options.jsonl) printRunJsonLine(runtimeConsole, { event: 'run.started', ...event });
+    if (loadedTask) {
+      tracking.sendMany([
+        collectStartTrackingEvent(trackingRun, true),
+        taskSettingsTrackingEvent(trackingRun, loadedTask)
+      ]);
+      trackingStartSent = true;
+    }
   });
 
   host.on('row', (event) => {
@@ -393,11 +427,13 @@ async function executeTask(
   });
 
   host.on('captcha', (event) => {
+    if (event.phase === 'requested') captchaRequests += 1;
     appendRunArtifact('events.jsonl', { event: 'captcha', ...event });
     if (options.jsonl) printRunJsonLine(runtimeConsole, { event: 'captcha', ...event });
   });
 
   host.on('proxy', (event) => {
+    if (event.phase === 'requested') proxyRequests += 1;
     appendRunArtifact('events.jsonl', { event: 'proxy', ...event });
     if (options.jsonl) printRunJsonLine(runtimeConsole, { event: 'proxy', ...event });
   });
@@ -410,10 +446,13 @@ async function executeTask(
 
   try {
     const task = await loadTask();
+    loadedTask = task;
+    markTrackingTaskLoaded(trackingRun, task);
     billingWarnings = [
       ...(await checkTemplateBillingPreflight(task)),
       ...(await checkPaidCapabilityPreflight(task))
     ];
+    trackingRun.billingWarningCount = billingWarnings.length;
     printBillingWarnings(options, runtimeConsole, billingWarnings);
 
     let interruptCount = 0;
@@ -476,6 +515,17 @@ async function executeTask(
     await appendJsonLine(join(runDir, 'events.jsonl'), { event: 'run.stopped', ...finalSummary, outputDir: runDir });
     await closeControlServer();
     await host.close();
+    const trackingEndWay = finalSummary.status === 'completed' || finalSummary.stopReason === 'max_rows' ? 'finish' : 'manual';
+    tracking.sendMany(collectEndTrackingEvents(trackingRun, {
+      status: finalSummary.status,
+      endWay: trackingEndWay,
+      success: finalSummary.status === 'completed' || finalSummary.status === 'stopped',
+      failReason: finalSummary.stopReason ?? '',
+      total: finalSummary.total,
+      stoppedAt: finalSummary.stoppedAt,
+      useCaptchaCount: captchaRequests,
+      useProxyCount: proxyRequests
+    }));
     if (detachedBootstrapDir) {
       await writeDetachedBootstrap(detachedBootstrapDir, {
         status: finalSummary.status,
@@ -511,6 +561,9 @@ async function executeTask(
     }
     const message = error instanceof Error ? error.message : String(error);
     const errorCode = runErrorCode(error);
+    if (!trackingStartSent) {
+      tracking.send(collectStartTrackingEvent(trackingRun, false, message));
+    }
     if (currentRunDir && currentRunId) {
       runStatus = 'failed';
       await waitControlServer();
@@ -527,6 +580,16 @@ async function executeTask(
       await closeControlServer();
     }
     await host.close();
+    tracking.sendMany(collectEndTrackingEvents(trackingRun, {
+      status: 'failed',
+      endWay: 'manual',
+      success: false,
+      failReason: message,
+      total: savedRows,
+      stoppedAt: new Date().toISOString(),
+      useCaptchaCount: captchaRequests,
+      useProxyCount: proxyRequests
+    }));
     if (detachedBootstrapDir) {
       await writeDetachedBootstrap(detachedBootstrapDir, {
         status: 'failed',
@@ -544,6 +607,10 @@ async function executeTask(
     }
     return EXIT_RUNTIME_FAILED;
   }
+}
+
+export function setEngineHostFactoryForTesting(factory: (() => EngineHost) | undefined): void {
+  engineHostFactory = factory ?? (() => new EngineHost());
 }
 
 function printBillingWarnings(
