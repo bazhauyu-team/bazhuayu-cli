@@ -1,3 +1,4 @@
+import type { AuthCredential } from './auth.js';
 import { inflateRawSync } from 'node:zlib';
 import { XMLParser } from 'fast-xml-parser';
 import { fetchCloudDataBatch } from './api-client.js';
@@ -11,7 +12,8 @@ const xmlParser = new XMLParser({
 });
 
 export interface CloudDataExportOptions {
-  apiKey: string;
+  apiKey?: string;
+  auth?: AuthCredential;
   taskId: string;
   lotId?: string;
   baseUrl?: string;
@@ -26,6 +28,7 @@ export async function fetchCloudRows(options: CloudDataExportOptions): Promise<R
   while (true) {
     const result = await fetchCloudDataBatch({
       apiKey: options.apiKey,
+      auth: options.auth,
       taskId: options.taskId,
       lotId: options.lotId,
       baseUrl: options.baseUrl,

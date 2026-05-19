@@ -34,15 +34,23 @@ octopus --version
 octopus doctor
 ```
 
-### 2. 使用 API Key 登录
+### 2. 登录
 
-大多数命令都需要 Bazhuayu API Key。执行：
+大多数命令都需要八爪鱼登录凭据。执行：
 
 ```bash
 octopus auth login
 ```
 
-`auth login` 会尽量自动在浏览器中打开 API Key 页面，然后在本地校验并保存密钥。
+交互式登录会让你选择 OAuth 浏览器登录或 API Key 登录。
+
+强制使用 OAuth：
+
+```bash
+octopus auth login --oauth
+```
+
+API Key 登录会尽量自动在浏览器中打开 API Key 页面，然后在本地校验并保存密钥。
 
 在这里创建 API Key：
 
@@ -60,6 +68,12 @@ octopus auth login XXXXX
 
 ```bash
 OCTOPUS_API_KEY=xxx octopus task list --json
+```
+
+CI 也可以传入 bearer access token：
+
+```bash
+OCTOPUS_ACCESS_TOKEN=xxx octopus task list --json
 ```
 
 ### 3. 使用 CLI
@@ -164,7 +178,7 @@ octopus data export <taskId> --source local --output ./runs --format xlsx
 
 ## API Key
 
-大多数命令都需要 API Key。只有初始化和诊断类命令，例如 `--help`、`--version`、`doctor`、`browser doctor`、`capabilities` 和 `auth`，可以在登录前运行。
+大多数命令都需要 OAuth 或 API Key 凭据。只有初始化和诊断类命令，例如 `--help`、`--version`、`doctor`、`browser doctor`、`capabilities` 和 `auth`，可以在登录前运行。
 
 在 Bazhuayu 控制台创建 API Key：
 
@@ -176,6 +190,12 @@ https://www.bazhuayu.com/console/account-center/api-keys
 
 ```bash
 octopus auth login
+```
+
+强制使用 OAuth 浏览器登录：
+
+```bash
+octopus auth login --oauth
 ```
 
 如果 API Key 已经复制好了：
@@ -196,11 +216,18 @@ octopus auth login --no-open
 OCTOPUS_API_KEY=xxx octopus task list --json
 ```
 
+或者：
+
+```bash
+OCTOPUS_ACCESS_TOKEN=xxx octopus task list --json
+```
+
 凭据优先级：
 
 ```text
 1. OCTOPUS_API_KEY
-2. ~/.octopus/credentials.json
+2. OCTOPUS_ACCESS_TOKEN
+3. ~/.octopus/credentials.json
 ```
 
 ## 本地任务文件

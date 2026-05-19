@@ -62,16 +62,16 @@ export class TaskDefinitionProvider {
 
 async function getRemoteTaskDefinition(taskId: string): Promise<TaskDefinition> {
   const auth = await resolveAuth();
-  if (!auth.apiKey) {
-    throw new Error(`API key required. Run "octopus auth login" or set ${API_KEY_ENV}.`);
+  if (!auth.credential) {
+    throw new Error(`Authentication required. Run "octopus auth login" or set ${API_KEY_ENV}.`);
   }
 
   let info: RemoteTaskInfo;
   try {
-    info = await fetchTaskInfo({ apiKey: auth.apiKey, taskId });
+    info = await fetchTaskInfo({ auth: auth.credential, taskId });
   } catch (error) {
     if (error instanceof ApiRequestError && error.code === 'TASK_NOT_FOUND') {
-      throw new Error(await taskNotFoundMessage(taskId, auth.apiKey));
+      throw new Error(await taskNotFoundMessage(taskId, auth.credential));
     }
     throw error;
   }
@@ -84,8 +84,8 @@ async function getRemoteTaskDefinition(taskId: string): Promise<TaskDefinition> 
   return task;
 }
 
-async function taskNotFoundMessage(taskId: string, apiKey: string): Promise<string> {
-  const suggestion = await findTaskIdSuggestion(taskId, apiKey).catch(() => null);
+async function taskNotFoundMessage(taskId: string, auth: Awaited<ReturnType<typeof resolveAuth>>['credential']): Promise<string> {
+  const suggestion = auth ? await findTaskIdSuggestion(taskId, auth).catch(() => null) : null;
   if (!suggestion) {
     return `云端任务未找到或响应无效: ${taskId}。请用 "octopus task list" 复制完整 taskId 后重试。`;
   }
@@ -96,8 +96,8 @@ async function taskNotFoundMessage(taskId: string, apiKey: string): Promise<stri
   ].join('\n');
 }
 
-async function findTaskIdSuggestion(taskId: string, apiKey: string): Promise<{ taskId: string; taskName: string } | null> {
-  const result = await fetchTaskList({ apiKey, pageIndex: 1, pageSize: 100 });
+async function findTaskIdSuggestion(taskId: string, auth: NonNullable<Awaited<ReturnType<typeof resolveAuth>>['credential']>): Promise<{ taskId: string; taskName: string } | null> {
+  const result = await fetchTaskList({ auth, pageIndex: 1, pageSize: 100 });
   let best: { taskId: string; taskName: string; distance: number } | null = null;
   for (const item of result.tasks) {
     const task = item && typeof item === 'object' ? item as Record<string, unknown> : {};

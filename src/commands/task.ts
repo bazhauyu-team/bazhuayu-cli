@@ -8,8 +8,8 @@ import { EXIT_OK, EXIT_OPERATION_FAILED, EXIT_UNSUPPORTED_TASK } from '../types.
 export async function taskList(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const auth = await resolveAuth();
-  if (!auth.authenticated || !auth.apiKey) {
-    const message = `API key required. Run "octopus auth login" or set ${API_KEY_ENV}.`;
+  if (!auth.authenticated || !auth.credential) {
+    const message = `Authentication required. Run "octopus auth login" or set ${API_KEY_ENV}.`;
     if (json) printEnvelope(false, undefined, 'AUTH_REQUIRED', message);
     else console.error(`认证失败: ${message}`);
     return EXIT_OPERATION_FAILED;
@@ -17,7 +17,7 @@ export async function taskList(args: string[]): Promise<number> {
 
   try {
     const result = await fetchTaskList({
-      apiKey: auth.apiKey,
+      auth: auth.credential,
       baseUrl: valueAfter(args, '--api-base-url'),
       pageIndex: parsePositiveInt(valueAfter(args, '--page'), 1),
       pageSize: parsePositiveInt(valueAfter(args, '--page-size') ?? valueAfter(args, '--limit'), 20),

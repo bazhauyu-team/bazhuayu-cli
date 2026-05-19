@@ -14,13 +14,15 @@
  */
 import { readCliConfig } from './config.js';
 import { clientHeaders } from './client-headers.js';
+import type { AuthCredential } from './auth.js';
 
 export const API_BASE_URL_ENV = 'OCTOPUS_API_BASE_URL';
 export const PROD_API_BASE_URL = 'https://v2.clientapi.bazhuayu.com';
 export const DEFAULT_API_BASE_URL = PROD_API_BASE_URL;
 
 export interface TaskListOptions {
-  apiKey: string;
+  apiKey?: string;
+  auth?: AuthCredential;
   baseUrl?: string;
   pageIndex?: number;
   pageSize?: number;
@@ -168,7 +170,7 @@ export async function fetchTaskList(options: TaskListOptions): Promise<TaskListR
       Accept: 'application/json',
       'Accept-Language': 'zh-CN',
       ...clientHeaders(),
-      'x-api-key': options.apiKey
+      ...authHeaders(requireAuthCredential(options))
     }
   });
 
@@ -225,9 +227,10 @@ export async function validateApiKey(options: { apiKey: string; baseUrl?: string
   };
 }
 
-export async function fetchAccountInfo(options: { apiKey: string; baseUrl?: string }): Promise<ApiResult<AccountInfo>> {
+export async function fetchAccountInfo(options: { apiKey?: string; auth?: AuthCredential; baseUrl?: string }): Promise<ApiResult<AccountInfo>> {
   const result = await apiResult<AccountInfo>({
     apiKey: options.apiKey,
+    auth: options.auth,
     baseUrl: options.baseUrl,
     endpoint: '/api/account/getAccount',
     method: 'GET'
@@ -242,9 +245,10 @@ export async function fetchAccountInfo(options: { apiKey: string; baseUrl?: stri
   };
 }
 
-export async function fetchAccountBalance(options: { apiKey: string; baseUrl?: string }): Promise<AccountBalanceInfo> {
+export async function fetchAccountBalance(options: { apiKey?: string; auth?: AuthCredential; baseUrl?: string }): Promise<AccountBalanceInfo> {
   const result = await apiResult<Record<string, unknown> | number>({
     apiKey: options.apiKey,
+    auth: options.auth,
     baseUrl: options.baseUrl,
     endpoint: '/api/user/balances',
     method: 'GET'
@@ -267,13 +271,15 @@ export async function fetchAccountBalance(options: { apiKey: string; baseUrl?: s
 }
 
 export async function fetchTemplateBillingInfo(options: {
-  apiKey: string;
+  apiKey?: string;
+  auth?: AuthCredential;
   taskId: string;
   baseUrl?: string;
 }): Promise<ApiResult<TemplateBillingInfo>> {
   const endpoint = `/api/templatecharging/user/canStartTemplateTask/${encodeURIComponent(options.taskId)}`;
   const result = await apiResult<Record<string, unknown>>({
     apiKey: options.apiKey,
+    auth: options.auth,
     baseUrl: options.baseUrl,
     endpoint,
     method: 'GET'
@@ -291,9 +297,10 @@ export async function fetchTemplateBillingInfo(options: {
   };
 }
 
-export async function fetchCaptchaRemain(options: { apiKey: string; baseUrl?: string }): Promise<CaptchaRemainInfo> {
+export async function fetchCaptchaRemain(options: { apiKey?: string; auth?: AuthCredential; baseUrl?: string }): Promise<CaptchaRemainInfo> {
   const result = await apiResult<Record<string, unknown> | number>({
     apiKey: options.apiKey,
+    auth: options.auth,
     baseUrl: options.baseUrl,
     endpoint: '/api/Captcha/GetCaptchaRemain',
     method: 'GET'
@@ -311,9 +318,10 @@ export async function fetchCaptchaRemain(options: { apiKey: string; baseUrl?: st
   };
 }
 
-export async function fetchTaskInfo(options: { apiKey: string; taskId: string; baseUrl?: string }): Promise<RemoteTaskInfo> {
+export async function fetchTaskInfo(options: { apiKey?: string; auth?: AuthCredential; taskId: string; baseUrl?: string }): Promise<RemoteTaskInfo> {
   const { payload } = await apiRequest({
     apiKey: options.apiKey,
+    auth: options.auth,
     baseUrl: options.baseUrl,
     endpoint: '/api/task/getTask',
     query: { taskId: options.taskId },
@@ -327,9 +335,10 @@ export async function fetchTaskInfo(options: { apiKey: string; taskId: string; b
   return task as RemoteTaskInfo;
 }
 
-export async function startCloudTask(options: { apiKey: string; taskId: string; baseUrl?: string }): Promise<ApiResult> {
+export async function startCloudTask(options: { apiKey?: string; auth?: AuthCredential; taskId: string; baseUrl?: string }): Promise<ApiResult> {
   return apiResult({
     apiKey: options.apiKey,
+    auth: options.auth,
     baseUrl: options.baseUrl,
     endpoint: '/api/task/startTask',
     query: { taskId: options.taskId },
@@ -337,9 +346,10 @@ export async function startCloudTask(options: { apiKey: string; taskId: string; 
   });
 }
 
-export async function stopCloudTask(options: { apiKey: string; taskId: string; baseUrl?: string }): Promise<ApiResult> {
+export async function stopCloudTask(options: { apiKey?: string; auth?: AuthCredential; taskId: string; baseUrl?: string }): Promise<ApiResult> {
   return apiResult({
     apiKey: options.apiKey,
+    auth: options.auth,
     baseUrl: options.baseUrl,
     endpoint: '/api/task/stopTask',
     query: { taskId: options.taskId },
@@ -347,18 +357,20 @@ export async function stopCloudTask(options: { apiKey: string; taskId: string; b
   });
 }
 
-export async function fetchCloudStatus(options: { apiKey: string; taskId: string; baseUrl?: string }): Promise<ApiResult> {
+export async function fetchCloudStatus(options: { apiKey?: string; auth?: AuthCredential; taskId: string; baseUrl?: string }): Promise<ApiResult> {
   return apiResult({
     apiKey: options.apiKey,
+    auth: options.auth,
     baseUrl: options.baseUrl,
     endpoint: `/api/progress/task/${encodeURIComponent(options.taskId)}/summary`,
     method: 'GET'
   });
 }
 
-export async function fetchCloudHistory(options: { apiKey: string; taskId: string; baseUrl?: string }): Promise<ApiResult<unknown[]>> {
+export async function fetchCloudHistory(options: { apiKey?: string; auth?: AuthCredential; taskId: string; baseUrl?: string }): Promise<ApiResult<unknown[]>> {
   const result = await apiResult<unknown[]>({
     apiKey: options.apiKey,
+    auth: options.auth,
     baseUrl: options.baseUrl,
     endpoint: `/api/progress/task/${encodeURIComponent(options.taskId)}`,
     method: 'GET'
@@ -370,7 +382,8 @@ export async function fetchCloudHistory(options: { apiKey: string; taskId: strin
 }
 
 export async function fetchCloudDataBatch(options: {
-  apiKey: string;
+  apiKey?: string;
+  auth?: AuthCredential;
   taskId: string;
   lotId?: string;
   offset: number;
@@ -382,6 +395,7 @@ export async function fetchCloudDataBatch(options: {
     : '/api/taskData/getByOffset';
   return apiResult<Record<string, unknown>>({
     apiKey: options.apiKey,
+    auth: options.auth,
     baseUrl: options.baseUrl,
     endpoint,
     query: {
@@ -394,7 +408,8 @@ export async function fetchCloudDataBatch(options: {
 }
 
 async function apiResult<T = unknown>(options: {
-  apiKey: string;
+  apiKey?: string;
+  auth?: AuthCredential;
   baseUrl?: string;
   endpoint: string;
   query?: Record<string, string>;
@@ -410,7 +425,8 @@ async function apiResult<T = unknown>(options: {
 }
 
 async function apiRequest(options: {
-  apiKey: string;
+  apiKey?: string;
+  auth?: AuthCredential;
   baseUrl?: string;
   endpoint: string;
   query?: Record<string, string>;
@@ -428,7 +444,7 @@ async function apiRequest(options: {
       Accept: 'application/json',
       'Accept-Language': 'zh-CN',
       ...clientHeaders(),
-      'x-api-key': options.apiKey
+      ...authHeaders(requireAuthCredential(options))
     }
   });
 
@@ -500,7 +516,7 @@ function trimBody(body: string): string {
 function httpApiError(prefix: string, status: number, statusText: string, baseUrl: string, endpoint: string, body: string): ApiRequestError {
   if (status === 401 || status === 403) {
     return new ApiRequestError(
-      `API key is invalid, expired, or not accepted by the current API environment. Run "octopus auth login" again or check ${API_BASE_URL_ENV}.`,
+      `Authentication is invalid, expired, or not accepted by the current API environment. Run "octopus auth login" again or check ${API_BASE_URL_ENV}.`,
       'AUTH_INVALID',
       status,
       trimBody(body)
@@ -512,4 +528,16 @@ function httpApiError(prefix: string, status: number, statusText: string, baseUr
     status,
     trimBody(body)
   );
+}
+
+function requireAuthCredential(options: { apiKey?: string; auth?: AuthCredential }): AuthCredential {
+  if (options.auth?.value) return options.auth;
+  if (options.apiKey) return { type: 'apiKey', value: options.apiKey };
+  throw new ApiRequestError('Authentication required. Run "octopus auth login".', 'AUTH_REQUIRED');
+}
+
+function authHeaders(credential: AuthCredential): Record<string, string> {
+  return credential.type === 'bearer'
+    ? { Authorization: `Bearer ${credential.value}` }
+    : { 'x-api-key': credential.value };
 }

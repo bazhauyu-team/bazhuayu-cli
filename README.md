@@ -35,15 +35,22 @@ octopus --version
 octopus doctor
 ```
 
-### 2. Log in with an API key
+### 2. Log in
 
-Most commands require a Bazhuayu API key. Run:
+Most commands require Bazhuayu credentials. Run:
 
 ```bash
 octopus auth login
 ```
 
-`auth login` opens the API key page automatically in a browser when possible,
+Interactive login lets you choose OAuth browser login or API key login.
+To force OAuth:
+
+```bash
+octopus auth login --oauth
+```
+
+API key login opens the API key page automatically in a browser when possible,
 then verifies and saves the key locally.
 
 Create the key here:
@@ -62,6 +69,12 @@ For CI or scripts, set the key with an environment variable instead:
 
 ```bash
 OCTOPUS_API_KEY=xxx octopus task list --json
+```
+
+CI can also provide a bearer access token:
+
+```bash
+OCTOPUS_ACCESS_TOKEN=xxx octopus task list --json
 ```
 
 ### 3. Use the CLI
@@ -167,9 +180,9 @@ octopus data history <taskId> --source local --output ./runs
 octopus data export <taskId> --source local --output ./runs --format xlsx
 ```
 
-## API key
+## Authentication
 
-Most commands require an API key. Only setup and diagnostic commands such as
+Most commands require OAuth or API key credentials. Only setup and diagnostic commands such as
 `--help`, `--version`, `doctor`, `browser doctor`, `capabilities`, and `auth`
 can run before login.
 
@@ -183,6 +196,12 @@ For interactive use:
 
 ```bash
 octopus auth login
+```
+
+Force OAuth browser login:
+
+```bash
+octopus auth login --oauth
 ```
 
 If the API key is already copied:
@@ -203,11 +222,18 @@ For CI or scripts:
 OCTOPUS_API_KEY=xxx octopus task list --json
 ```
 
+Or:
+
+```bash
+OCTOPUS_ACCESS_TOKEN=xxx octopus task list --json
+```
+
 Credential precedence:
 
 ```text
 1. OCTOPUS_API_KEY
-2. ~/.octopus/credentials.json
+2. OCTOPUS_ACCESS_TOKEN
+3. ~/.octopus/credentials.json
 ```
 
 ## Local task files

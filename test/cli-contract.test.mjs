@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { createServer } from 'node:http';
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -9,6 +10,7 @@ import { promisify } from 'node:util';
 import { authCommand } from '../dist/commands/auth.js';
 import { cloudCommand, cloudHistory } from '../dist/commands/cloud.js';
 import { ApiRequestError, fetchAccountInfo, validateApiKey } from '../dist/runtime/api-client.js';
+import { DEFAULT_OAUTH_REDIRECT_URI, exchangeCodeForToken, runOAuthLogin } from '../dist/runtime/oauth.js';
 import { localDataExportCommand, runTask, setEngineHostFactoryForTesting } from '../dist/commands/run.js';
 import { EngineHost } from '../dist/runtime/engine-host.js';
 import { BillingRuntimeError } from '../dist/runtime/run-services.js';
@@ -229,6 +231,61 @@ test('auth status verifies configured API key before reporting success', async (
     console.log = originalLog;
     if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
     else process.env.OCTOPUS_API_KEY = originalApiKey;
+    if (originalBaseUrl === undefined) delete process.env.OCTOPUS_API_BASE_URL;
+    else process.env.OCTOPUS_API_BASE_URL = originalBaseUrl;
+  }
+});
+
+test('auth status verifies configured OAuth access token before reporting success', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalAccessToken = process.env.OCTOPUS_ACCESS_TOKEN;
+  const originalBaseUrl = process.env.OCTOPUS_API_BASE_URL;
+  const originalLog = console.log;
+  const lines = [];
+  process.env.OCTOPUS_ACCESS_TOKEN = 'access-token-123';
+  delete process.env.OCTOPUS_API_KEY;
+  process.env.OCTOPUS_API_BASE_URL = 'https://example.invalid';
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), 'https://example.invalid/api/account/getAccount');
+    assert.equal(init?.headers.Authorization, 'Bearer access-token-123');
+    assert.equal(init?.headers['x-api-key'], undefined);
+    return new Response(JSON.stringify({
+      isSuccess: true,
+      data: {
+        userId: 'u_oauth',
+        email: 'oauth@example.com',
+        currentAccountLevel: 130,
+        accountBalance: 12
+      }
+    }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (...args) => {
+    lines.push(args.map((value) => String(value)).join(' '));
+  };
+
+  try {
+    const code = await authCommand('status', ['--json']);
+    assert.equal(code, 0);
+    const payload = JSON.parse(lines[0]);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.authenticated, true);
+    assert.equal(payload.data.source, 'env');
+    assert.equal(payload.data.method, 'oauth');
+    assert.equal(payload.data.verified, true);
+    assert.equal(payload.data.currentAccountLevel, 130);
+    assert.equal(payload.data.currentAccountLevelName, '企业版');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+    if (originalAccessToken === undefined) delete process.env.OCTOPUS_ACCESS_TOKEN;
+    else process.env.OCTOPUS_ACCESS_TOKEN = originalAccessToken;
     if (originalBaseUrl === undefined) delete process.env.OCTOPUS_API_BASE_URL;
     else process.env.OCTOPUS_API_BASE_URL = originalBaseUrl;
   }
@@ -464,7 +521,7 @@ test('invalid API key maps to friendly auth error', async () => {
         assert.equal(error instanceof ApiRequestError, true);
         assert.equal(error.code, 'AUTH_INVALID');
         assert.equal(error.status, 401);
-        assert.match(error.message, /API key is invalid/);
+        assert.match(error.message, /Authentication is invalid/);
         return true;
       }
     );
@@ -511,6 +568,149 @@ test('account info uses electron getAccount endpoint', async () => {
     assert.equal(validation.endpoint, '/api/account/getAccount');
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test('account info accepts OAuth bearer credential', async () => {
+  const originalFetch = globalThis.fetch;
+  const seen = [];
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), headers: init?.headers ?? {} });
+    return new Response(JSON.stringify({
+      isSuccess: true,
+      data: {
+        userId: 'u_bearer',
+        email: 'bearer@example.com'
+      }
+    }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  try {
+    const result = await fetchAccountInfo({
+      auth: { type: 'bearer', value: 'oauth-token' },
+      baseUrl: 'https://example.invalid'
+    });
+    assert.equal(result.data.userId, 'u_bearer');
+    assert.equal(seen[0].headers.Authorization, 'Bearer oauth-token');
+    assert.equal(seen[0].headers['x-api-key'], undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('OAuth authorization code exchange maps token response', async () => {
+  const seen = [];
+  const fetchImpl = async (url, init) => {
+    seen.push({ url: String(url), body: String(init.body), headers: init.headers });
+    return new Response(JSON.stringify({
+      access_token: 'access-token',
+      refresh_token: 'refresh-token',
+      id_token: 'id-token',
+      token_type: 'Bearer',
+      scope: 'openid profile offline_access',
+      expires_in: 3600
+    }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  const token = await exchangeCodeForToken('code-123', {
+    authority: 'https://identity.example',
+    clientId: 'bazhuayu-cli',
+    clientSecret: '*',
+    redirectUri: 'http://localhost:18784/login-callback',
+    scope: 'openid profile offline_access'
+  }, fetchImpl);
+  assert.equal(seen[0].url, 'https://identity.example/connect/token');
+  assert.match(seen[0].body, /grant_type=authorization_code/);
+  assert.match(seen[0].body, /client_id=bazhuayu-cli/);
+  assert.match(seen[0].body, /client_secret=*/);
+  assert.match(seen[0].body, /code=code-123/);
+  assert.equal(token.accessToken, 'access-token');
+  assert.equal(token.refreshToken, 'refresh-token');
+  assert.equal(token.idToken, 'id-token');
+  assert.ok(token.expiresAtMs > Date.now());
+});
+
+test('OAuth token exchange treats Bazhuayu expires_in as milliseconds', async () => {
+  const now = Date.now();
+  const fetchImpl = async () => new Response(JSON.stringify({
+    access_token: 'access-token',
+    refresh_token: 'refresh-token',
+    expires_in: 86_400_000
+  }), {
+    status: 200,
+    statusText: 'OK',
+    headers: { 'content-type': 'application/json' }
+  });
+  const token = await exchangeCodeForToken('code-ms', {
+    authority: 'https://identity.example',
+    clientId: 'bazhuayu-cli',
+    clientSecret: '*',
+    redirectUri: 'http://localhost:18784/login-callback',
+    scope: 'openid profile offline_access'
+  }, fetchImpl);
+  assert.ok(token.expiresAtMs >= now + 86_399_000);
+  assert.ok(token.expiresAtMs <= now + 86_401_000);
+});
+
+test('OAuth login falls back to the next registered callback port', async (context) => {
+  const blocker = createServer((_request, response) => response.end('busy'));
+  const blocked = await new Promise((resolveListen) => {
+    blocker.once('error', rejectListen);
+    function rejectListen(error) {
+      resolveListen(error);
+    }
+    blocker.listen(18784, '127.0.0.1', () => resolveListen(null));
+  });
+  if (blocked) {
+    context.skip(`local listen unavailable: ${blocked.code ?? blocked.message}`);
+    return;
+  }
+  const seen = [];
+  try {
+    const resultPromise = runOAuthLogin({
+      config: {
+        authority: 'https://identity.example',
+        clientId: 'bazhuayu-cli',
+        clientSecret: '*',
+        redirectUri: DEFAULT_OAUTH_REDIRECT_URI,
+        scope: 'openid profile offline_access'
+      },
+      openBrowser: async (url) => {
+        const parsed = new URL(url);
+        const redirectUri = parsed.searchParams.get('redirect_uri');
+        seen.push({ authorizeUrl: url, redirectUri });
+        const callback = new URL(redirectUri);
+        callback.searchParams.set('code', 'code-456');
+        callback.searchParams.set('state', parsed.searchParams.get('state'));
+        const response = await fetch(callback);
+        await response.text();
+      },
+      fetchImpl: async (url, init) => {
+        seen.push({ tokenUrl: String(url), body: String(init.body) });
+        return new Response(JSON.stringify({
+          access_token: 'access-token',
+          refresh_token: 'refresh-token',
+          expires_in: 3600
+        }), {
+          status: 200,
+          statusText: 'OK',
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+    });
+    const result = await resultPromise;
+    assert.equal(seen[0].redirectUri, 'http://localhost:18785/login-callback');
+    assert.match(seen[1].body, /redirect_uri=http%3A%2F%2Flocalhost%3A18785%2Flogin-callback/);
+    assert.equal(result.config.redirectUri, 'http://localhost:18785/login-callback');
+    assert.equal(result.token.accessToken, 'access-token');
+  } finally {
+    await new Promise((resolveClose) => blocker.close(resolveClose));
   }
 });
 
@@ -687,20 +887,21 @@ test('cloud start maps balance and proxy failures to stable json errors', async 
   }
 });
 
-test('root and run help clearly state API key requirement', async () => {
+test('root and run help clearly state authentication requirement', async () => {
   const root = await runCli(['--help']);
   assert.equal(root.code, 0);
-  assert.match(root.stdout, /API key is required for all functional commands/);
+  assert.match(root.stdout, /OAuth or API key credentials are required for all functional commands/);
   assert.match(root.stdout, /bazhuayu\.com\/console\/account-center\/api-keys/);
 
   const auth = await runCli(['auth', '--help']);
   assert.equal(auth.code, 0);
-  assert.match(auth.stdout, /Interactive login opens this page automatically/);
+  assert.match(auth.stdout, /Interactive login lets you choose OAuth or API key/);
+  assert.match(auth.stdout, /--oauth/);
   assert.match(auth.stdout, /--no-open/);
 
   const run = await runCli(['run', '--help']);
   assert.equal(run.code, 0);
-  assert.match(run.stdout, /Requires a configured API key/);
+  assert.match(run.stdout, /Requires configured credentials/);
   assert.match(run.stdout, /run only starts local collection/);
   assert.match(run.stdout, /data export <taskId> --lot-id <lotId>/);
 });
