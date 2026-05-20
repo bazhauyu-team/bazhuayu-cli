@@ -10,11 +10,10 @@ import { resolveAuth } from './auth.js';
 const PROXY_BALANCE_WARNING_THRESHOLD = 10;
 const CAPTCHA_BALANCE_WARNING_THRESHOLD = 5;
 const PROXY_TYPE_STRONG = 1;
-const ACTION_IP_TYPE_NONE = 1;
 const WORKFLOW_TYPE_TEMPLATE = 10;
 
 export interface BillingWarning {
-  code: 'TEMPLATE_BALANCE_LOW' | 'CAPTCHA_BALANCE_LOW';
+  code: 'TEMPLATE_BALANCE_LOW' | 'PROXY_BALANCE_LOW' | 'CAPTCHA_BALANCE_LOW';
   severity: 'warning';
   message: string;
   balance?: number;
@@ -102,11 +101,13 @@ export async function checkPaidCapabilityPreflight(task: TaskDefinition): Promis
     const balance = accountBalanceResult?.totalBalance ?? accountBalanceResult?.balance;
 
     if (balance !== undefined && balance < PROXY_BALANCE_WARNING_THRESHOLD) {
-      throw new BillingPreflightError(
-        'PROXY_BALANCE_NOT_ENOUGH',
-        `优质代理 IP 余额不足，当前余额 ${balance}，最低启动余额 ${PROXY_BALANCE_WARNING_THRESHOLD}。请充值后重试。`,
-        { balance }
-      );
+      warnings.push({
+        code: 'PROXY_BALANCE_LOW',
+        severity: 'warning',
+        message: `优质代理 IP 余额较低，当前余额 ${balance}，低余额提醒阈值 ${PROXY_BALANCE_WARNING_THRESHOLD}。运行中需要代理 IP 时可能失败。`,
+        balance,
+        balanceLowThreshold: PROXY_BALANCE_WARNING_THRESHOLD
+      });
     }
   }
 
@@ -166,8 +167,8 @@ function taskUsesTemplate(task: TaskDefinition): boolean {
 
 function taskUsesStrongProxy(task: TaskDefinition): boolean {
   const settings = getRecord(getRecord(task.brokerSettings)?.ipProxySettings);
-  if (numberValue(settings?.ipProxyFromType) === PROXY_TYPE_STRONG) return true;
-  return taskHasStrongProxyAction(task.xml) || taskHasStrongProxyAction(task.xoml);
+  return numberValue(settings?.ipProxyFromType) === PROXY_TYPE_STRONG &&
+    (taskHasSwitchIpAction(task.xml) || taskHasSwitchIpAction(task.xoml));
 }
 
 function taskUsesCaptcha(task: TaskDefinition): boolean {
@@ -176,22 +177,8 @@ function taskUsesCaptcha(task: TaskDefinition): boolean {
   return /EnterCapachaAction|CapachaType|CaptchaType|Cloudflare|Turnstile|reCAPTCHA|HCaptcha/i.test(`${task.xml}\n${task.xoml}`);
 }
 
-function taskHasStrongProxyAction(xml: string): boolean {
-  const matches = xml.matchAll(/EnableSwitchIp=(["'])true\1/gi);
-  for (const match of matches) {
-    const start = match.index ?? 0;
-    const end = Math.min(xml.length, start + 1000);
-    const actionConfig = xml.slice(start, end);
-    if (isStrongActionIpType(attributeValue(actionConfig, 'IPType'))) return true;
-  }
-  return false;
-}
-
-function isStrongActionIpType(value: string | undefined): boolean {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || normalized === 'none' || normalized === String(ACTION_IP_TYPE_NONE)) return false;
-  return normalized === 'strong' || normalized === '0';
+function taskHasSwitchIpAction(xml: string): boolean {
+  return /EnableSwitchIp=(["'])true\1/i.test(xml);
 }
 
 function hasPositivePrice(prices: Record<string, unknown> | undefined): boolean {
@@ -200,11 +187,6 @@ function hasPositivePrice(prices: Record<string, unknown> | undefined): boolean 
     const price = numberValue(value);
     return price !== undefined && price > 0;
   });
-}
-
-function attributeValue(tag: string, name: string): string | undefined {
-  const pattern = new RegExp(`${name}=(["'])(.*?)\\1`, 'i');
-  return tag.match(pattern)?.[2];
 }
 
 function getRecord(value: unknown): Record<string, unknown> | undefined {

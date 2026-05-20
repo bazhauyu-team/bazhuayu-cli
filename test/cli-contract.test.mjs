@@ -1388,7 +1388,7 @@ test('run preflight emits jsonl warning for low paid template balance', async ()
   }
 });
 
-test('run preflight blocks strong proxy when balance is below threshold', async () => {
+test('run preflight ignores stored strong proxy settings when switch IP is disabled', async () => {
   const originalFetch = globalThis.fetch;
   const originalApiKey = process.env.OCTOPUS_API_KEY;
   const originalLog = console.log;
@@ -1442,13 +1442,87 @@ test('run preflight blocks strong proxy when balance is below threshold', async 
   });
 
   try {
-    const code = await runTask('proxy-low-balance', ['--task-file', taskFile, '--json']);
-    assert.equal(code, 2);
-    const payload = lines.map((line) => {
-      try { return JSON.parse(line); } catch { return null; }
-    }).find((item) => item?.ok === false);
-    assert.equal(payload?.error.code, 'PROXY_BALANCE_NOT_ENOUGH');
-    assert.match(payload?.error.message, /优质代理 IP 余额不足/);
+    const result = await runWithFakeRuntimeEvent('proxy-low-balance', {
+      taskFile,
+      fetch: globalThis.fetch
+    });
+    assert.equal(result.code, 0);
+    assert.equal(seen.includes('/api/user/balances'), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    console.error = originalError;
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('run preflight warns for strong proxy balance risk without blocking startup', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const lines = [];
+  const seen = [];
+  const dir = await mkdtemp(join(tmpdir(), 'octopus-proxy-task-'));
+  const taskFile = join(dir, 'proxy-task.json');
+  const minimalTask = JSON.parse(await readFile('examples/minimal-task.json', 'utf8'));
+  await writeFile(taskFile, JSON.stringify({
+    ...minimalTask,
+    taskId: 'proxy-low-balance',
+    taskName: 'Proxy Low Balance',
+    xml: minimalTask.xml.replace('EnableSwitchIp="false"', 'EnableSwitchIp="true"').replace('IPType="None"', 'IPType="0"'),
+    brokerSettings: {
+      ipProxySettings: {
+        ipProxyFromType: 1
+      }
+    }
+  }));
+  process.env.OCTOPUS_API_KEY = 'billing-key';
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    seen.push(parsed.pathname);
+    if (parsed.pathname === '/api/user/balances') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: { balance: 3, totalBalance: 3 }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'not found' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  process.stdout.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+  process.stderr.write = ((chunk) => {
+    lines.push(String(chunk).trimEnd());
+    return true;
+  });
+
+  try {
+    const result = await runWithFakeRuntimeEvent('proxy-low-balance', {
+      taskFile,
+      fetch: globalThis.fetch
+    });
+    assert.equal(result.code, 0);
+    const warning = result.jsonl.find((item) => item?.code === 'PROXY_BALANCE_LOW');
+    assert.equal(warning?.severity, 'warning');
+    assert.match(warning?.message, /优质代理 IP 余额较低/);
+    assert.ok(result.events.some((item) => item.event === 'billing.warning' && item.code === 'PROXY_BALANCE_LOW'));
     assert.equal(seen.includes('/api/HttpProxy/Balance'), false);
   } finally {
     globalThis.fetch = originalFetch;
@@ -1617,6 +1691,52 @@ test('runtime proxy success is resolved and returned to the workflow', async () 
   assert.ok(result.events.some((item) => item.event === 'proxy' && item.phase === 'sent'));
 });
 
+test('local run records engine download events in artifacts and summary', async () => {
+  const result = await runWithFakeRuntimeEvent('download-runtime', {
+    downloadEvents: [
+      {
+        url: 'https://example.com/file.webp',
+        filePath: '/tmp/octopus-downloads/task/字段1/file.webp',
+        fileSize: 1234,
+        status: 'downloading',
+        fieldName: '字段1',
+        rowUuid: 'row-1'
+      },
+      {
+        url: 'https://example.com/file.webp',
+        filePath: '/tmp/octopus-downloads/task/字段1/file.webp',
+        fileSize: 1234,
+        status: 'success',
+        fieldName: '字段1',
+        rowUuid: 'row-1'
+      },
+      {
+        url: 'https://example.com/file-2.webp',
+        filePath: '/tmp/octopus-downloads/task/字段2/file-2.webp',
+        fileSize: 5678,
+        status: 'downloading',
+        fieldName: '字段2',
+        rowUuid: 'row-2'
+      },
+      {
+        url: 'https://example.com/file-2.webp',
+        filePath: '/tmp/octopus-downloads/task/字段2/file-2.webp',
+        fileSize: 5678,
+        status: 'success',
+        fieldName: '字段2',
+        rowUuid: 'row-2'
+      }
+    ]
+  });
+  assert.equal(result.code, 0);
+  assert.ok(result.events.find((event) => event.event === 'download.succeeded'));
+  const stopped = result.events.find((event) => event.event === 'run.stopped');
+  assert.equal(stopped.downloads.total, 2);
+  assert.equal(stopped.downloads.succeeded, 2);
+  assert.equal(stopped.downloads.outputDir, '/tmp/octopus-downloads/task');
+  assert.equal(result.downloads.length, 4);
+});
+
 test('run completion prints a copyable local data export command', () => {
   assert.equal(
     localDataExportCommand({ taskId: 'task-1', lotId: '1778123456789' }),
@@ -1721,6 +1841,7 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
     Stopped: 'stopped',
     Captcha: 'captcha',
     GetProxy: 'getProxy',
+    DownloadFile: 'downloadFile',
     CollectProxyLog: 'collectProxyLog'
   };
   class FakeWorkflow extends EventEmitter {
@@ -1736,6 +1857,17 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
 
     async start() {
       setImmediate(() => {
+        if (options.rowData) {
+          this.emit(workflowEvents.ExtraData, {
+            data: {
+              total: 1,
+              rowData: options.rowData
+            }
+          });
+        }
+        for (const event of options.downloadEvents ?? []) {
+          this.emit(workflowEvents.DownloadFile, { data: event });
+        }
         if (scenario === 'captcha-no-balance' || scenario === 'captcha-success') {
           this.emit(workflowEvents.Captcha, {
             data: [{
@@ -1849,10 +1981,22 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
     const stopped = jsonl.find((item) => item.event === 'run.stopped');
     const eventsPath = join(stopped.outputDir, 'events.jsonl');
     const events = (await readFile(eventsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line));
+    const downloadsPath = join(stopped.outputDir, 'downloads.jsonl');
+    let downloads = [];
+    try {
+      downloads = (await readFile(downloadsPath, 'utf8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    } catch {}
+    const rowsPath = join(stopped.outputDir, 'rows.jsonl');
+    let rows = [];
+    try {
+      rows = (await readFile(rowsPath, 'utf8')).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    } catch {}
     return {
       code,
       jsonl,
       events,
+      downloads,
+      rows,
       workflowStopCalls: workflowInstance?.stopCalls ?? 0,
       workflowStopTaskCalls: workflowInstance?.stopTaskCalls ?? 0,
       sentProxy: workflowInstance?.sentProxy ?? [],

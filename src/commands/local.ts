@@ -109,6 +109,10 @@ async function localStatus(args: string[]): Promise<number> {
     console.log(`${taskId}  ${state?.status}`);
     console.log(`PID: ${state?.pid}`);
     console.log(`Rows: ${total}`);
+    if (state.downloads) {
+      console.log(`Downloads: ${state.downloads.succeeded}/${state.downloads.total} succeeded, ${state.downloads.failed} failed`);
+      if (state.downloads.outputDir) console.log(`Download files: ${state.downloads.outputDir}`);
+    }
     console.log(`Output: ${state?.outputDir}`);
     if (actualSocketPath && actualSocketPath !== state.socketPath) {
       console.log(`Control socket: ${actualSocketPath}`);
@@ -217,6 +221,7 @@ function controlStateToPublicRun(
     taskName: state.taskName,
     status: state.status,
     total,
+    downloads: state.downloads,
     outputDir: state.outputDir,
     pid: state.pid,
     controlSocketPath,

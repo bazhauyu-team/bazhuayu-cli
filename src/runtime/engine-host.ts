@@ -50,12 +50,24 @@ export interface EngineHostEvents {
   'run.started': { runId: string; lotId: string; taskId: string; taskName: string };
   row: { runId: string; total: number; data: Record<string, unknown> };
   log: { runId: string; level: string; message: string };
+  download: RuntimeDownloadEvent;
   captcha: RuntimeCaptchaEvent;
   proxy: RuntimeProxyEvent;
   'billing.error': RuntimeBillingErrorEvent;
   'run.paused': { runId: string; taskId: string };
   'run.resumed': { runId: string; taskId: string };
   'run.stopped': RunSummary;
+}
+
+export interface RuntimeDownloadEvent {
+  runId: string;
+  url: string;
+  filePath: string;
+  fileSize: number;
+  status: 'downloading' | 'success' | 'failed';
+  fieldName: string;
+  rowUuid: string;
+  error?: string;
 }
 
 export interface RuntimeCaptchaEvent {
@@ -161,6 +173,13 @@ export class EngineHost extends EventEmitter {
         runId,
         level: String(level ?? 'info'),
         message: [key, ...(Array.isArray(args) ? args : [])].map(String).join(' ')
+      });
+    });
+
+    workflow.on(WorkflowEvents.DownloadFile, (message: any) => {
+      this.emit('download', {
+        runId,
+        ...normalizeDownloadEvent(message?.data ?? message)
       });
     });
 
@@ -470,6 +489,35 @@ function statusValue(answer: unknown): number | undefined {
   if (!answer || typeof answer !== 'object') return undefined;
   const status = (answer as Record<string, unknown>).status;
   return typeof status === 'number' && Number.isFinite(status) ? status : undefined;
+}
+
+function normalizeDownloadEvent(data: any): Omit<RuntimeDownloadEvent, 'runId'> {
+  const payload = Array.isArray(data) ? data[0] : data;
+  const record = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const rawStatus = String(record.status ?? '').toLowerCase();
+  const status = rawStatus === 'success' || rawStatus === 'failed' ? rawStatus : 'downloading';
+  return {
+    url: stringField(record.url),
+    filePath: stringField(record.filePath),
+    fileSize: numberField(record.fileSize),
+    status,
+    fieldName: stringField(record.fieldName),
+    rowUuid: stringField(record.rowUuid),
+    ...(record.error ? { error: String(record.error) } : {})
+  };
+}
+
+function stringField(value: unknown): string {
+  return typeof value === 'string' ? value : value === undefined || value === null ? '' : String(value);
+}
+
+function numberField(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
 }
 
 function normalizeCaptchaRequest(data: any): CaptchaRequest {
