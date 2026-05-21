@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-const CLIENT_NAME = 'bazhuayu-cli';
+const CLIENT_NAME = 'cli';
 
 let cachedVersion: string | undefined;
 

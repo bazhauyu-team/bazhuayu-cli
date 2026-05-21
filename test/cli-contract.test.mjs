@@ -559,7 +559,7 @@ test('account info uses electron getAccount endpoint', async () => {
     assert.equal(seen.length, 1);
     assert.equal(seen[0].url, 'https://example.invalid/api/account/getAccount');
     assert.equal(seen[0].headers['x-api-key'], 'test-key');
-    assert.equal(seen[0].headers['x-client-id'], 'bazhuayu-cli');
+    assert.equal(seen[0].headers['x-client-id'], 'cli');
     assert.match(seen[0].headers['x-client-version'], /^\d+\.\d+\.\d+/);
     assert.equal(seen[0].headers['x-client'], undefined);
     assert.equal(seen[0].headers['x-client-verison'], undefined);
