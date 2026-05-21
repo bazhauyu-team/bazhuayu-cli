@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { authCommand } from '../dist/commands/auth.js';
+import { authCommand, createWindowsUrlLauncherFile } from '../dist/commands/auth.js';
 import { cloudCommand, cloudHistory } from '../dist/commands/cloud.js';
 import { ApiRequestError, fetchAccountInfo, validateApiKey } from '../dist/runtime/api-client.js';
 import { DEFAULT_OAUTH_REDIRECT_URI, exchangeCodeForToken, runOAuthLogin } from '../dist/runtime/oauth.js';
@@ -656,6 +656,19 @@ test('OAuth token exchange treats Bazhuayu expires_in as milliseconds', async ()
   }, fetchImpl);
   assert.ok(token.expiresAtMs >= now + 86_399_000);
   assert.ok(token.expiresAtMs <= now + 86_401_000);
+});
+
+test('Windows OAuth URL launcher stores the complete long URL in a local HTML file', async () => {
+  const longState = 'state-'.padEnd(9000, 'x');
+  const longUrl = `https://identity.example/connect/authorize?client_id=bazhuayu-cli&redirect_uri=http%3A%2F%2Flocalhost%3A18784%2Flogin-callback&state=${longState}`;
+  const filePath = await createWindowsUrlLauncherFile(longUrl);
+  const html = await readFile(filePath, 'utf8');
+  assert.match(filePath, /login\.html$/);
+  assert.ok(filePath.length < longUrl.length);
+  assert.match(html, /location\.replace/);
+  assert.ok(html.includes(JSON.stringify(longUrl)));
+  assert.ok(html.includes('client_id=bazhuayu-cli&amp;redirect_uri='));
+  assert.ok(html.includes(longState));
 });
 
 test('OAuth login falls back to the next registered callback port', async (context) => {
