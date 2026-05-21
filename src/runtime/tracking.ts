@@ -70,8 +70,8 @@ export class TrackingClient {
 
   private async upload(events: TrackingEvent[]): Promise<void> {
     const payload = {
-      product: 'bazhuayu-cli',
-      channel: 'cli',
+      product: 'Bazhuayu',
+      channel: 'Cli',
       version: clientVersion(),
       common: {
         launchId: this.launchId,

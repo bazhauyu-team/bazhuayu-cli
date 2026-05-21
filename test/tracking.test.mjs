@@ -37,8 +37,8 @@ test('tracking uploads encrypted CLI payload to CN production endpoint', async (
     const body = JSON.parse(requests[0].init.body);
     assert.equal(typeof body.data, 'string');
     const payload = JSON.parse(decryptTrackingPayload(body.data));
-    assert.equal(payload.product, 'bazhuayu-cli');
-    assert.equal(payload.channel, 'cli');
+    assert.equal(payload.product, 'Bazhuayu');
+    assert.equal(payload.channel, 'Cli');
     assert.equal(payload.common.keySource, 'env');
     assert.equal(payload.common.nodeVersion, process.version);
     assert.equal(payload.events.length, 1);
