@@ -7,7 +7,7 @@ let cachedVersion: string | undefined;
 export function clientHeaders(): Record<string, string> {
   const version = clientVersion();
   return {
-    'x-client': CLIENT_NAME,
+    'x-client-id': CLIENT_NAME,
     'x-client-version': version
   };
 }
