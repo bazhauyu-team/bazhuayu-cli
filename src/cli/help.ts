@@ -10,6 +10,18 @@ export function printCommandHelp(command: string, subcommand?: string): void {
 
 Purpose:
   Print machine-readable CLI capabilities for agents.
+  Agents should call this before planning multi-step workflows such as creating
+  a scraping task from a URL. The response includes machineContract.recipes with
+  the recommended recognize/plan/preview/apply/validate sequence.
+  For user requests like "use bazhuayu-cli to create a task for this URL",
+  LLM/agent tools should choose machineContract.recipes.createTaskFromUrlWithAgent
+  and run the CLI workflow themselves.
+  Agent task creation context includes the user goal and a full-page screenshot
+  by default.
+  bazhuayu-cli is the npm package name; octopus is the installed binary.
+  If a user says "use bazhuayu-cli to create a task for this URL", agents should
+  inspect this command and then execute the recipe without asking the user to
+  explain internal recognize flags.
 
 Authentication:
   Does not require login. Functional commands do.
@@ -83,6 +95,60 @@ Agent notes:
   Use --jsonl for foreground event streams.
   JSONL now includes captcha and proxy request events when the runtime asks for them.
   run only starts local collection. Use data export <taskId> --lot-id <lotId> for files.
+`,
+    recognize: `Usage:
+  octopus recognize <url> --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
+  octopus recognize <url> --manual [--goal <text>] [--llm-rank] [--no-dismiss-popups]
+  octopus recognize <url> --agent --agent-command <cmd> [--goal <text>] [--output task.json] [--yes]
+  octopus recognize <url> --prepare-agent --json [--goal <text>] [--output context.json]
+  octopus recognize --preview-agent-plan plan.json --agent-context context.json [--json]
+  octopus recognize --apply-agent-plan plan.json --agent-context context.json --output task.json [--json]
+
+Purpose:
+  Open the Octopus extension browser, inspect the page, and list candidate data regions
+  such as tables, repeated cards, search results, link collections, and forms.
+
+Notes:
+  Quote URLs that contain '&', '?' or other shell metacharacters, for example:
+  octopus recognize 'https://example.com/page?a=1&b=2' --manual
+  The first pass is deterministic and does not require an LLM. --auto chooses the
+  best candidate and generates a task. --manual opens a guided flow for login,
+  popup handling, choosing the highlighted data region, optional session save,
+  and task-file generation.
+  Use --query <keyword> or --input <name=value> to search first, then recognize
+  and generate a task from the result page. Generated tasks preserve the search
+  input XPath and submit action before extracting results.
+  If a search page opens a login/captcha/paywall gate, recognize pauses in
+  interactive/manual mode so the user can complete login in the browser. Use
+  --save-session to store same-site cookies; generated tasks inject that session
+  before replaying the search.
+  recognize uses the protected SmartProxy runtime by default. It requires a
+  bundled private @octopus/octopus-protect native module. Protected Smart resources are
+  fetched encrypted, decrypted in memory, and never written to task files.
+  Use --legacy-recognizer only for debugging the previous heuristic detector.
+  If --output is omitted when generating a task, a recognized_<host>.json file is created automatically.
+  Login/cookie/ad overlays are dismissed automatically when a safe close control is found.
+  Use --no-dismiss-popups to inspect the page without this cleanup.
+  The manual session-save option stores same-site cookies locally and writes only
+  a session reference in generated task files; later local runs load that session automatically.
+  Cookie sessions do not cover every site, especially pages that require localStorage,
+  device binding, or fresh verification.
+  Agents should discover this workflow via "octopus capabilities --json" and
+  machineContract.recipes.createTaskFromUrlWithAgent; users should not need to
+  explain the prepare/plan/preview/apply sequence manually.
+  If an LLM/agent is helping the user create a scraping task, prefer that recipe
+  over handwritten task JSON. The agent should run recognize --prepare-agent,
+  write a plan from context.json, preview it, apply it, and validate the task.
+  Agent workflows generate a full-page screenshot by default and store its path
+  in context.screenshot. Pass the user request through --goal so the agent can
+  judge candidates against both the natural-language intent and the screenshot.
+  --agent is a one-shot wrapper for external LLM/agent tools. The CLI writes a
+  temporary context JSON, runs --agent-command (or OCTOPUS_AGENT_COMMAND), expects
+  a plan JSON at OCTOPUS_AGENT_PLAN or stdout, previews risk, asks for confirmation
+  unless --yes is set, then generates the task. --agent-command executes a local
+  shell command; only pass a trusted agent runner. Use --keep-agent-files to retain
+  the context/plan for audit. Low-level --prepare-agent/--preview-agent-plan/
+  --apply-agent-plan commands remain available for automation and debugging.
 `,
     cloud: `Usage:
   octopus cloud start <taskId> [--json]
@@ -158,6 +224,13 @@ Usage:
   octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--json]
   octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
   octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+  octopus recognize URL --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
+  octopus recognize URL --manual [--goal <text>] [--llm-rank] [--no-dismiss-popups]
+  octopus recognize URL --agent --agent-command <cmd> [--output task.json] [--yes]
+  octopus recognize URL --prepare-agent --json --goal <text> --output context.json
+  octopus recognize --preview-agent-plan plan.json --agent-context context.json [--json]
+  octopus recognize --apply-agent-plan plan.json --agent-context context.json --output task.json
+  octopus run-url <url> --auto|--select <candidateId> [--goal <text>] [--input <name=value>] [--max-rows <n>] [--json|--jsonl]
   octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
   octopus cloud start <taskId> [--json]
   octopus cloud stop <taskId> [--json]
