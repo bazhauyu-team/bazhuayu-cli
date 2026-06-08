@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
-import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { mock, test } from 'node:test';
@@ -994,6 +994,19 @@ test('local Chrome commands reject Linux arm64 before runtime download', async (
     platform.mock.restore();
     arch.mock.restore();
   }
+});
+
+test('browser doctor verifies that the Chrome executable can actually launch', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'octo-browser-doctor-'));
+  const fakeChrome = join(root, 'fake-chrome');
+  await writeFile(fakeChrome, "#!/bin/sh\necho 'libnspr4.so: cannot open shared object file' >&2\nexit 127\n");
+  await chmod(fakeChrome, 0o755);
+
+  const result = await runCli(['browser', 'doctor', '--chrome-path', fakeChrome, '--json']);
+  const payload = assertJsonFailure(result, 'CHROME_LAUNCH_FAILED', 2);
+  assert.match(payload.error.message, /Chrome failed to launch/);
+  assert.match(payload.error.message, /libnspr4\.so/);
+  assert.match(payload.error.message, /apt-get install -y libnss3 libnspr4/);
 });
 
 test('agent-facing commands expose json envelopes for key contract paths', async () => {

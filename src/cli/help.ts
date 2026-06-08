@@ -117,6 +117,9 @@ Notes:
   best candidate and generates a task. --manual opens a guided flow for login,
   popup handling, choosing the highlighted data region, optional session save,
   and task-file generation.
+  On Linux servers without DISPLAY/WAYLAND_DISPLAY, non-manual recognition
+  automatically uses Xvfb when installed. Manual recognition needs a visible
+  desktop/VNC display because the user must interact with the browser overlay.
   Use --query <keyword> or --input <name=value> to search first, then recognize
   and generate a task from the result page. Generated tasks preserve the search
   input XPath and submit action before extracting results.

@@ -1,23 +1,22 @@
 import { createRequire } from 'node:module';
 import type { ChildProcess } from 'node:child_process';
-import { resolve } from 'node:path';
+import { cp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import prompts from 'prompts';
 import { BridgeHub } from '../bridge-hub.js';
 import type { Browser, Page } from 'puppeteer-core';
 import { detectDeptaListGroups, type DeptaListGroup } from './depta/browser-detector.js';
 import { defaultSessionNameForUrl, saveBrowserSession, sessionOriginForUrl } from '../browser-session.js';
 import type { ChromeResolveStatus } from '../chrome-progress.js';
+import { hasLinuxDisplayEnvironment, startVirtualDisplayIfNeeded, type VirtualDisplayHandle } from '../virtual-display.js';
 import { detectProtectedSmartCandidates } from './protected-smart.js';
 import type { PageRecognitionResult, RecognizedAgentScreenshot, RecognizedCandidate, RecognizedCandidateDiagnostics, RecognizedCandidateLayout, RecognizedDetailMode, RecognizedDetailPlan, RecognizedField, RecognizedFieldDiagnostics, RecognizedLlmRankInput, RecognizedPagination, RecognizedPopupDismissal, RecognizedSearchPlan, RecognizeOptions } from './types.js';
 
 const require = createRequire(import.meta.url);
+const puppeteer = require('rebrowser-puppeteer-core') as typeof import('puppeteer-core');
 const EngineModule = require('@octopus/engine') as {
-  default?: new (options: Record<string, unknown>) => any;
-  WorkflowEvents: Record<string, string>;
   resolveChrome: (options?: { onStatus?: (status: ChromeResolveStatus) => void }) => Promise<{ executablePath: string }>;
-};
-const { transformer } = require('@octopus/engine/transformer') as {
-  transformer: (source: string, callback: (content: string) => void) => void;
 };
 
 interface RawCandidate {
@@ -42,6 +41,7 @@ type ExtensionCommandResponse = {
 };
 
 interface RecognizerExtensionBridge {
+  runtimeConfig: { sessionId: string; wsUrl: string };
   sendActionCommand(command: Record<string, unknown>): Promise<ExtensionCommandResponse>;
   resolveTabId(pageUrl: string): number | undefined;
   close(): void;
@@ -764,55 +764,40 @@ function suppressRecognizerRuntimeConsole(): SuppressedRuntimeConsole {
 
 class ExtensionRecognizerHost {
   private constructor(
-    private readonly workflow: any,
+    private readonly browserInstance: Browser,
+    private readonly runtimeExtensionPath: string | undefined,
     private readonly bridgeHub: BridgeHub,
     private readonly extensionBridge: RecognizerExtensionBridge,
     public page: Page,
-    private tabId: number
+    private tabId: number,
+    private readonly virtualDisplay: VirtualDisplayHandle
   ) {}
 
   static async start(options: RecognizeOptions): Promise<ExtensionRecognizerHost> {
-    const WorkflowAgent = EngineModule.default ?? EngineModule as unknown as new (options: Record<string, unknown>) => any;
+    assertRecognizeDisplayAvailable(options);
+    const virtualDisplay = await startVirtualDisplayForRecognition(options);
     const runId = `recognize_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     const bridgeHub = new BridgeHub();
     const extensionBridge = await bridgeHub.createSessionBridge(runId) as RecognizerExtensionBridge;
-    const xml = recognizerParkingTaskXml(options.url);
-    const xoml = await transformXml(xml);
-    const workflow = new WorkflowAgent({
-      taskId: runId,
-      taskName: 'Recognize page',
-      xml,
-      xoml,
-      fieldNames: [],
-      disableAD: false,
-      disableImage: false,
-      workflowSetting: defaultWorkflowSetting(),
-      userAgent: defaultUserAgent(),
-      brokerSettings: defaultBrokerSettings(),
-      downloadFolderPath: '',
-      extensionBridge
-    });
+    let browser: Browser | undefined;
+    let runtimeExtensionPath: string | undefined;
 
-    const stopped = new Promise<never>((_, reject) => {
-      workflow.on(EngineModule.WorkflowEvents.Stopped, () => {
-        reject(new Error('recognizer browser workflow stopped before page inspection completed'));
-      });
-    });
-
-    const chromePath = options.chromePath ?? (await EngineModule.resolveChrome({ onStatus: options.onChromeStatus })).executablePath;
-    await workflow.start({ headless: false, path: chromePath });
-    await Promise.race([
-      bridgeHub.waitForSessionConnected(runId, Math.min(options.timeoutMs, 30_000)),
-      stopped
-    ]);
-
-    const browser = workflow.browser as Browser | undefined;
-    if (!browser) throw new Error('recognizer browser did not start');
-    const page = await waitForRecognizerPage(browser, options.url, options.timeoutMs);
-    const tabId = await waitForTabId(extensionBridge, page, options.timeoutMs);
-    await readyCheck(extensionBridge, tabId, Math.min(options.timeoutMs, 15_000)).catch(() => undefined);
-    workflow.pause();
-    return new ExtensionRecognizerHost(workflow, bridgeHub, extensionBridge, page, tabId);
+    try {
+      const chromePath = options.chromePath ?? (await EngineModule.resolveChrome({ onStatus: options.onChromeStatus })).executablePath;
+      runtimeExtensionPath = await prepareRecognizerRuntimeExtension(runId, extensionBridge);
+      browser = await launchRecognizerBrowser(chromePath, runtimeExtensionPath);
+      await bridgeHub.waitForSessionConnected(runId, Math.min(options.timeoutMs, 30_000));
+      const page = await openRecognizerTargetPage(browser, options.url, options.timeoutMs);
+      const tabId = await waitForTabId(extensionBridge, page, options.timeoutMs);
+      await readyCheck(extensionBridge, tabId, Math.min(options.timeoutMs, 15_000)).catch(() => undefined);
+      return new ExtensionRecognizerHost(browser, runtimeExtensionPath, bridgeHub, extensionBridge, page, tabId, virtualDisplay);
+    } catch (error) {
+      await browser?.close().catch(() => undefined);
+      if (runtimeExtensionPath) await rm(runtimeExtensionPath, { recursive: true, force: true }).catch(() => undefined);
+      bridgeHub.close();
+      await virtualDisplay.close();
+      throw error;
+    }
   }
 
   async refreshTabId(): Promise<number> {
@@ -826,7 +811,7 @@ class ExtensionRecognizerHost {
   }
 
   browser(): Browser | undefined {
-    return this.workflow.browser as Browser | undefined;
+    return this.browserInstance;
   }
 
   async command(command: Record<string, unknown>): Promise<ExtensionCommandResponse> {
@@ -841,22 +826,80 @@ class ExtensionRecognizerHost {
   }
 
   async close(): Promise<void> {
-    const browserProcess = this.workflow.browser?.process?.() as ChildProcess | null | undefined;
+    const browserProcess = this.browserInstance.process?.() as ChildProcess | null | undefined;
     silenceBrowserProcess(browserProcess);
     try {
-      this.workflow.stopTask();
-      await delay(250);
-    } catch {
-      // best-effort cleanup
-    }
-    try {
-      this.workflow.close();
+      await this.browserInstance.close();
     } catch {
       // best-effort cleanup
     }
     await waitForBrowserProcessExit(browserProcess, 1500);
     this.bridgeHub.close();
+    if (this.runtimeExtensionPath) await rm(this.runtimeExtensionPath, { recursive: true, force: true }).catch(() => undefined);
+    await this.virtualDisplay.close();
   }
+}
+
+function assertRecognizeDisplayAvailable(options: RecognizeOptions): void {
+  if (process.platform !== 'linux' || (!options.manual && !options.interactive)) return;
+  if (hasLinuxDisplayEnvironment()) return;
+  throw new Error('Linux 手动识别需要可见浏览器环境，但当前没有 X server 或 WAYLAND_DISPLAY。请在桌面会话中运行，或用 xvfb-run/VNC 提供可见显示；非手动识别会自动使用 Xvfb。');
+}
+
+async function startVirtualDisplayForRecognition(options: RecognizeOptions): Promise<VirtualDisplayHandle> {
+  if (options.manual || options.interactive) {
+    return {
+      enabled: false,
+      async close() {}
+    };
+  }
+  return startVirtualDisplayIfNeeded();
+}
+
+async function prepareRecognizerRuntimeExtension(runId: string, extensionBridge: RecognizerExtensionBridge): Promise<string> {
+  const engineDist = dirname(require.resolve('@octopus/engine'));
+  const templatePath = join(engineDist, 'extension');
+  const runtimePath = join(tmpdir(), 'octopus-engine-extension', `${runId}-${Date.now()}`);
+  await mkdir(dirname(runtimePath), { recursive: true });
+  await cp(templatePath, runtimePath, { recursive: true });
+  await writeFile(join(runtimePath, 'runtime-config.json'), `${JSON.stringify(extensionBridge.runtimeConfig, null, 2)}\n`, 'utf8');
+  return runtimePath;
+}
+
+async function launchRecognizerBrowser(chromePath: string, runtimeExtensionPath: string): Promise<Browser> {
+  return puppeteer.launch({
+    headless: false,
+    executablePath: chromePath,
+    defaultViewport: null,
+    dumpio: false,
+    ignoreDefaultArgs: ['--enable-automation', '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows'],
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-notifications',
+      '--ignore-certificate-errors',
+      '--disable-blink-features=AutomationControlled',
+      '--allow-running-insecure-content',
+      '--disable-features=IsolateOrigins,HttpsFirstBalancedModeAutoEnable,NetworkService,Translate,AcceptCHFrame,MediaRouter,OptimizationHints,ProcessPerSiteUpToMainFrameThreshold,IsolateSandboxedIframes,HttpsUpgrades',
+      '--enable-features=SharedArrayBuffer,TabFreeze,TabDiscarding',
+      '--prerender-from-omnibox=disabled',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--silent-debugger-extension-api',
+      '--window-size=1920,1200',
+      '--js-flags=--expose-gc',
+      '--disk-cache-size=524288000',
+      '--aggressive-cache-discard',
+      `--user-agent=${defaultUserAgent()}`,
+      `--load-extension=${runtimeExtensionPath}`,
+      `--disable-extensions-except=${runtimeExtensionPath}`,
+      '--no-first-run',
+      '--disable-default-apps'
+    ]
+  }) as Promise<Browser>;
 }
 
 function silenceBrowserProcess(child: ChildProcess | null | undefined): void {
@@ -889,6 +932,12 @@ async function waitForRecognizerPage(browser: Browser, url: string, timeoutMs: n
   }
   const pages = await browser.pages();
   return pages[0] ?? await browser.newPage();
+}
+
+async function openRecognizerTargetPage(browser: Browser, url: string, timeoutMs: number): Promise<Page> {
+  const page = await waitForRecognizerPage(browser, RECOGNIZER_PARKING_URL, Math.min(timeoutMs, 5000));
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+  return page;
 }
 
 async function waitForTabId(extensionBridge: RecognizerExtensionBridge, page: Page, timeoutMs: number): Promise<number> {
@@ -10363,132 +10412,19 @@ function normalizeFieldName(value: string, fallback: string): string {
   return ascii || fallback;
 }
 
-async function transformXml(xml: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    try {
-      transformer(xml, (content) => resolve(String(content)));
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function recognizerParkingTaskXml(url: string): string {
-  return [
-    `<ns0:RootAction ${rootAttrs()}>`,
-    `<ns0:NavigateAction ${attrs({
-      'x:Name': 'Navigate1',
-      Name: '',
-      WaitSeconds: '0',
-      Caption: 'Open page for recognition',
-      WaitItem: '',
-      UseLoopItem: 'false',
-      LoopItem: '',
-      Description: '',
-      IsRandomWait: 'false',
-      PageIndex: '-1',
-      URL: url,
-      TimeOut: '00:02:00',
-      ScrollDown: 'true',
-      ScrollTime: '3600',
-      ScrollInterval: '1',
-      ScrollIntervalUnit: 'Second',
-      ScrollType: '0',
-      ScrollScope: '0',
-      ScrollXPath: '',
-      BlockPopup: 'true',
-      IfStopScroll: 'false',
-      UseCustomizeCookie: 'false',
-      MaxRetry: '3',
-      EnableRetry: 'false',
-      TimeInterval: '5',
-      RetryInterval: '5',
-      EnableSwitchIp: 'false',
-      EnableSwitchUserAgent: 'false',
-      ClearCache: 'false',
-      AutoRetry: 'false',
-      TextContain: '',
-      UrlContain: '',
-      TextNotContain: '',
-      IPType: '1',
-      NavigateType: 'OpenWebpage',
-      RequestMethod: 'GET',
-      RequestBodyContent: '',
-      CustomizeCookie: ''
-    })}><ns0:NavigateAction.RetryConditions><x:Array Type="{x:Type p7:RetryCondition}" xmlns:p7="clr-namespace:Octopus.ActionInterface.WebSiteInterface;Assembly=Octopus.ActionInterface, Version=7.4.2.11231, Culture=neutral, PublicKeyToken=null" /></ns0:NavigateAction.RetryConditions></ns0:NavigateAction>`,
-    '</ns0:RootAction>'
-  ].join('');
-}
-
-function rootAttrs(): string {
-  return [
-    'xmlns="http://schemas.microsoft.com/winfx/2006/xaml/workflow"',
-    'xmlns:ns0="clr-namespace:Octopus.Actions;Assembly=Octopus.Actions, Version=1.1.5585.26568, Culture=neutral, PublicKeyToken=null"',
-    'xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"',
-    'startRunnerShowBrowser="false"',
-    'downloadFolderPath=""',
-    'startCaptrueErrorLog="false"',
-    'globalCookie=""',
-    'isSetGlobalCookie="false"',
-    'isCloseLocalWindow="false"',
-    'useKernelBrowser="false"'
-  ].join(' ');
-}
-
-function attrs(values: Record<string, string>): string {
-  return Object.entries(values)
-    .map(([key, value]) => `${key}="${escapeXml(value)}"`)
-    .join(' ');
-}
-
-function escapeXml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
+const RECOGNIZER_PARKING_URL = [
+  'data:text/html,',
+  encodeURIComponent([
+    '<!doctype html>',
+    '<html><head><title>Octopus Recognizer</title></head>',
+    '<body style="margin:0">',
+    '<div style="height:200000px"></div>',
+    '</body></html>'
+  ].join(''))
+].join('');
 
 function defaultUserAgent(): string {
   return 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36';
-}
-
-function defaultWorkflowSetting(): Record<string, unknown> {
-  return {
-    showJumpInvalidClickSetting: true,
-    repeatPageLoopCount: 50,
-    continuousJudgeCount: 5,
-    actionWrapper: null
-  };
-}
-
-function defaultBrokerSettings(): Record<string, unknown> {
-  return {
-    ipProxySettings: {
-      ipProxyFromType: 0,
-      strongIpProxySettings: {
-        period: 0,
-        areaId: 0
-      },
-      customIpProxySettings: {
-        switchPeriod: 0,
-        proxies: []
-      }
-    },
-    userAgentSwitchSettings: {
-      switchType: 0,
-      customPeriod: 0,
-      userAgents: []
-    },
-    cookieClearSettings: {
-      clearType: 0,
-      customPeriod: 0
-    },
-    captchaSettings: {
-      isAutoCloudflare: false
-    }
-  };
 }
 
 function safeHost(url: string): string {

@@ -94,12 +94,31 @@ async function loadProtectedSmartSources(baseUrl?: string): Promise<ProtectedSou
 }
 
 function loadProtectModule(): ProtectModule {
-  const loaded = require('@octopus/octopus-protect');
-  const protect = (loaded?.default ?? loaded) as ProtectModule;
+  let loaded: unknown;
+  try {
+    loaded = require('@octopus/octopus-protect');
+  } catch (error) {
+    throw new Error(protectModuleLoadErrorMessage(error));
+  }
+  const module = loaded as { default?: unknown };
+  const protect = (module.default ?? loaded) as ProtectModule;
   if (!protect?.vk || !protect.vn?.vf || !protect.vn?.revf || !protect.en?.ensk || !protect.en?.desk) {
     throw new Error('Protected Smart requires the bundled native @octopus/octopus-protect module.');
   }
   return protect;
+}
+
+function protectModuleLoadErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const platform = `${process.platform}-${process.arch}`;
+  if (/Cannot find native binding|Cannot find module/i.test(message)) {
+    return [
+      `Protected Smart requires a native @octopus/octopus-protect binding for ${platform}, but it is missing from this installation.`,
+      'Reinstall a package version that bundles the matching native binding.',
+      'Temporary workaround: rerun recognize with --legacy-recognizer.'
+    ].join(' ');
+  }
+  return `Protected Smart native module failed to load on ${platform}: ${message}`;
 }
 
 function createVerifiedCode(protect: ProtectModule): string {

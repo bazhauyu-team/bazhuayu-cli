@@ -132,6 +132,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           'RECOGNIZE_CANDIDATE_NOT_FOUND',
           'RECOGNIZE_CANDIDATE_UNSUPPORTED',
           LINUX_ARM64_UNSUPPORTED_CODE,
+          'CHROME_LAUNCH_FAILED',
           'RUN_NOT_FOUND',
           'LOCAL_LOT_NOT_FOUND',
           'UNSUPPORTED_EXPORT_FORMAT'

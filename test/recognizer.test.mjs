@@ -3,9 +3,10 @@ import { chdir, cwd } from 'node:process';
 import { access, mkdtemp, readFile, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import { buildAgentContextForTesting, buildTaskFromAgentPlan, previewAgentPlanForTesting, recognizeCommand, resolveAgentScreenshotPathForTesting, resolveAvailableRecognizedTaskFile, runInlineAgentRecognizeForTesting, runUrlCommand, splitRunUrlArgs } from '../dist/commands/recognize.js';
 import { browserSessionPath, loadBrowserSession, saveBrowserSession } from '../dist/runtime/browser-session.js';
+import { hasLinuxDisplayEnvironment, requiresVirtualDisplay } from '../dist/runtime/virtual-display.js';
 import { dedupeEquivalentCandidates, detectInteractivePaginationOptionsForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, dismissPageObstructionsForTesting, filterRecognizedBoilerplateCandidates, findSearchInputCandidatesForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, scoreSearchResultPageForTesting, shouldPromptForLoginInterventionForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/recognizer/page-recognizer.js';
 import { buildTaskFromCandidate } from '../dist/runtime/recognizer/xml.js';
 
@@ -42,6 +43,29 @@ test('resolveAgentScreenshotPathForTesting enables default full-page screenshots
     );
   } finally {
     chdir(previousCwd);
+  }
+});
+
+test('virtual display detection identifies Linux servers without a display', () => {
+  const platform = mock.property(process, 'platform', 'linux');
+  const previousDisplay = process.env.DISPLAY;
+  const previousWayland = process.env.WAYLAND_DISPLAY;
+  delete process.env.DISPLAY;
+  delete process.env.WAYLAND_DISPLAY;
+
+  try {
+    assert.equal(hasLinuxDisplayEnvironment(), false);
+    assert.equal(requiresVirtualDisplay(), true);
+
+    process.env.DISPLAY = ':99';
+    assert.equal(hasLinuxDisplayEnvironment(), true);
+    assert.equal(requiresVirtualDisplay(), false);
+  } finally {
+    platform.mock.restore();
+    if (previousDisplay === undefined) delete process.env.DISPLAY;
+    else process.env.DISPLAY = previousDisplay;
+    if (previousWayland === undefined) delete process.env.WAYLAND_DISPLAY;
+    else process.env.WAYLAND_DISPLAY = previousWayland;
   }
 });
 
