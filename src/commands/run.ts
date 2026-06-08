@@ -13,6 +13,7 @@ import {
 import { EngineHost, type RuntimeDownloadEvent } from '../runtime/engine-host.js';
 import { defaultRunsDir } from '../runtime/local-runs.js';
 import { safeFileName } from '../runtime/naming.js';
+import { LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE, isLocalChromeRuntimeSupported } from '../runtime/platform-support.js';
 import { BillingRuntimeError } from '../runtime/run-services.js';
 import { resolveAuth } from '../runtime/auth.js';
 import { cookieHeaderFromSession, loadBrowserSession } from '../runtime/browser-session.js';
@@ -87,6 +88,12 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
   }
 
   const options = parseRunOptions(taskId, args);
+  if (!isLocalChromeRuntimeSupported()) {
+    if (options.json || options.jsonl) printEnvelope(false, undefined, LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE);
+    else console.error(LINUX_ARM64_UNSUPPORTED_MESSAGE);
+    return EXIT_RUNTIME_FAILED;
+  }
+
   const maxRowsError = validateMaxRows(args);
   if (maxRowsError) {
     return printUsageError(

@@ -25,6 +25,7 @@ import {
   resolveProxy,
   solveCaptcha
 } from './run-services.js';
+import { formatChromeResolveStatus, type ChromeResolveStatus } from './chrome-progress.js';
 import { maybePrintRuntimeSecurityNotice } from './security-notice.js';
 
 const require = createRequire(import.meta.url);
@@ -34,7 +35,7 @@ export interface EngineModuleLike {
   default?: new (options: Record<string, unknown>) => any;
   WorkflowEvents: Record<string, string>;
   resolveChrome: (options?: {
-    onStatus?: (status: { state: string; progress?: number }) => void;
+    onStatus?: (status: ChromeResolveStatus) => void;
   }) => Promise<{ executablePath: string }>;
 }
 
@@ -127,11 +128,10 @@ export class EngineHost extends EventEmitter {
     const extensionBridge = await this.bridgeHub.createSessionBridge(runId);
     const chromePath = options.chromePath ?? (await resolveChrome({
       onStatus: (status) => {
-        const progress = typeof status.progress === 'number' ? ` ${status.progress.toFixed(0)}%` : '';
         this.emit('log', {
           runId,
           level: status.state === 'failed' ? 'error' : 'info',
-          message: `runtime.chrome.resolve ${status.state}${progress}`
+          message: `runtime.chrome.resolve ${formatChromeResolveStatus(status)}`
         });
       }
     })).executablePath;

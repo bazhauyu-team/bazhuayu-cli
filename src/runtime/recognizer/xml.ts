@@ -6,6 +6,7 @@ export interface GeneratedRecognizedTask {
   taskName: string;
   xml: string;
   fieldNames: string[];
+  workflowSetting?: Record<string, unknown>;
   recognition: {
     url: string;
     candidateId: string;
@@ -54,6 +55,7 @@ export function buildTaskFromCandidate(options: {
     taskName: options.taskName,
     xml,
     fieldNames,
+    ...workflowSettingForCandidate(candidate),
     recognition: {
       url: options.url,
       candidateId: candidate.id,
@@ -63,6 +65,17 @@ export function buildTaskFromCandidate(options: {
       paginationType: candidate.pagination?.type,
       ...(recognitionDetailPlan ? { detailPlan: recognitionDetailPlan } : {}),
       ...(options.popupDismissals?.length ? { popupDismissals: options.popupDismissals } : {})
+    }
+  };
+}
+
+function workflowSettingForCandidate(candidate: RecognizedCandidate): { workflowSetting: Record<string, unknown> } | Record<string, never> {
+  const pagination = candidate.pagination;
+  if (pagination?.type !== 'scroll' && !pagination?.revealByScroll) return {};
+  return {
+    workflowSetting: {
+      repeatPageLoopCount: 12,
+      continuousJudgeCount: 3
     }
   };
 }
@@ -521,7 +534,7 @@ function scrollRevealedLoadMoreLoopXml(candidate: RecognizedCandidate, listLoopX
     ScrollIntervalUnit: 'Second',
     ScrollScope: '0',
     ScrollXPath: '',
-    IfStopScroll: 'false',
+    IfStopScroll: 'true',
     ScrollType: '0',
     UseCustomizeCookie: 'false',
     MaxRetry: '0',
@@ -540,7 +553,7 @@ function scrollRevealedLoadMoreLoopXml(candidate: RecognizedCandidate, listLoopX
     LoopType: 'FixedItem',
     QuitLoopWhenExecutedTimesEqual: 'true',
     DisabledScrollAutoRemoveDuplication: 'false',
-    ExecutedTimesLimitation: '300',
+    ExecutedTimesLimitation: '80',
     CheckedJumpLoopClick: 'true'
   })}>${listLoopXml}${scrollStepActionXml()}${optionalLoadMoreLoopXml(candidate)}</ns0:LoopAction>`;
 }
@@ -645,7 +658,7 @@ function scrollStepLoopActionXml(candidate: RecognizedCandidate, listLoopXml: st
     ScrollIntervalUnit: 'Second',
     ScrollScope: '0',
     ScrollXPath: '',
-    IfStopScroll: 'false',
+    IfStopScroll: 'true',
     ScrollType: '0',
     UseCustomizeCookie: 'false',
     MaxRetry: '0',
@@ -664,7 +677,7 @@ function scrollStepLoopActionXml(candidate: RecognizedCandidate, listLoopXml: st
     LoopType: 'FixedItem',
     QuitLoopWhenExecutedTimesEqual: 'true',
     DisabledScrollAutoRemoveDuplication: 'false',
-    ExecutedTimesLimitation: '300',
+    ExecutedTimesLimitation: '80',
     CheckedJumpLoopClick: 'true'
   })}>${listLoopXml}${scrollStepActionXml()}${optionalGenericLoadMoreLoopXml()}</ns0:LoopAction>`;
 }
@@ -755,7 +768,7 @@ function scrollStepActionXml(): string {
     ScrollType: '0',
     ScrollScope: '0',
     ScrollXPath: '',
-    IfStopScroll: 'false',
+    IfStopScroll: 'true',
     MaxRetry: '1',
     EnableRetry: 'false',
     EnableSwitchIp: 'false',

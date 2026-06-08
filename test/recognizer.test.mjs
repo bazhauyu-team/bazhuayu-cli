@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { buildAgentContextForTesting, buildTaskFromAgentPlan, previewAgentPlanForTesting, recognizeCommand, resolveAgentScreenshotPathForTesting, resolveAvailableRecognizedTaskFile, runInlineAgentRecognizeForTesting, runUrlCommand, splitRunUrlArgs } from '../dist/commands/recognize.js';
 import { browserSessionPath, loadBrowserSession, saveBrowserSession } from '../dist/runtime/browser-session.js';
-import { dedupeEquivalentCandidates, detectInteractivePaginationOptionsForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, dismissPageObstructionsForTesting, filterRecognizedBoilerplateCandidates, findSearchInputCandidatesForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, scoreSearchResultPageForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/recognizer/page-recognizer.js';
+import { dedupeEquivalentCandidates, detectInteractivePaginationOptionsForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, dismissPageObstructionsForTesting, filterRecognizedBoilerplateCandidates, findSearchInputCandidatesForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, scoreSearchResultPageForTesting, shouldPromptForLoginInterventionForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/recognizer/page-recognizer.js';
 import { buildTaskFromCandidate } from '../dist/runtime/recognizer/xml.js';
 
 test('resolveAvailableRecognizedTaskFile creates a default file without overwriting existing tasks', async () => {
@@ -323,7 +323,7 @@ test('detectPaginationForCandidates does not infer scroll from long pages alone'
   assert.equal(withPagination.pagination, undefined);
 });
 
-test('detectPaginationForCandidates uses scroll only when the scroll probe sees content growth', async () => {
+test('detectPaginationForCandidates uses scroll only when the scroll probe sees list-item growth', async () => {
   const candidate = {
     id: 'repeated_card_1',
     type: 'repeated_card',
@@ -367,7 +367,116 @@ test('detectPaginationForCandidates uses scroll only when the scroll probe sees 
 
   assert.equal(withPagination.pagination.type, 'scroll');
   assert.equal(withPagination.pagination.xpath, '');
-  assert.match(withPagination.pagination.reasons.join(' '), /content grew/);
+  assert.match(withPagination.pagination.reasons.join(' '), /list-like item count grew/);
+});
+
+test('detectPaginationForCandidates does not infer scroll from Baidu-like static hot list height changes', async () => {
+  const candidate = {
+    id: 'protected_smart_1',
+    type: 'search_results',
+    title: 'Baidu hot search list',
+    confidence: 0.86,
+    selector: '#hotsearch-content-wrapper',
+    xpath: '/html/body/div/ul',
+    itemSelector: 'li.hotsearch-item',
+    itemXPath: '/html/body/div/ul/li',
+    itemCount: 10,
+    fields: [
+      { name: '标题', kind: 'text', selector: 'span.title-content-title', xpath: '/html/body/div/ul/li/span', relativeXPath: './span', samples: ['高考加油'] },
+      { name: '标题链接', kind: 'href', selector: 'a.title-content', xpath: '/html/body/div/ul/li/a', relativeXPath: './a', samples: ['https://www.baidu.com/s?wd=test'] }
+    ],
+    sampleRows: [{ '标题': '高考加油', '标题链接': 'https://www.baidu.com/s?wd=test' }],
+    reasons: ['protected SmartProxy candidate']
+  };
+  const page = fakePaginationPage({
+    bodyHeight: 1600,
+    viewportHeight: 900,
+    itemXPath: candidate.itemXPath,
+    rows: Array.from({ length: candidate.itemCount }, (_, index) => ({
+      tag: 'li',
+      text: `热搜 ${index + 1} 高考加油 原始列表项`,
+      attrs: { className: 'hotsearch-item' },
+      rect: { left: 720, top: 220 + index * 42, right: 1050, bottom: 252 + index * 42 },
+      children: [
+        {
+          tag: 'a',
+          text: `热搜 ${index + 1}`,
+          attrs: { href: `https://www.baidu.com/s?wd=${index + 1}`, className: 'title-content' },
+          rect: { left: 760, top: 224 + index * 42, right: 1000, bottom: 248 + index * 42 }
+        }
+      ]
+    }))
+  });
+
+  const [withPagination] = await detectPaginationForCandidatesForTesting(page, [candidate], {
+    snapshots: [],
+    sawActiveLoadMore: false,
+    sawGrowth: true,
+    maxArticleLikeCount: 10,
+    maxContentHeight: 4200,
+    maxPageHeight: 2200,
+    grewArticleLikeCount: 0,
+    grewContentHeight: 1800,
+    grewPageHeight: 600,
+    reachedBottom: true
+  });
+
+  assert.equal(withPagination.pagination, undefined);
+});
+
+test('detectPaginationForCandidates removes protected scroll when the probe reached bottom without growth', async () => {
+  const candidate = {
+    id: 'protected_smart_1',
+    type: 'search_results',
+    title: 'Baidu hot search list',
+    confidence: 0.86,
+    selector: '#hotsearch-content-wrapper',
+    xpath: '/html/body/div/ul',
+    itemSelector: 'li.hotsearch-item',
+    itemXPath: '/html/body/div/ul/li',
+    itemCount: 10,
+    fields: [
+      { name: '标题', kind: 'text', selector: 'span.title-content-title', xpath: '/html/body/div/ul/li/span', relativeXPath: './span', samples: ['高考加油'] }
+    ],
+    sampleRows: [{ '标题': '高考加油' }],
+    reasons: ['protected SmartProxy candidate'],
+    pagination: {
+      type: 'scroll',
+      xpath: '',
+      text: 'Scroll page',
+      confidence: 0.84,
+      isAjax: true,
+      scope: 'global',
+      reasons: ['Detected by protected SmartProxy pagination']
+    }
+  };
+  const page = fakePaginationPage({
+    bodyHeight: 810,
+    viewportHeight: 806,
+    itemXPath: candidate.itemXPath,
+    rows: Array.from({ length: candidate.itemCount }, (_, index) => ({
+      tag: 'li',
+      text: `热搜 ${index + 1} 高考加油 原始列表项`,
+      attrs: { className: 'hotsearch-item' },
+      rect: { left: 720, top: 220 + index * 42, right: 1050, bottom: 252 + index * 42 },
+      children: []
+    }))
+  });
+
+  const [withPagination] = await detectPaginationForCandidatesForTesting(page, [candidate], {
+    snapshots: [],
+    sawActiveLoadMore: false,
+    sawGrowth: false,
+    maxArticleLikeCount: 1,
+    maxContentHeight: 346260,
+    maxPageHeight: 810,
+    grewArticleLikeCount: 0,
+    grewContentHeight: 0,
+    grewPageHeight: 0,
+    reachedBottom: true
+  });
+
+  assert.equal(withPagination.pagination, undefined);
 });
 
 test('detectPaginationForCandidates keeps reliable external numeric next pagination', async () => {
@@ -1350,6 +1459,61 @@ test('detectPageObstructionsForTesting keeps real fixed login modals', async () 
   assert.equal(detected.length, 1);
   assert.equal(detected[0].type, 'login');
   assert.match(detected[0].closeText, /关闭/);
+});
+
+test('detectPageObstructionsForTesting ignores ordinary Baidu search home content', async () => {
+  const page = fakeObstructionPage({
+    bodyHeight: 1400,
+    viewportHeight: 900,
+    topElementId: 'search-root',
+    elements: [
+      {
+        tag: 'main',
+        text: '新闻 hao123 地图 贴吧 视频 图片 网盘 文库 文心 设置 登录 百度一下 高考加油 复杂问题就找文心助手',
+        attrs: { id: 'search-root', className: 'search-home' },
+        rect: { left: 0, top: 0, right: 1200, bottom: 900 },
+        style: { position: 'relative', zIndex: '20' },
+        children: [
+          {
+            tag: 'form',
+            text: '百度一下',
+            attrs: { className: 'search-form' },
+            rect: { left: 280, top: 240, right: 980, bottom: 340 },
+            style: { position: 'static', zIndex: 'auto' },
+            children: [
+              {
+                tag: 'input',
+                text: '',
+                attrs: { name: 'wd', type: 'text' },
+                rect: { left: 300, top: 260, right: 780, bottom: 315 },
+                style: { position: 'static', zIndex: 'auto' }
+              },
+              {
+                tag: 'button',
+                text: '百度一下',
+                attrs: {},
+                rect: { left: 800, top: 260, right: 960, bottom: 315 },
+                style: { position: 'static', zIndex: 'auto' }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  });
+
+  const detected = await detectPageObstructionsForTesting(page);
+
+  assert.deepEqual(detected, []);
+});
+
+test('auto recognize does not prompt for manual login intervention just because the terminal is interactive', () => {
+  assert.equal(shouldPromptForLoginInterventionForTesting(recognizeOptionsForSearchScoring('https://www.baidu.com/', '李小龙')), false);
+  assert.equal(shouldPromptForLoginInterventionForTesting({
+    ...recognizeOptionsForSearchScoring('https://www.baidu.com/', '李小龙'),
+    manual: true,
+    interactive: true
+  }), true);
 });
 
 test('dismissPageObstructionsForTesting closes ordinary login popup when requested', async () => {
@@ -2412,8 +2576,10 @@ test('buildTaskFromCandidate uses scroll-revealed load-more pagination loop', ()
   assert.match(task.xml, /x:Name="ScrollPage"/);
   assert.match(task.xml, /x:Name="TryLoadMore"/);
   assert.match(task.xml, /Caption="Click load more if visible"/);
-  assert.match(task.xml, /ExecutedTimesLimitation="300"/);
+  assert.match(task.xml, /ExecutedTimesLimitation="80"/);
   assert.match(task.xml, /ExecutedTimesLimitation="1"/);
+  assert.equal(task.workflowSetting.repeatPageLoopCount, 12);
+  assert.equal(task.workflowSetting.continuousJudgeCount, 3);
   assert.doesNotMatch(task.xml, /Caption="Loop load more button"/);
 });
 
@@ -2461,11 +2627,14 @@ test('buildTaskFromCandidate uses scroll pagination without a load-more click', 
   assert.match(task.xml, /LoopType="FixedItem"/);
   assert.match(task.xml, /x:Name="ScrollPage"/);
   assert.match(task.xml, /Caption="Scroll page"/);
-  assert.match(task.xml, /ExecutedTimesLimitation="300"/);
+  assert.match(task.xml, /ExecutedTimesLimitation="80"/);
   assert.match(task.xml, /ScrollTime="1"/);
-  assert.match(task.xml, /IfStopScroll="false"/);
+  assert.match(task.xml, /IfStopScroll="true"/);
   assert.match(task.xml, /x:Name="TryGenericLoadMore"/);
   assert.match(task.xml, /Caption="Click generic load more if visible"/);
+  assert.equal(task.workflowSetting.repeatPageLoopCount, 12);
+  assert.equal(task.workflowSetting.continuousJudgeCount, 3);
+  assert.doesNotMatch(task.xml, /ExecutedTimesLimitation="300"/);
   assert.doesNotMatch(task.xml, /ExecutedTimesLimitation="20"/);
   assert.doesNotMatch(task.xml, /LoopType="ScrollWeb"/);
   assert.doesNotMatch(task.xml, /Click load more/);

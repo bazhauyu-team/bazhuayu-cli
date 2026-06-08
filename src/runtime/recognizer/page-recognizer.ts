@@ -6,6 +6,7 @@ import { BridgeHub } from '../bridge-hub.js';
 import type { Browser, Page } from 'puppeteer-core';
 import { detectDeptaListGroups, type DeptaListGroup } from './depta/browser-detector.js';
 import { defaultSessionNameForUrl, saveBrowserSession, sessionOriginForUrl } from '../browser-session.js';
+import type { ChromeResolveStatus } from '../chrome-progress.js';
 import { detectProtectedSmartCandidates } from './protected-smart.js';
 import type { PageRecognitionResult, RecognizedAgentScreenshot, RecognizedCandidate, RecognizedCandidateDiagnostics, RecognizedCandidateLayout, RecognizedDetailMode, RecognizedDetailPlan, RecognizedField, RecognizedFieldDiagnostics, RecognizedLlmRankInput, RecognizedPagination, RecognizedPopupDismissal, RecognizedSearchPlan, RecognizeOptions } from './types.js';
 
@@ -13,7 +14,7 @@ const require = createRequire(import.meta.url);
 const EngineModule = require('@octopus/engine') as {
   default?: new (options: Record<string, unknown>) => any;
   WorkflowEvents: Record<string, string>;
-  resolveChrome: () => Promise<{ executablePath: string }>;
+  resolveChrome: (options?: { onStatus?: (status: ChromeResolveStatus) => void }) => Promise<{ executablePath: string }>;
 };
 const { transformer } = require('@octopus/engine/transformer') as {
   transformer: (source: string, callback: (content: string) => void) => void;
@@ -798,7 +799,7 @@ class ExtensionRecognizerHost {
       });
     });
 
-    const chromePath = options.chromePath ?? (await EngineModule.resolveChrome()).executablePath;
+    const chromePath = options.chromePath ?? (await EngineModule.resolveChrome({ onStatus: options.onChromeStatus })).executablePath;
     await workflow.start({ headless: false, path: chromePath });
     await Promise.race([
       bridgeHub.waitForSessionConnected(runId, Math.min(options.timeoutMs, 30_000)),
@@ -1013,7 +1014,7 @@ async function handleLoginInterventionIfNeeded(host: ExtensionRecognizerHost, op
   const message = loginPage
     ? `${reason}：当前页面像登录页（${loginPage.reason}）。`
     : `${reason}：检测到${popupTypeLabel(obstruction?.type)}弹窗。`;
-  const interactive = options.manual || options.interactive || (process.stdin.isTTY && process.stdout.isTTY);
+  const interactive = shouldPromptForLoginIntervention(options);
   if (!interactive) {
     throw new RecognitionLoginRequiredError(`${message} 请用 --manual 打开页面完成登录，并建议加 --save-session 保存会话后再自动识别。`);
   }
@@ -1073,6 +1074,10 @@ async function handleLoginInterventionIfNeeded(host: ExtensionRecognizerHost, op
     await removeManualOverlaysFromBrowser(host.browser()).catch(() => undefined);
     runtimeConsole.suppress();
   }
+}
+
+function shouldPromptForLoginIntervention(options: RecognizeOptions): boolean {
+  return options.manual || options.interactive;
 }
 
 async function chooseLoginInterventionInBrowser(
@@ -1809,11 +1814,14 @@ async function detectPageObstructions(page: Page): Promise<Array<{
         const hasOverlayEvidence = fixedLike || zIndex >= 10 || modalAttrSemantic || scrollLocked;
         const hasObstructionEvidence = hasOverlayEvidence && (hitRate >= 0.35 || centered || areaRatio >= 0.12 || scrollLocked);
         const type = popupType(value);
+        const explicitModalAttrSemantic = /(dialog|modal|popup|pop|mask|overlay|signin|auth)/i.test(attrs) || element.getAttribute('aria-modal') === 'true' || element.getAttribute('role') === 'dialog';
+        const loginContainerAttrSemantic = /(login|passport)/i.test(attrs);
         const strongLoginObstruction = type !== 'login'
           || hasLoginInput
-          || modalAttrSemantic && (centered || hitRate >= 0.25 || areaRatio >= 0.08)
+          || explicitModalAttrSemantic && (centered || hitRate >= 0.25 || areaRatio >= 0.08)
+          || loginContainerAttrSemantic && (fixedLike || zIndex >= 10) && centered && areaRatio >= 0.04
           || scrollLocked && (centered || areaRatio >= 0.12)
-          || hitRate >= 0.45 && areaRatio >= 0.08;
+          || fixedLike && centered && areaRatio >= 0.08;
         let confidence = 0;
         const reasons: string[] = [];
         if (fixedLike) {
@@ -4408,7 +4416,7 @@ async function detectInteractivePaginationOptions(page: Page, candidates: Recogn
   }, selected) as RecognizedPagination[];
 
   const existing = selected
-    .map((item) => item.pagination)
+    .map((item) => item.pagination && !scrollProbeRulesOutScroll(item, scrollProbe) ? item.pagination : undefined)
     .filter((pagination): pagination is RecognizedPagination => Boolean(pagination));
   const probeDetected = Object.values(scrollProbePaginationForCandidates(candidates, scrollProbe));
   return [...detected, ...existing, ...probeDetected]
@@ -8865,6 +8873,10 @@ export async function detectPageObstructionsForTesting(page: Page): Promise<Arra
   return detectPageObstructions(page);
 }
 
+export function shouldPromptForLoginInterventionForTesting(options: RecognizeOptions): boolean {
+  return shouldPromptForLoginIntervention(options);
+}
+
 export async function dismissPageObstructionsForTesting(page: Page, options: { includeLogin?: boolean } = {}): Promise<RecognizedPopupDismissal[]> {
   return dismissPageObstructions(page, options);
 }
@@ -9393,13 +9405,26 @@ async function detectPaginationForCandidates(page: Page, candidates: RecognizedC
 
   const probePaginationById = scrollProbePaginationForCandidates(candidates, scrollProbe);
   return candidates.map((candidate) => {
-    const pagination = [candidate.pagination, paginationById[candidate.id], probePaginationById[candidate.id]]
+    const existingPagination = candidate.pagination && !scrollProbeRulesOutScroll(candidate, scrollProbe)
+      ? candidate.pagination
+      : undefined;
+    const pagination = [existingPagination, paginationById[candidate.id], probePaginationById[candidate.id]]
       .reduce<RecognizedPagination | undefined>((selected, item) => preferredPagination(selected, item), undefined);
+    const { pagination: _discardedPagination, ...candidateWithoutPagination } = candidate;
     return {
-      ...candidate,
+      ...candidateWithoutPagination,
       ...(pagination ? { pagination } : {})
     };
   });
+}
+
+function scrollProbeRulesOutScroll(candidate: Pick<RecognizedCandidate, 'itemCount' | 'pagination'>, scrollProbe?: ScrollProbeSummary): boolean {
+  if (candidate.pagination?.type !== 'scroll' || !scrollProbe) return false;
+  if (scrollProbe.sawActiveLoadMore) return false;
+  const grewArticleLikeCount = scrollProbe.grewArticleLikeCount ?? 0;
+  if (grewArticleLikeCount >= 2) return false;
+  if (!scrollProbe.reachedBottom) return false;
+  return !scrollProbe.sawGrowth || (grewArticleLikeCount === 0 && candidate.itemCount <= 20);
 }
 
 function scrollProbePaginationForCandidates(candidates: RecognizedCandidate[], scrollProbe?: ScrollProbeSummary): Record<string, RecognizedPagination> {
@@ -9408,6 +9433,7 @@ function scrollProbePaginationForCandidates(candidates: RecognizedCandidate[], s
   const grewArticleLikeCount = scrollProbe.grewArticleLikeCount ?? 0;
   const grewContentHeight = scrollProbe.grewContentHeight ?? 0;
   const grewPageHeight = scrollProbe.grewPageHeight ?? 0;
+  const sawListItemGrowth = grewArticleLikeCount >= 2;
   for (const candidate of candidates) {
     if (candidate.type === 'detail' || candidate.type === 'form') continue;
     const listLike = candidate.type === 'repeated_card' || candidate.type === 'search_results' || candidate.type === 'link_collection';
@@ -9437,7 +9463,7 @@ function scrollProbePaginationForCandidates(candidates: RecognizedCandidate[], s
       };
       continue;
     }
-    if (!scrollProbe.sawGrowth) continue;
+    if (!sawListItemGrowth) continue;
     const confidence = Math.min(
       0.86,
       0.56
@@ -9454,8 +9480,9 @@ function scrollProbePaginationForCandidates(candidates: RecognizedCandidate[], s
       isAjax: true,
       scope: 'global',
       reasons: [
-        'content grew during recognition scroll probe',
-        ...(grewArticleLikeCount ? [`scroll probe added ${grewArticleLikeCount} list-like items`] : []),
+        'list-like item count grew during recognition scroll probe',
+        `scroll probe added ${grewArticleLikeCount} list-like items`,
+        ...(grewContentHeight ? [`scroll probe increased content text by ${grewContentHeight} chars`] : []),
         ...(grewPageHeight ? [`scroll probe increased page height by ${grewPageHeight}px`] : [])
       ]
     };

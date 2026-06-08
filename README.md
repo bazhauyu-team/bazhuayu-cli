@@ -98,6 +98,11 @@ Run a task locally:
 octopus run <taskId>
 ```
 
+Local Chrome execution is supported on macOS x64/arm64, Windows x64, and
+Linux x64. Linux arm64 is not supported by the local CLI runtime because Chrome
+for Testing does not currently provide a Linux arm64 browser package; use a
+supported local platform or cloud collection there.
+
 Create a local task from a URL:
 
 ```bash
@@ -345,6 +350,10 @@ If the browser is not detected automatically, pass its path:
 ```bash
 octopus run <taskId> --chrome-path "/path/to/chrome"
 ```
+
+Linux arm64 local execution is not supported, even with `--chrome-path`,
+because the bundled local runtime depends on Chrome for Testing platform
+support.
 
 Clean stale local control state:
 

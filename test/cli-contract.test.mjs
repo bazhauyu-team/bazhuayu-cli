@@ -5,9 +5,10 @@ import { createServer } from 'node:http';
 import { access, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import { promisify } from 'node:util';
 import { authCommand, createWindowsUrlLauncherFile } from '../dist/commands/auth.js';
+import { browserDoctorCommand } from '../dist/commands/doctor.js';
 import { cloudCommand, cloudHistory } from '../dist/commands/cloud.js';
 import { ApiRequestError, fetchAccountInfo, validateApiKey } from '../dist/runtime/api-client.js';
 import { DEFAULT_OAUTH_REDIRECT_URI, exchangeCodeForToken, runOAuthLogin } from '../dist/runtime/oauth.js';
@@ -956,6 +957,45 @@ test('usage failures honor --json envelopes', async () => {
   assertJsonFailure(unknown, 'UNKNOWN_COMMAND');
 });
 
+test('capabilities documents Linux arm64 local runtime unsupported', async () => {
+  const result = await runCli(['capabilities', '--json']);
+  const payload = assertJsonSuccess(result);
+
+  assert.deepEqual(payload.data.browserRuntime.unsupportedPlatforms, ['linux-arm64']);
+  assert.equal(payload.data.browserRuntime.linuxArm64.supported, false);
+  assert.equal(payload.data.browserRuntime.linuxArm64.errorCode, 'LINUX_ARM64_UNSUPPORTED');
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('LINUX_ARM64_UNSUPPORTED'));
+});
+
+test('local Chrome commands reject Linux arm64 before runtime download', async () => {
+  const platform = mock.property(process, 'platform', 'linux');
+  const arch = mock.property(process, 'arch', 'arm64');
+  const previousLog = console.log;
+  const previousError = console.error;
+  const stdout = [];
+  const stderr = [];
+  console.log = (message = '') => { stdout.push(String(message)); };
+  console.error = (message = '') => { stderr.push(String(message)); };
+
+  try {
+    assert.equal(await browserDoctorCommand(['--json']), 2);
+    const doctorPayload = parseJson(stdout.pop());
+    assert.equal(doctorPayload.ok, false);
+    assert.equal(doctorPayload.error.code, 'LINUX_ARM64_UNSUPPORTED');
+
+    assert.equal(await runTask('task-1', ['--json']), 2);
+    const runPayload = parseJson(stdout.pop());
+    assert.equal(runPayload.ok, false);
+    assert.equal(runPayload.error.code, 'LINUX_ARM64_UNSUPPORTED');
+    assert.match(runPayload.error.message, /Chrome for Testing/);
+  } finally {
+    console.log = previousLog;
+    console.error = previousError;
+    platform.mock.restore();
+    arch.mock.restore();
+  }
+});
+
 test('agent-facing commands expose json envelopes for key contract paths', async () => {
   const root = await mkdtemp(join(tmpdir(), 'octo-contract-'));
   const output = join(root, 'runs');
@@ -1778,6 +1818,26 @@ test('local run records engine download events in artifacts and summary', async 
   assert.equal(result.downloads.length, 4);
 });
 
+test('local run emits Chrome resolve progress as runtime log events', async () => {
+  const result = await runWithFakeRuntimeEvent('chrome-progress-runtime', {
+    chromeStatuses: [
+      { state: 'checking', progress: 0 },
+      { state: 'downloading', progress: 37.6 },
+      { state: 'completed', progress: 100 }
+    ]
+  });
+
+  assert.equal(result.code, 0);
+  assert.ok(result.jsonl.some((event) =>
+    event.event === 'log'
+    && event.message === 'runtime.chrome.resolve Chrome downloading 38%'
+  ));
+  assert.ok(result.events.some((event) =>
+    event.event === 'log'
+    && event.message === 'runtime.chrome.resolve Chrome ready 100%'
+  ));
+});
+
 test('run completion prints a copyable local data export command', () => {
   assert.equal(
     localDataExportCommand({ taskId: 'task-1', lotId: '1778123456789' }),
@@ -2015,7 +2075,12 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
   const fakeEngine = {
     default: FakeWorkflow,
     WorkflowEvents: workflowEvents,
-    resolveChrome: async () => ({ executablePath: process.execPath })
+    resolveChrome: async (resolveOptions) => {
+      for (const status of options.chromeStatuses ?? []) {
+        resolveOptions?.onStatus?.(status);
+      }
+      return { executablePath: process.execPath };
+    }
   };
   const fakeBridgeFactory = () => new FakeBridgeHub();
 

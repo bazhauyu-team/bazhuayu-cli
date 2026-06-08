@@ -95,6 +95,8 @@ Agent notes:
   Use --jsonl for foreground event streams.
   JSONL now includes captcha and proxy request events when the runtime asks for them.
   run only starts local collection. Use data export <taskId> --lot-id <lotId> for files.
+  Local Chrome execution supports macOS x64/arm64, Windows x64, and Linux x64.
+  Linux arm64 is not supported because Chrome for Testing has no Linux arm64 browser package.
 `,
     recognize: `Usage:
   octopus recognize <url> --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
@@ -142,6 +144,8 @@ Notes:
   Agent workflows generate a full-page screenshot by default and store its path
   in context.screenshot. Pass the user request through --goal so the agent can
   judge candidates against both the natural-language intent and the screenshot.
+  Local Chrome execution supports macOS x64/arm64, Windows x64, and Linux x64.
+  Linux arm64 is not supported because Chrome for Testing has no Linux arm64 browser package.
   --agent is a one-shot wrapper for external LLM/agent tools. The CLI writes a
   temporary context JSON, runs --agent-command (or OCTOPUS_AGENT_COMMAND), expects
   a plan JSON at OCTOPUS_AGENT_PLAN or stdout, previews risk, asks for confirmation
@@ -262,6 +266,8 @@ Task file format:
 Design:
   - Runs embedded @octopus/engine directly.
   - Uses independent Chrome only.
+  - Supports local Chrome execution on macOS x64/arm64, Windows x64, and Linux x64.
+  - Does not support Linux arm64 local execution because Chrome for Testing has no Linux arm64 browser package.
   - Does not require the Electron client.
   - Cloud collection is controlled through backend APIs; local collection is controlled by the local engine.
   - Does not support kernel browser or legacy workflow in v1.

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { printEnvelope } from '../cli/output.js';
 import { API_BASE_URL_ENV } from '../runtime/api-client.js';
 import { ACCESS_TOKEN_ENV, API_KEY_ENV } from '../runtime/auth.js';
+import { LINUX_ARM64_UNSUPPORTED_CODE, localChromePlatformNote, supportedLocalChromePlatforms, unsupportedLocalChromePlatforms } from '../runtime/platform-support.js';
 import { EXIT_OK } from '../types.js';
 
 export async function capabilitiesCommand(version: string, json: boolean): Promise<number> {
@@ -34,6 +35,18 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
       detachedBootstrap: ['bootstrap.json', 'stdout.log', 'stderr.log'],
       stdout: 'machine data only in --json/--jsonl mode',
       stderr: 'human diagnostics and failures'
+    },
+    browserRuntime: {
+      browser: 'Chrome for Testing',
+      localExecutionRequiresBrowser: true,
+      supportedPlatforms: supportedLocalChromePlatforms(),
+      unsupportedPlatforms: unsupportedLocalChromePlatforms(),
+      linuxArm64: {
+        supported: false,
+        reason: localChromePlatformNote(),
+        errorCode: LINUX_ARM64_UNSUPPORTED_CODE,
+        affectedCommands: ['doctor without --chrome-path', 'browser doctor without --chrome-path', 'recognize', 'run-url', 'run']
+      }
     },
     machineContract: {
       stable: true,
@@ -118,6 +131,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           'RECOGNIZE_OUTPUT_REQUIRED',
           'RECOGNIZE_CANDIDATE_NOT_FOUND',
           'RECOGNIZE_CANDIDATE_UNSUPPORTED',
+          LINUX_ARM64_UNSUPPORTED_CODE,
           'RUN_NOT_FOUND',
           'LOCAL_LOT_NOT_FOUND',
           'UNSUPPORTED_EXPORT_FORMAT'

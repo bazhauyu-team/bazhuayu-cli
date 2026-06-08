@@ -199,4 +199,5 @@ export interface RecognizeOptions {
   saveSession?: boolean;
   sessionName?: string;
   agentScreenshotPath?: string;
+  onChromeStatus?: (status: { state: string; progress?: number }) => void;
 }

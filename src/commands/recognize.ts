@@ -8,6 +8,8 @@ import { firstPositionalArg, hasFlag, parsePositiveInt, valueAfter } from '../cl
 import { printEnvelope, printUsageError } from '../cli/output.js';
 import { RecognitionLoginRequiredError, recognizePage } from '../runtime/recognizer/page-recognizer.js';
 import { buildTaskFromCandidate } from '../runtime/recognizer/xml.js';
+import { createChromeProgressReporter } from '../runtime/chrome-progress.js';
+import { LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE, isLocalChromeRuntimeSupported } from '../runtime/platform-support.js';
 import type { PageRecognitionResult, RecognizedAgentScreenshot, RecognizedCandidate, RecognizedDetailPlan, RecognizedField, RecognizedFieldDiagnostics, RecognizedPagination, RecognizedSearchPlan } from '../runtime/recognizer/types.js';
 import { safeFileName } from '../runtime/naming.js';
 import { EXIT_OK, EXIT_OPERATION_FAILED, EXIT_RUNTIME_FAILED } from '../types.js';
@@ -160,6 +162,9 @@ export async function recognizeCommand(args: string[]): Promise<number> {
       'USAGE_ERROR'
     );
   }
+  if (!isLocalChromeRuntimeSupported()) {
+    return printUsageError(json, LINUX_ARM64_UNSUPPORTED_MESSAGE, undefined, LINUX_ARM64_UNSUPPORTED_CODE);
+  }
   if (hasFlag(args, '--auto') && hasFlag(args, '--manual')) {
     return printUsageError(
       json,
@@ -178,6 +183,11 @@ export async function recognizeCommand(args: string[]): Promise<number> {
   }
   try {
     const agentScreenshotPath = resolveAgentScreenshotPath(args, url);
+    const originalStderrWrite = process.stderr.write.bind(process.stderr);
+    const chromeProgress = createChromeProgressReporter({
+      enabled: !json && !quiet && !valueAfter(args, '--chrome-path'),
+      write: (message) => originalStderrWrite(message)
+    });
     const result = await recognizePage({
       url,
       input: parseRecognizeInput(args),
@@ -196,7 +206,8 @@ export async function recognizeCommand(args: string[]): Promise<number> {
       dismissPopups: !hasFlag(args, '--no-dismiss-popups'),
       saveSession: hasFlag(args, '--save-session'),
       sessionName: valueAfter(args, '--session-name'),
-      agentScreenshotPath
+      agentScreenshotPath,
+      onChromeStatus: chromeProgress?.onStatus
     });
 
     if (hasFlag(args, '--agent')) {
@@ -848,6 +859,9 @@ export async function runUrlCommand(url: string | undefined, args: string[]): Pr
       '用法: octopus run-url <url> --goal <text>|--auto [--input <name=value>] [--max-rows <n>] [--json|--jsonl]',
       'USAGE_ERROR'
     );
+  }
+  if (!isLocalChromeRuntimeSupported()) {
+    return printUsageError(json, LINUX_ARM64_UNSUPPORTED_MESSAGE, undefined, LINUX_ARM64_UNSUPPORTED_CODE);
   }
 
   if (!hasFlag(args, '--auto') && !valueAfter(args, '--select')) {

@@ -2,24 +2,32 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { hasFlag, valueAfter } from '../cli/args.js';
-import { printResult } from '../cli/output.js';
+import { printEnvelope, printResult } from '../cli/output.js';
+import { createChromeProgressReporter, type ChromeResolveStatus } from '../runtime/chrome-progress.js';
+import { LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE, isLinuxArm64Runtime } from '../runtime/platform-support.js';
 import { EXIT_OK, EXIT_RUNTIME_FAILED } from '../types.js';
 
 const require = createRequire(import.meta.url);
 const EngineModule = require('@octopus/engine');
-const resolveChrome = EngineModule.resolveChrome as () => Promise<{ executablePath: string }>;
+const resolveChrome = EngineModule.resolveChrome as (options?: { onStatus?: (status: ChromeResolveStatus) => void }) => Promise<{ executablePath: string }>;
 
 export async function doctorCommand(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const chromePath = valueAfter(args, '--chrome-path');
   let chrome: { ok: boolean; message: string } = { ok: false, message: 'not checked' };
-  if (chromePath) {
+  if (isLinuxArm64Runtime()) {
+    chrome = { ok: false, message: LINUX_ARM64_UNSUPPORTED_MESSAGE };
+  } else if (chromePath) {
     chrome = existsSync(chromePath)
       ? { ok: true, message: chromePath }
       : { ok: false, message: `Chrome executable not found: ${chromePath}` };
   } else {
     try {
-      const resolved = await resolveChrome();
+      const chromeProgress = createChromeProgressReporter({
+        enabled: !json,
+        write: (message) => process.stderr.write(message)
+      });
+      const resolved = await resolveChrome({ onStatus: chromeProgress?.onStatus });
       chrome = { ok: true, message: resolved.executablePath };
     } catch (error) {
       chrome = { ok: false, message: error instanceof Error ? error.message : String(error) };
@@ -53,8 +61,17 @@ export async function browserDoctorCommand(args: string[]): Promise<number> {
   let error = '';
 
   try {
+    if (isLinuxArm64Runtime()) {
+      if (json) printEnvelope(false, undefined, LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE);
+      else console.error(LINUX_ARM64_UNSUPPORTED_MESSAGE);
+      return EXIT_RUNTIME_FAILED;
+    }
     if (!executablePath) {
-      executablePath = (await resolveChrome()).executablePath;
+      const chromeProgress = createChromeProgressReporter({
+        enabled: !json,
+        write: (message) => process.stderr.write(message)
+      });
+      executablePath = (await resolveChrome({ onStatus: chromeProgress?.onStatus })).executablePath;
     }
     ok = Boolean(executablePath) && existsSync(executablePath);
     if (!ok) error = `Chrome executable not found: ${executablePath}`;
