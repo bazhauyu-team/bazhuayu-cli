@@ -237,7 +237,6 @@ Usage:
   octopus recognize URL --prepare-agent --json --goal <text> --output context.json
   octopus recognize --preview-agent-plan plan.json --agent-context context.json [--json]
   octopus recognize --apply-agent-plan plan.json --agent-context context.json --output task.json
-  octopus run-url <url> --auto|--select <candidateId> [--goal <text>] [--input <name=value>] [--max-rows <n>] [--json|--jsonl]
   octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
   octopus cloud start <taskId> [--json]
   octopus cloud stop <taskId> [--json]
