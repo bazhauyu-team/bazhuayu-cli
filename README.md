@@ -106,11 +106,11 @@ supported local platform or cloud collection there.
 Create a local task from a URL:
 
 ```bash
-octopus recognize 'https://example.com/list' --auto --output task.json
-octopus recognize 'https://example.com/search' --manual --query keyword --save-session --output task.json
+octopus detect 'https://example.com/list' --auto --output task.json
+octopus detect 'https://example.com/search' --manual --query keyword --save-session --output task.json
 ```
 
-`recognize` uses the protected SmartProxy recognizer by default and requires
+`detect` uses the protected SmartProxy detector by default and requires
 configured credentials. Manual mode can save a cookies-only browser session for
 later local runs. Agent mode is available through `--agent --agent-command`;
 that command executes a local shell command and should only point to a trusted
@@ -121,7 +121,7 @@ If an LLM/agent is helping a user create a task with bazhuayu-cli, it should run
 `machineContract.recipes.createTaskFromUrlWithAgent`. That recipe tells the
 agent to prepare deterministic context, write a plan, preview it, apply it, and
 validate the generated task instead of asking the user to explain internal
-recognize flags or hand-write JSON. Agent workflows generate a full-page
+detect flags or hand-write JSON. Agent workflows generate a full-page
 screenshot by default and store it in `context.screenshot`; pass the user's
 natural-language request with `--goal` so the agent can judge candidates against
 both the visual page and the stated intent. The context also includes

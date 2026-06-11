@@ -1,8 +1,8 @@
-# Recognize / Task Creation Handoff
+# Detect / Task Creation Handoff
 
 Last updated: 2026-06-05
 
-This document summarizes the current state of the `octopus recognize` workstream. The immediate product goal is to let users create runnable local collection tasks from a webpage, especially search-result tasks, with a browser-first manual flow that feels close to the desktop client.
+This document summarizes the current state of the `octopus detect` workstream. The immediate product goal is to let users create runnable local collection tasks from a webpage, especially search-result tasks, with a browser-first manual flow that feels close to the desktop client.
 
 ## Current Product Shape
 
@@ -13,24 +13,24 @@ There are three task-creation paths.
 Command:
 
 ```bash
-octopus recognize "https://www.csdn.net/" --manual --query openai --output task.json
+octopus detect "https://www.csdn.net/" --manual --query openai --output task.json
 ```
 
 Equivalent local dev command:
 
 ```bash
-node dist/index.js recognize "https://www.csdn.net/" --manual --query openai --output task.json
+node dist/index.js detect "https://www.csdn.net/" --manual --query openai --output task.json
 ```
 
 Behavior:
 
 - Opens the extension browser.
-- Uses protected SmartProxy recognition by default.
+- Uses protected SmartProxy detection by default.
 - Uses browser overlay controls for the `--manual` workflow, with CLI menus retained as fallback.
 - Lets the user confirm login/verification state in the browser.
 - Lets the user confirm search input fields and manually pick the search submit button.
 - Records the search submit click into the generated task.
-- Shows one recognized candidate region at a time, similar to the desktop client result switcher.
+- Shows one detected candidate region at a time, similar to the desktop client result switcher.
 - Lets the user switch candidates and confirm the highlighted data region.
 - Lets the user confirm pagination as next-page, load-more, scroll, or single-page.
 - If a list item has a URL field, lets the user choose list-only, list + detail, or detail-only tasks.
@@ -39,36 +39,36 @@ Behavior:
 Design decisions:
 
 - Manual means the user controls final selection.
-- `--manual` should use the protected recognition result, not the old heuristic recognizer.
-- `--legacy-recognizer` exists only for debugging the previous detector.
+- `--manual` should use the protected detection result, not the old heuristic detector.
+- `--legacy-detector` exists only for debugging the previous detector.
 - Browser overlay is the primary UX for `--manual`; terminal prompts should only be fallback.
 
-### 2. Deterministic Auto-Recognition
+### 2. Deterministic Auto-Detection
 
 Command:
 
 ```bash
-octopus recognize "https://news.qq.com/" --auto --output task.json
+octopus detect "https://news.qq.com/" --auto --output task.json
 ```
 
 Optional goal:
 
 ```bash
-octopus recognize "https://news.qq.com/" --auto --goal "采集新闻标题、链接和详情正文" --output task.json
+octopus detect "https://news.qq.com/" --auto --goal "采集新闻标题、链接和详情正文" --output task.json
 ```
 
 Behavior:
 
-- Runs protected SmartProxy page recognition.
+- Runs protected SmartProxy page detection.
 - Ranks candidate regions.
 - Chooses the recommended candidate and generates a task.
 - Supports repeated cards, search/list results, tables, link collections, detail pages, forms, popup dismissal, search input/submit, next-page, load-more, scroll pagination, and list + detail runtime plans.
 
 Current auto selection:
 
-- `--auto` chooses the recommended candidate from recognition output.
+- `--auto` chooses the recommended candidate from detection output.
 - The recommendation is based on protected SmartProxy candidate ordering plus CLI-side ranking/layout checks.
-- It is not simply "choose the first DOM node"; it chooses the best recognized candidate.
+- It is not simply "choose the first DOM node"; it chooses the best detected candidate.
 
 ### 3. External LLM/Agent-Assisted Planning
 
@@ -99,16 +99,16 @@ Agent result validation should follow `context.resultValidationPolicy`: isolated
 Low-level workflow:
 
 ```bash
-octopus recognize "<url>" --prepare-agent --json --goal "<user task description>" --output context.json
-octopus recognize --preview-agent-plan plan.json --agent-context context.json --json
-octopus recognize --apply-agent-plan plan.json --agent-context context.json --output task.json --json
+octopus detect "<url>" --prepare-agent --json --goal "<user task description>" --output context.json
+octopus detect --preview-agent-plan plan.json --agent-context context.json --json
+octopus detect --apply-agent-plan plan.json --agent-context context.json --output task.json --json
 octopus task validate <taskId> --task-file task.json --json
 ```
 
 One-shot wrapper:
 
 ```bash
-octopus recognize "<url>" --agent --agent-command "<cmd>" --output task.json
+octopus detect "<url>" --agent --agent-command "<cmd>" --output task.json
 ```
 
 Notes:
@@ -121,7 +121,7 @@ Notes:
 
 ## Latest Manual Search / Overlay Fixes
 
-The most recent work focused on `src/runtime/recognizer/page-recognizer.ts`.
+The most recent work focused on `src/runtime/detector/page-detector.ts`.
 
 ### Browser Overlay UX
 
@@ -133,7 +133,7 @@ Current overlay behavior:
 - The overlay host uses `data-octopus-manual-overlay="true"`.
 - The same host is reused with `shadowRoot.replaceChildren(...)` instead of remove/recreate on every render.
 - Buttons switch immediately to disabled loading state, with visible status text such as `处理中...`.
-- Overlay `z-index` is above recognition/pagination/detail markings.
+- Overlay `z-index` is above detection/pagination/detail markings.
 - Selection state (`selectedXPath`, `selectedText`) is preserved across overlay re-renders.
 - CLI hints are deduped by workflow stage through `writeManualOverlayHintOnce(...)`.
 - Overlay drag and button clicks stop propagation so page-level pickers do not treat them as page clicks.
@@ -141,7 +141,7 @@ Current overlay behavior:
 Important bug fixes:
 
 - Dragging the overlay no longer resets selected content.
-- Dragging/clicking the overlay no longer causes repeated CLI lines such as `请在浏览器悬浮框中确认识别结果`.
+- Dragging/clicking the overlay no longer causes repeated CLI lines such as `请在浏览器悬浮框中确认检测结果`.
 - Clicking overlay buttons no longer leaks into the underlying search/pagination/detail pick layers.
 - The overlay no longer disappears between "confirm candidate" and "confirm pagination". It now switches to a progress state.
 - The overlay no longer disappears between "confirm pagination" and the next step. It switches to `正在继续生成任务`.
@@ -158,12 +158,12 @@ The intended manual search flow is:
 5. Record the clicked submit button XPath.
 6. Replay the submit click for real.
 7. Adopt the best search-result page or newly opened search-result tab.
-8. Recognize list data on the result page.
+8. Detect list data on the result page.
 9. Generate a task that includes both search input and search submit actions before extraction.
 
 Important fixes already made:
 
-- `recognizePage(...)` manual search now calls `submitInputsManually(...)`.
+- `detectPage(...)` manual search now calls `submitInputsManually(...)`.
 - Manual mode no longer uses the old auto-submit/geometry/Enter fallback before the user confirms the search button.
 - Removed the earlier refresh-style fallback that could return to the original entry page and ask for the search button late.
 - Search input filling is split into `inputSearchFieldsOnly(...)`.
@@ -176,7 +176,7 @@ Important fixes already made:
 Known command used during debugging:
 
 ```bash
-node dist/index.js recognize "https://www.csdn.net/" --manual --query openai
+node dist/index.js detect "https://www.csdn.net/" --manual --query openai
 ```
 
 If this regresses, inspect:
@@ -195,7 +195,7 @@ The current pagination behavior combines page probing and manual confirmation.
 
 Detection:
 
-- `autoScroll(...)` probes the page before recognition.
+- `autoScroll(...)` probes the page before detection.
 - The scroll probe records growth signals, content height, repeated item count, active load-more text, and active load-more XPath.
 - `detectPaginationForCandidates(...)` uses the probe to distinguish scroll, load-more, and next-page options.
 - If a load-more button only appears after scrolling, the chosen pagination can be `load_more` with `revealByScroll: true`.
@@ -249,7 +249,7 @@ Known limitation:
 
 ## Protected SmartProxy Runtime
 
-Recognition uses the protected desktop SmartProxy capability by default.
+Detection uses the protected desktop SmartProxy capability by default.
 
 Runtime behavior:
 
@@ -268,7 +268,7 @@ Security rules:
 - Do not commit decrypted SmartProxy resources.
 - Do not commit native protect package source/binaries under `vendor/`.
 - Do not hardcode local development paths in runtime code.
-- Keep protected recognition behind authenticated API/resource access.
+- Keep protected detection behind authenticated API/resource access.
 
 ## Package / Publish Model
 
@@ -307,9 +307,9 @@ Behavior:
 
 ## Files Of Interest
 
-Recognition command and contracts:
+Detection command and contracts:
 
-- `src/commands/recognize.ts`
+- `src/commands/detect.ts`
 - `src/commands/capabilities.ts`
 - `src/cli/help.ts`
 - `src/index.ts`
@@ -317,9 +317,9 @@ Recognition command and contracts:
 
 Runtime:
 
-- `src/runtime/recognizer/page-recognizer.ts`
-- `src/runtime/recognizer/protected-smart.ts`
-- `src/runtime/recognizer/xml.ts`
+- `src/runtime/detector/page-detector.ts`
+- `src/runtime/detector/protected-smart.ts`
+- `src/runtime/detector/xml.ts`
 - `src/runtime/browser-session.ts`
 - `src/runtime/task-definition-provider.ts`
 - `src/runtime/api-client.ts`
@@ -332,17 +332,17 @@ Package scripts:
 
 Tests:
 
-- `test/recognizer.test.mjs`
+- `test/detector.test.mjs`
 - `test/cli-contract.test.mjs`
 
 ## Verification Commands
 
-Run these after touching recognition behavior:
+Run these after touching detection behavior:
 
 ```bash
 npm run typecheck
 npm run build
-node --test --test-concurrency=1 test/recognizer.test.mjs
+node --test --test-concurrency=1 test/detector.test.mjs
 ```
 
 Run this when command contract, help text, task provider, or CLI options change:
@@ -355,7 +355,7 @@ Latest verification on 2026-06-05:
 
 - `npm run typecheck`: passed
 - `npm run build`: passed
-- `node --test --test-concurrency=1 test/recognizer.test.mjs`: passed, 45 tests
+- `node --test --test-concurrency=1 test/detector.test.mjs`: passed, 45 tests
 
 Not rerun in the latest overlay pass:
 
@@ -382,7 +382,7 @@ If CSDN opens an article instead of search results:
 - Inspect `scoreSearchResultPage(...)` and `pageLooksLikeSearchResult(...)`.
 - Confirm new tab adoption prefers search URL/title/content over article URL/title/content.
 
-If recognition runs on the original page after login:
+If detection runs on the original page after login:
 
 - Inspect `watchNewPage(...)`, `adoptNewSearchPage(...)`, and `adoptBestPageAfterSearch(...)`.
 - Confirm the result tab is brought to front and `host.page` is refreshed.
@@ -417,21 +417,21 @@ If dragging the overlay resets state:
 
 Generated task/export artifacts should not be committed:
 
-- `recognized_*.json`
+- `detected_*.json`
 - `*-agent-plan.json`
 - `*-task.json` generated during local testing
-- `Recognized *.xlsx`
+- `Detected *.xlsx`
 
-`RECOGNIZE_HANDOFF.md` should stay in the workspace as the ongoing implementation handoff.
+`DETECT_HANDOFF.md` should stay in the workspace as the ongoing implementation handoff.
 
 ## Current Worktree Note
 
-At the time of this handoff, the repository contains many existing modified and untracked files. Do not assume they are all from the current overlay fixes. In particular, recognition-related files are still untracked in git status:
+At the time of this handoff, the repository contains many existing modified and untracked files. Do not assume they are all from the current overlay fixes. In particular, detection-related files are still untracked in git status:
 
-- `RECOGNIZE_HANDOFF.md`
-- `src/commands/recognize.ts`
+- `DETECT_HANDOFF.md`
+- `src/commands/detect.ts`
 - `src/runtime/browser-session.ts`
-- `src/runtime/recognizer/`
-- `test/recognizer.test.mjs`
+- `src/runtime/detector/`
+- `test/detector.test.mjs`
 
 Avoid reverting unrelated changes. Use focused diffs and tests.

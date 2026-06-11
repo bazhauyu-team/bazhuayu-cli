@@ -19,7 +19,7 @@ export function requiresVirtualDisplay(): boolean {
 }
 
 export function virtualDisplayInstallMessage(): string {
-  return 'Linux 服务器没有 DISPLAY/WAYLAND_DISPLAY，且当前浏览器运行时需要可见 Chrome。请安装系统浏览器依赖，例如 Ubuntu/Debian: apt-get update && apt-get install -y libnss3 libnspr4 xvfb，然后重试；手动识别也可以在桌面会话中运行。';
+  return 'Linux 服务器没有 DISPLAY/WAYLAND_DISPLAY，且当前浏览器运行时需要可见 Chrome。请安装系统浏览器依赖，例如 Ubuntu/Debian: apt-get update && apt-get install -y libnss3 libnspr4 xvfb，然后重试；手动检测也可以在桌面会话中运行。';
 }
 
 export async function startVirtualDisplayIfNeeded(): Promise<VirtualDisplayHandle> {

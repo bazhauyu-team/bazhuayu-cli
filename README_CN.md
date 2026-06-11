@@ -100,11 +100,11 @@ octopus run <taskId>
 从 URL 创建本地任务：
 
 ```bash
-octopus recognize 'https://example.com/list' --auto --output task.json
-octopus recognize 'https://example.com/search' --manual --query keyword --save-session --output task.json
+octopus detect 'https://example.com/list' --auto --output task.json
+octopus detect 'https://example.com/search' --manual --query keyword --save-session --output task.json
 ```
 
-`recognize` 默认使用受保护的 SmartProxy 识别能力，需要已配置登录凭据。手动模式可以保存 cookies-only 浏览器会话，后续本地运行会自动注入。Agent 模式可通过 `--agent --agent-command` 使用；这个命令会执行本地 shell 命令，只应传入可信的 agent runner。
+`detect` 默认使用受保护的 SmartProxy 检测能力，需要已配置登录凭据。手动模式可以保存 cookies-only 浏览器会话，后续本地运行会自动注入。Agent 模式可通过 `--agent --agent-command` 使用；这个命令会执行本地 shell 命令，只应传入可信的 agent runner。
 
 如果用户是在 LLM/Agent 里要求“用 bazhuayu-cli 创建采集任务”，Agent 应先执行
 `octopus capabilities --json`，然后按
