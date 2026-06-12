@@ -98,6 +98,17 @@ function assertJsonSuccess(result, args = []) {
   return payload;
 }
 
+function assertDetectHelpPrefersAgentWorkflow(stdout) {
+  const prepareMatch = stdout.match(/octopus detect (?:URL|<url>) --prepare-agent/);
+  const autoMatch = stdout.match(/octopus detect (?:URL|<url>) --auto/);
+  const prepareIndex = prepareMatch?.index ?? -1;
+  const autoIndex = autoMatch?.index ?? -1;
+  assert.ok(prepareIndex >= 0, stdout);
+  assert.ok(autoIndex >= 0, stdout);
+  assert.ok(prepareIndex < autoIndex, stdout);
+  assert.match(stdout, /Do not treat --auto examples as the default\s+LLM\/agent workflow/);
+}
+
 test('functional commands require API key even for local task files', async () => {
   const result = await runCli([
     'task',
@@ -131,7 +142,10 @@ test('capabilities is available before authentication and documents API key cont
   assert.match(payload.data.machineContract.agentEntrypoint.rule, /bazhuayu-cli/);
   assert.equal(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.shouldUseCliForUserTaskCreationRequests, true);
   assert.equal(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.preferredRecipe, 'machineContract.recipes.createTaskFromUrlWithAgent');
+  assert.equal(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.defaultTaskCreationModeForAgents, 'prepare-agent-plan-preview-apply');
+  assert.equal(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.doNotUseAutoForAgentTaskCreationRequests, true);
   assert.equal(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.doNotFallbackToHandwrittenTaskJson, true);
+  assert.match(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.routingRule, /Do not use detect --auto as the default agent path/);
   assert.ok(payload.data.machineContract.agentEntrypoint.intentAliases.some((item) => /采集任务/.test(item)));
   assert.ok(payload.data.commands.find((item) => item.command === 'run <taskId>')?.authRequired);
   assert.equal(payload.data.commands.some((item) => item.command.includes('run-url')), false);
@@ -145,7 +159,9 @@ test('capabilities is available before authentication and documents API key cont
   assert.match(payload.data.machineContract.recipes.createTaskFromUrlWithAgent.agentResponsibilities.join(' '), /screenshot/);
   assert.match(payload.data.machineContract.recipes.createTaskFromUrlWithAgent.agentResponsibilities.join(' '), /decisionPolicy/);
   assert.match(payload.data.machineContract.recipes.createTaskFromUrlWithAgent.agentResponsibilities.join(' '), /resultValidationPolicy/);
+  assert.match(payload.data.machineContract.recipes.createTaskFromUrlWithAgent.agentResponsibilities.join(' '), /Do not use detect --auto/);
   assert.match(payload.data.machineContract.recipes.createTaskFromUrlWithAgent.agentResponsibilities[0], /Do not ask the user/);
+  assert.doesNotMatch(payload.data.machineContract.recipes.createTaskFromUrlWithAgent.searchWorkflow.examples.join('\n'), /--auto/);
   assert.match(payload.data.machineContract.recipes.createTaskFromUrlWithAgent.preferredWorkflow[0].command, /--prepare-agent/);
   assert.match(payload.data.machineContract.recipes.createTaskFromUrlWithAgent.preferredWorkflow[0].command, /--goal/);
   assert.doesNotMatch(payload.data.machineContract.recipes.createTaskFromUrlWithAgent.preferredWorkflow[0].command, /--screenshot/);
@@ -935,6 +951,7 @@ test('root and run help clearly state authentication requirement', async () => {
   assert.match(root.stdout, /OAuth or API key credentials are required for all functional commands/);
   assert.match(root.stdout, /bazhuayu\.com\/console\/account-center\/api-keys/);
   assert.doesNotMatch(root.stdout, /run-url/);
+  assertDetectHelpPrefersAgentWorkflow(root.stdout);
 
   const auth = await runCli(['auth', '--help']);
   assert.equal(auth.code, 0);
@@ -949,6 +966,10 @@ test('root and run help clearly state authentication requirement', async () => {
   assert.match(run.stdout, /data export <taskId> --lot-id <lotId>/);
   assert.match(root.stdout, /--llm-rank/);
   assert.match(root.stdout, /--no-dismiss-popups/);
+
+  const detect = await runCli(['detect', '--help']);
+  assert.equal(detect.code, 0);
+  assertDetectHelpPrefersAgentWorkflow(detect.stdout);
 });
 
 test('usage failures honor --json envelopes', async () => {
