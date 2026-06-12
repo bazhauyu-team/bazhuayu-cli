@@ -122,10 +122,12 @@ If an LLM/agent is helping a user create a task with bazhuayu-cli, it should run
 agent to prepare deterministic context, write a plan, preview it, apply it, and
 validate the generated task instead of asking the user to explain internal
 detect flags, using `--auto` as the default path, or hand-writing JSON.
-Agent workflows generate a full-page
-screenshot by default and store it in `context.screenshot`; pass the user's
-natural-language request with `--goal` so the agent can judge candidates against
-both the visual page and the stated intent. The context also includes
+Agent workflows generate a full-page screenshot, an annotated screenshot, and
+top candidate crop screenshots when boxes are available. These paths are exposed
+through `context.screenshot`, `context.visualArtifacts`, and
+`context.decisionSummary`; pass the user's natural-language request with `--goal`
+so the agent can judge candidates against both the visual page and the stated
+intent. The context also includes
 `resultValidationPolicy`; agents should treat isolated missing fields in ads,
 topic cards, sponsored items, or heterogeneous rows as normal partial data
 instead of repeatedly recreating the task.
