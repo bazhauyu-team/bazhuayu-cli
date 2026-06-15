@@ -178,11 +178,16 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
     page.setDefaultTimeout(options.timeoutMs);
     await waitForPageSettled(page, options.waitMs);
     const popupDismissals: DetectedPopupDismissal[] = [];
+    const manualPopupPromptKeys = new Set<string>();
     let loginIntervention = await handleLoginIntervention('打开页面后检测到登录要求');
     popupDismissals.push(...loginIntervention.popupDismissals ?? []);
     page = host.page;
     if (options.dismissPopups && !options.manual) {
       popupDismissals.push(...await dismissPageObstructions(page));
+      if (popupDismissals.length) await waitForPageSettled(page, Math.min(options.waitMs, 800));
+    }
+    if (options.dismissPopups && options.manual) {
+      popupDismissals.push(...await confirmManualPopupDismissal(page, runtimeConsole, manualPopupPromptKeys));
       if (popupDismissals.length) await waitForPageSettled(page, Math.min(options.waitMs, 800));
     }
     let searchPlan: DetectedSearchPlan | undefined;
@@ -244,8 +249,19 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
     const scrollProbe = await autoScroll(page, options.scrolls);
     await waitForPageSettled(page, Math.min(options.waitMs, 1000));
     if (allowPopupDismissal) popupDismissals.push(...await dismissPageObstructions(page));
+    if (options.dismissPopups && options.manual) {
+      popupDismissals.push(...await confirmManualPopupDismissal(page, runtimeConsole, manualPopupPromptKeys));
+      if (popupDismissals.length) await waitForPageSettled(page, Math.min(options.waitMs, 800));
+    }
     const effectiveOptions = { ...options, interactive: options.interactive || options.manual };
     let candidates = await detectCandidates(page, effectiveOptions, scrollProbe);
+    if (options.dismissPopups && options.manual) {
+      popupDismissals.push(...await confirmManualPopupDismissal(page, runtimeConsole, manualPopupPromptKeys));
+      if (popupDismissals.length) {
+        await waitForPageSettled(page, Math.min(options.waitMs, 800));
+        candidates = await detectCandidates(page, effectiveOptions, scrollProbe);
+      }
+    }
     const llmRankInput = options.llmRank ? buildLlmRankInput(candidates, options.goal) : undefined;
     let selectedCandidateIds: string[] = [];
     if (effectiveOptions.interactive && candidates.length) {
@@ -1036,6 +1052,63 @@ async function handleLoginInterventionIfNeeded(host: ExtensionDetectorHost, opti
 
 function shouldPromptForLoginIntervention(options: DetectOptions): boolean {
   return options.manual || options.interactive;
+}
+
+async function confirmManualPopupDismissal(page: Page, runtimeConsole: SuppressedRuntimeConsole, promptedKeys = new Set<string>()): Promise<DetectedPopupDismissal[]> {
+  const item = (await detectPageObstructions(page).catch(() => []))
+    .find((candidate) => candidate.closeXPath && candidate.canHide && candidate.type !== 'captcha');
+  if (!item?.closeXPath) return [];
+  const promptKey = `${item.type}:${item.popupXPath}:${item.closeXPath}`;
+  if (promptedKeys.has(promptKey)) return [];
+  promptedKeys.add(promptKey);
+
+  writeManualOverlayHintOnce(runtimeConsole, page, 'popup-dismissal', '\n检测到页面弹窗，请在浏览器悬浮框中确认处理方式。\n');
+  await showManualOverlay(page, {
+    title: '检测到页面弹窗',
+    message: [
+      `识别类型: ${popupTypeLabel(item.type)}`,
+      item.popupText ? `内容: ${truncateText(item.popupText, 90)}` : '',
+      item.closeText ? `关闭按钮: ${truncateText(item.closeText, 40)}` : '',
+      '如果这是登录、验证或需要保留的权限提示，请不要关闭。'
+    ].filter(Boolean).join('\n'),
+    status: item.closeText || item.closeXPath,
+    selectedXPath: item.closeXPath,
+    selectedText: item.closeText,
+    choices: [
+      {
+        title: '不关闭，继续检测',
+        value: 'keep',
+        primary: true,
+        description: '不会写入关闭动作；适合登录、验证、权限或不确定的弹窗。'
+      },
+      {
+        title: '关闭，并写入任务',
+        value: 'dismiss',
+        description: '会点击关闭按钮；适合广告、订阅或不影响登录的提示。'
+      },
+      { title: '取消手动检测', value: 'cancel' }
+    ]
+  });
+  const selection = await waitForManualOverlayAction(page);
+  await clearManualOverlayAction(page).catch(() => undefined);
+  await removeManualOverlay(page).catch(() => undefined);
+  if (selection?.action === 'cancel') throw new Error('用户取消了手动检测');
+  if (selection?.action !== 'dismiss') return [];
+
+  const clicked = await clickXPath(page, item.closeXPath).catch(() => false);
+  if (!clicked) return [];
+  const removed = await waitForPopupRemoved(page, item.popupXPath, 900).catch(() => false);
+  if (!removed) return [];
+  return [{
+    type: item.type,
+    action: 'click',
+    xpath: item.closeXPath,
+    text: item.closeText || item.popupText,
+    confidence: item.confidence,
+    removed: true,
+    confirmedByUser: true,
+    reasons: [...item.reasons, 'confirmed by manual popup prompt']
+  }];
 }
 
 async function chooseLoginInterventionInBrowser(
@@ -9826,6 +9899,10 @@ export function shouldPromptForLoginInterventionForTesting(options: DetectOption
 
 export async function dismissPageObstructionsForTesting(page: Page, options: { includeLogin?: boolean } = {}): Promise<DetectedPopupDismissal[]> {
   return dismissPageObstructions(page, options);
+}
+
+export async function confirmManualPopupDismissalForTesting(page: Page, runtimeConsole: SuppressedRuntimeConsole, promptedKeys?: Set<string>): Promise<DetectedPopupDismissal[]> {
+  return confirmManualPopupDismissal(page, runtimeConsole, promptedKeys);
 }
 
 export async function refineCandidateFieldsForTesting(page: Page, candidates: DetectedCandidate[]): Promise<DetectedCandidate[]> {
