@@ -1,6 +1,6 @@
 {
   "name": "bazhuayu-cli",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "description": "Standalone Bazhuayu engine CLI that runs local collection without the Electron client.",
   "private": false,
   "type": "module",
