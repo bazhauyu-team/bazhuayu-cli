@@ -167,7 +167,6 @@ octopus data export <taskId> --source cloud --format csv
 # Help and diagnostics
 octopus --help
 octopus doctor
-octopus browser doctor
 
 # Authentication
 octopus auth login
@@ -217,7 +216,7 @@ octopus data export <taskId> --source local --output ./runs --format xlsx
 ## Authentication
 
 Most commands require OAuth or API key credentials. Only setup and diagnostic commands such as
-`--help`, `--version`, `doctor`, `browser doctor`, `capabilities`, and `auth`
+`--help`, `--version`, `doctor`, `capabilities`, and `auth`
 can run before login.
 
 Create API keys in the Bazhuayu console:
@@ -345,7 +344,6 @@ Check the local environment:
 
 ```bash
 octopus doctor
-octopus browser doctor
 ```
 
 If the browser is not detected automatically, pass its path:

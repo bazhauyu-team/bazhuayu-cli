@@ -220,10 +220,12 @@ Purpose:
   cleanup removes stale control files whose local control socket is gone.
 `,
     doctor: `Usage:
-  octopus doctor [--chrome-path <path>] [--json]
-`,
-    browser: `Usage:
-  octopus browser doctor [--chrome-path <path>] [--json]
+  octopus doctor [--chrome-path <path>] [--output <runsDir>] [--api-base-url <url>] [--json]
+
+Purpose:
+  Check the full local CLI environment: Node.js, bundled engine files, protected
+  native module, Chrome resolution and launch, Linux display/Xvfb readiness,
+  authentication/API reachability, and local run directory write access.
 `
   };
 
@@ -237,13 +239,12 @@ Standalone Octoparse engine CLI.
 
 Usage:
   octopus capabilities [--json]
-  octopus doctor [--chrome-path <path>] [--json]
+  octopus doctor [--chrome-path <path>] [--output <runsDir>] [--api-base-url <url>] [--json]
   octopus auth login <apiKey> [--api-base-url <url>] [--json]
   octopus auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
   octopus auth status [--json]
   octopus auth info [--json]
   octopus auth logout [--json]
-  octopus browser doctor [--chrome-path <path>] [--json]
   octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--json]
   octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
   octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
@@ -292,7 +293,7 @@ Design:
 
 Authentication:
   OAuth or API key credentials are required for all functional commands, including local --task-file and .otd runs.
-  Only setup/diagnostic commands can run without it: --help, --version, capabilities, doctor, browser doctor, auth, env.
+  Only setup/diagnostic commands can run without it: --help, --version, capabilities, doctor, auth, env.
   API key page:                   ${API_KEYS_URL}
   octopus auth login --oauth   open browser OAuth login and store tokens
   octopus auth login <key>     verify and store a copied API key directly

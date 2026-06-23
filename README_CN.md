@@ -149,7 +149,6 @@ octopus data export <taskId> --source cloud --format csv
 # 帮助与诊断
 octopus --help
 octopus doctor
-octopus browser doctor
 
 # 认证
 octopus auth login
@@ -196,7 +195,7 @@ octopus data export <taskId> --source local --output ./runs --format xlsx
 
 ## API Key
 
-大多数命令都需要 OAuth 或 API Key 凭据。只有初始化和诊断类命令，例如 `--help`、`--version`、`doctor`、`browser doctor`、`capabilities` 和 `auth`，可以在登录前运行。
+大多数命令都需要 OAuth 或 API Key 凭据。只有初始化和诊断类命令，例如 `--help`、`--version`、`doctor`、`capabilities` 和 `auth`，可以在登录前运行。
 
 在 Bazhuayu 控制台创建 API Key：
 
@@ -299,7 +298,6 @@ octopus run <taskId> --jsonl
 
 ```bash
 octopus doctor
-octopus browser doctor
 ```
 
 如果没有自动检测到浏览器，可以手动传入路径：

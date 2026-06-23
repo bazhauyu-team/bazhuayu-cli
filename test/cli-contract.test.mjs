@@ -8,7 +8,7 @@ import { join, resolve } from 'node:path';
 import { mock, test } from 'node:test';
 import { promisify } from 'node:util';
 import { authCommand, createWindowsUrlLauncherFile } from '../dist/commands/auth.js';
-import { browserDoctorCommand } from '../dist/commands/doctor.js';
+import { doctorCommand } from '../dist/commands/doctor.js';
 import { cloudCommand, cloudHistory } from '../dist/commands/cloud.js';
 import { ApiRequestError, fetchAccountInfo, fetchUserDefaultTaskGroupId, saveTaskInfo, validateApiKey } from '../dist/runtime/api-client.js';
 import { DEFAULT_OAUTH_REDIRECT_URI, exchangeCodeForToken, runOAuthLogin } from '../dist/runtime/oauth.js';
@@ -96,6 +96,14 @@ function assertJsonSuccess(result, args = []) {
   const payload = parseJson(result.stdout);
   assert.equal(payload.ok, true);
   return payload;
+}
+
+async function fakeHealthyChrome() {
+  const root = await mkdtemp(join(tmpdir(), 'octo-fake-chrome-'));
+  const fakeChrome = join(root, 'fake-chrome');
+  await writeFile(fakeChrome, "#!/bin/sh\nsleep 10\n");
+  await chmod(fakeChrome, 0o755);
+  return fakeChrome;
 }
 
 function assertDetectHelpPrefersAgentWorkflow(stdout) {
@@ -1089,7 +1097,7 @@ test('local Chrome commands reject Linux arm64 before runtime download', async (
   console.error = (message = '') => { stderr.push(String(message)); };
 
   try {
-    assert.equal(await browserDoctorCommand(['--json']), 2);
+    assert.equal(await doctorCommand(['--json']), 2);
     const doctorPayload = parseJson(stdout.pop());
     assert.equal(doctorPayload.ok, false);
     assert.equal(doctorPayload.error.code, 'LINUX_ARM64_UNSUPPORTED');
@@ -1107,17 +1115,19 @@ test('local Chrome commands reject Linux arm64 before runtime download', async (
   }
 });
 
-test('browser doctor verifies that the Chrome executable can actually launch', async () => {
+test('doctor verifies that the Chrome executable can actually launch', async () => {
   const root = await mkdtemp(join(tmpdir(), 'octo-browser-doctor-'));
   const fakeChrome = join(root, 'fake-chrome');
   await writeFile(fakeChrome, "#!/bin/sh\necho 'libnspr4.so: cannot open shared object file' >&2\nexit 127\n");
   await chmod(fakeChrome, 0o755);
 
-  const result = await runCli(['browser', 'doctor', '--chrome-path', fakeChrome, '--json']);
+  const result = await runCli(['doctor', '--chrome-path', fakeChrome, '--json']);
   const payload = assertJsonFailure(result, 'CHROME_LAUNCH_FAILED', 2);
   assert.match(payload.error.message, /Chrome failed to launch/);
   assert.match(payload.error.message, /libnspr4\.so/);
   assert.match(payload.error.message, /apt-get install -y libnss3 libnspr4/);
+  assert.equal(payload.data.ok, false);
+  assert.ok(payload.data.checks.some((check) => check.name === 'chrome' && check.severity === 'error'));
 });
 
 test('agent-facing commands expose json envelopes for key contract paths', async () => {
@@ -1125,9 +1135,10 @@ test('agent-facing commands expose json envelopes for key contract paths', async
   const output = join(root, 'runs');
   const apiKey = 'dummy';
 
+  assertJsonSuccess(await runCli(['doctor', '--chrome-path', await fakeHealthyChrome(), '--json']));
+
   const successCases = [
     ['env', 'status', '--json'],
-    ['doctor', '--chrome-path', process.execPath, '--json'],
     ['local', 'cleanup', '--json'],
     ['local', 'status', 'missing-task', '--json'],
     ['local', 'history', 'missing-task', '--output', output, '--json'],
