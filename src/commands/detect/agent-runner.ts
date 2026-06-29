@@ -23,6 +23,10 @@ export async function runInlineAgentDetect(options: {
   result: PageDetectionResult;
   json: boolean;
   quiet: boolean;
+  timings?: {
+    commandStartedAtMs: number;
+    pageDetectionMs: number;
+  };
 }): Promise<number> {
   const command = valueAfter(options.args, '--agent-command') ?? process.env.OCTOPUS_AGENT_COMMAND;
   if (!command) {
@@ -42,12 +46,14 @@ export async function runInlineAgentDetect(options: {
     const planFile = join(workDir, 'plan.json');
     await writeFile(contextFile, `${JSON.stringify(context, null, 2)}\n`, 'utf8');
 
+    const agentStartedAtMs = Date.now();
     const agent = await runAgentCommand({
       command,
       contextFile,
       planFile,
       goal: valueAfter(options.args, '--goal')
     });
+    const agentMs = Date.now() - agentStartedAtMs;
     const plan = agent.plan;
     const preview = previewAgentPlan({ context, plan });
 
@@ -99,6 +105,7 @@ export async function runInlineAgentDetect(options: {
       },
       preview,
       agentFiles: agentFiles(options.args, contextFile, planFile),
+      timings: agentTimingSummary(options.timings, agentMs),
       ...(sampleRun ? { sampleRun } : {})
     };
     if (options.json && !options.quiet) printEnvelope(true, data);
@@ -123,6 +130,29 @@ export async function runInlineAgentDetect(options: {
       await rm(workDir, { recursive: true, force: true });
     }
   }
+}
+
+function agentTimingSummary(
+  timings: { commandStartedAtMs: number; pageDetectionMs: number } | undefined,
+  agentMs: number
+): Record<string, number> {
+  const totalMs = timings ? Date.now() - timings.commandStartedAtMs : agentMs;
+  return {
+    ...(timings
+      ? {
+        pageDetectionMs: timings.pageDetectionMs,
+        pageDetectionSeconds: seconds(timings.pageDetectionMs)
+      }
+      : {}),
+    agentMs,
+    agentSeconds: seconds(agentMs),
+    totalMs,
+    totalSeconds: seconds(totalMs)
+  };
+}
+
+function seconds(ms: number): number {
+  return Number((ms / 1000).toFixed(2));
 }
 
 export async function runInlineAgentDetectForTesting(options: {

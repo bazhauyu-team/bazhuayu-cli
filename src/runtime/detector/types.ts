@@ -171,6 +171,7 @@ export interface PageDetectionResult {
   finalUrl: string;
   title: string;
   capturedAt: string;
+  phaseTimings?: Record<string, number>;
   candidates: DetectedCandidate[];
   apiCandidates?: DetectedApiListCandidate[];
   searchPlan?: DetectedSearchPlan;
@@ -289,4 +290,5 @@ export interface DetectOptions {
   sessionName?: string;
   agentScreenshotPath?: string;
   onChromeStatus?: (status: { state: string; progress?: number }) => void;
+  onPhaseTiming?: (key: string, ms: number) => void;
 }

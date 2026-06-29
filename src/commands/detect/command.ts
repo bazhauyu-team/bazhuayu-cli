@@ -25,6 +25,7 @@ import { detailModeLabel, printDetectHuman } from './format.js';
 import { persistGeneratedTask } from './persist.js';
 
 export async function detectCommand(args: string[]): Promise<number> {
+  const commandStartedAtMs = Date.now();
   const json = hasFlag(args, '--json');
   const quiet = hasFlag(args, '--quiet');
   if (hasFlag(args, '--screenshot') || hasFlag(args, '--agent-screenshot')) {
@@ -109,17 +110,20 @@ export async function detectCommand(args: string[]): Promise<number> {
     );
   }
   try {
+    const pageDetectionStartedAtMs = Date.now();
     const result = await runPageDetection(args, url, json, quiet);
+    const pageDetectionMs = Date.now() - pageDetectionStartedAtMs;
+    const timings = { commandStartedAtMs, pageDetectionMs };
 
     if (hasFlag(args, '--agent')) {
-      return runInlineAgentDetect({ args, result, json, quiet });
+      return runInlineAgentDetect({ args, result, json, quiet, timings });
     }
 
     if (hasFlag(args, '--prepare-agent')) {
       const context = buildAgentContext(result, valueAfter(args, '--goal'));
       const outputFile = valueAfter(args, '--output');
       if (outputFile) await writeFile(resolve(outputFile), `${JSON.stringify(context, null, 2)}\n`, 'utf8');
-      if (json && !quiet) printEnvelope(true, outputFile ? { file: resolve(outputFile), agentContext: context } : context);
+      if (json && !quiet) printEnvelope(true, outputFile ? { file: resolve(outputFile), agentContext: context, timings: timingSummary(timings) } : { ...context, timings: timingSummary(timings) });
       else if (!quiet) {
         if (outputFile) console.log(`Agent context: ${resolve(outputFile)}`);
         else console.log(JSON.stringify(context, null, 2));
@@ -127,7 +131,7 @@ export async function detectCommand(args: string[]): Promise<number> {
       return EXIT_OK;
     }
 
-    return handleDirectDetectResult({ args, result, json, quiet });
+    return handleDirectDetectResult({ args, result, json, quiet, timings });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const code = error instanceof DetectionLoginRequiredError ? 'LOGIN_SESSION_REQUIRED' : 'DETECT_FAILED';
@@ -172,8 +176,9 @@ async function handleDirectDetectResult(options: {
   result: PageDetectionResult;
   json: boolean;
   quiet: boolean;
+  timings: DetectTimingInput;
 }): Promise<number> {
-  const { args, result, json, quiet } = options;
+  const { args, result, json, quiet, timings } = options;
   const interactiveSelectedIds = result.selectedCandidateIds?.length ? result.selectedCandidateIds : result.selectedCandidateId ? [result.selectedCandidateId] : [];
   const manualTaskChoice = hasFlag(args, '--manual') && !json && !quiet
     ? await chooseManualTaskOutput(result, valueAfter(args, '--output'))
@@ -183,10 +188,10 @@ async function handleDirectDetectResult(options: {
   const outputFile = manualTaskChoice?.outputFile ?? valueAfter(args, '--output');
   const shouldGenerateTask = manualTaskChoice ? manualTaskChoice.generate : Boolean(selectedId || outputFile);
   if (shouldGenerateTask) {
-    return generateDirectTask({ args, result, selectedId, outputFile, json, quiet });
+    return generateDirectTask({ args, result, selectedId, outputFile, json, quiet, timings });
   }
 
-  if (json && !quiet) printEnvelope(true, { ...result, recommendedCandidateId: recommendedCandidate(result.candidates)?.id });
+  if (json && !quiet) printEnvelope(true, { ...result, recommendedCandidateId: recommendedCandidate(result.candidates)?.id, timings: timingSummary(timings, detectionPhaseTimingSummary(result)) });
   else if (!quiet) printDetectHuman(result);
   return EXIT_OK;
 }
@@ -198,8 +203,9 @@ async function generateDirectTask(options: {
   outputFile: string | undefined;
   json: boolean;
   quiet: boolean;
+  timings: DetectTimingInput;
 }): Promise<number> {
-  const { args, result, selectedId, outputFile, json, quiet } = options;
+  const { args, result, selectedId, outputFile, json, quiet, timings } = options;
   if (!selectedId) {
     const message = hasFlag(args, '--interactive') || hasFlag(args, '--manual')
       ? '没有选中采集对象：请在浏览器里点击一个高亮数据组后继续。'
@@ -213,7 +219,7 @@ async function generateDirectTask(options: {
     const task = buildTaskFromApiListCandidate({ url: result.finalUrl, taskId, taskName, candidate: apiCandidate });
     const file = outputFile ? resolve(outputFile) : resolveAvailableDetectedTaskFile(taskId);
     await persistGeneratedTask({ task, file, args, saveToCloud: false });
-    const data = { ...result, generatedTask: { file, taskId, taskName, candidateId: apiCandidate.id, fieldNames: task.fieldNames, mode: 'api_list', localOnly: true } };
+    const data = { ...result, generatedTask: { file, taskId, taskName, candidateId: apiCandidate.id, fieldNames: task.fieldNames, mode: 'api_list', localOnly: true }, timings: timingSummary(timings, detectionPhaseTimingSummary(result)) };
     if (json && !quiet) printEnvelope(true, data);
     else if (!quiet) {
       printDetectHuman(result);
@@ -243,7 +249,7 @@ async function generateDirectTask(options: {
   const task = buildTaskFromCandidate({ url: result.finalUrl, taskId, taskName, candidate, popupDismissals: result.popupDismissals, session: result.savedSession, searchPlan: result.searchPlan });
   const file = outputFile ? resolve(outputFile) : resolveAvailableDetectedTaskFile(taskId);
   await persistGeneratedTask({ task, file, args });
-  const data = { ...result, generatedTask: { file, taskId, taskName, candidateId: candidate.id, fieldNames: task.fieldNames, pagination: candidate.pagination, session: task.detection.session } };
+  const data = { ...result, generatedTask: { file, taskId, taskName, candidateId: candidate.id, fieldNames: task.fieldNames, pagination: candidate.pagination, session: task.detection.session }, timings: timingSummary(timings, detectionPhaseTimingSummary(result)) };
   if (json && !quiet) printEnvelope(true, data);
   else if (!quiet) {
     printDetectHuman(result);
@@ -259,6 +265,38 @@ async function generateDirectTask(options: {
     console.log(`Run: octopus run ${taskId} --task-file ${file}`);
   }
   return EXIT_OK;
+}
+
+interface DetectTimingInput {
+  commandStartedAtMs: number;
+  pageDetectionMs: number;
+}
+
+function timingSummary(input: DetectTimingInput, extra: Record<string, number> = {}): Record<string, number> {
+  const totalMs = Date.now() - input.commandStartedAtMs;
+  return {
+    pageDetectionMs: input.pageDetectionMs,
+    pageDetectionSeconds: seconds(input.pageDetectionMs),
+    ...extra,
+    totalMs,
+    totalSeconds: seconds(totalMs)
+  };
+}
+
+function detectionPhaseTimingSummary(result: PageDetectionResult): Record<string, number> {
+  const phaseTimings = result.phaseTimings ?? {};
+  return Object.fromEntries(Object.entries(phaseTimings).flatMap(([key, value]) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return [];
+    const secondsKey = key.endsWith('Ms') ? `${key.slice(0, -2)}Seconds` : `${key}Seconds`;
+    return [
+      [key, value],
+      [secondsKey, seconds(value)]
+    ];
+  }));
+}
+
+function seconds(ms: number): number {
+  return Number((ms / 1000).toFixed(2));
 }
 
 function recommendedApiCandidate(result: PageDetectionResult) {

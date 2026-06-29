@@ -674,6 +674,32 @@ test('protected Smart field cleanup removes action noise and preserves row mappi
   });
 });
 
+test('protected Smart sample rows include up to ten first-screen records', () => {
+  const titles = Array.from({ length: 12 }, (_, index) => `Story ${index + 1}`);
+  const urls = titles.map((title) => `https://example.com/${title.toLowerCase().replaceAll(' ', '-')}`);
+  const [candidate] = protectedSmartResultToCandidatesForTesting({
+    List: [{
+      type: 3,
+      sort: 1,
+      element: {
+        xpath: '/html/body/main/table/tr',
+        fullColRate: 1,
+        data: [
+          titles,
+          urls
+        ],
+        scheme: [
+          { Name: '标题', RelativeXPath: '/TD[1]/A[1]', Attribute: 'text' },
+          { Name: '标题链接', RelativeXPath: '/TD[1]/A[1]', Attribute: 'href' }
+        ]
+      }
+    }]
+  }, 1);
+
+  assert.equal(candidate.sampleRows.length, 10);
+  assert.deepEqual(candidate.sampleRows.map((row) => row['标题']), titles.slice(0, 10));
+});
+
 test('protected Smart field cleanup compacts repository-style source and navigation noise', () => {
   const [candidate] = protectedSmartResultToCandidatesForTesting({
     List: [{

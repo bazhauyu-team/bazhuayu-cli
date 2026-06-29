@@ -1,6 +1,8 @@
 import type { DetectedCandidate, DetectedField, DetectedPagination } from './types.js';
 import type { SmartExtractItem, SmartListResult, SmartRawResult } from './protected-smart-provider.js';
 
+const SAMPLE_ROW_LIMIT = 10;
+
 interface SmartDetectedField extends DetectedField {
   sourceIndex: number;
 }
@@ -990,10 +992,10 @@ function selectSmartSampleRowIndices(fields: SmartDetectedField[], data: string[
   const selected = scored
     .filter((item) => item.nonEmpty >= Math.max(1, Math.ceil(bestNonEmpty * 0.45)))
     .sort((a, b) => b.score - a.score || a.rowIndex - b.rowIndex)
-    .slice(0, 3)
+    .slice(0, SAMPLE_ROW_LIMIT)
     .sort((a, b) => a.rowIndex - b.rowIndex)
     .map((item) => item.rowIndex);
-  return selected.length ? selected : scored.slice(0, 3).map((item) => item.rowIndex);
+  return selected.length ? selected : scored.slice(0, SAMPLE_ROW_LIMIT).map((item) => item.rowIndex);
 }
 
 function fieldValueLooksUsefulForSampling(field: SmartDetectedField, value: string): boolean {
@@ -1013,9 +1015,9 @@ function isRowLevelFilterOrAdText(value: string): boolean {
 }
 
 function buildSampleRows(fields: SmartDetectedField[], data: string[][], rowIndices: number[]): Record<string, string>[] {
-  const selectedRows = rowIndices.length ? rowIndices : Array.from({ length: Math.min(3, data[0]?.length ?? 0) }, (_, index) => index);
+  const selectedRows = rowIndices.length ? rowIndices : Array.from({ length: Math.min(SAMPLE_ROW_LIMIT, data[0]?.length ?? 0) }, (_, index) => index);
   const rows: Record<string, string>[] = [];
-  for (const rowIndex of selectedRows.slice(0, 3)) {
+  for (const rowIndex of selectedRows.slice(0, SAMPLE_ROW_LIMIT)) {
     const row: Record<string, string> = {};
     fields.forEach((field) => {
       row[field.name] = applySmartFieldOperations(data[field.sourceIndex]?.[rowIndex] ?? '', field.operations);

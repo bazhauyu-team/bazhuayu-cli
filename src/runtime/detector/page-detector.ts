@@ -175,13 +175,26 @@ interface ScrollProbeSummary {
 export async function detectPage(options: DetectOptions): Promise<PageDetectionResult> {
   const runtimeConsole = suppressDetectorRuntimeConsole();
   let host: ExtensionDetectorHost | null = null;
+  const phaseTimings: Record<string, number> = {};
+  const timed = async <T>(key: string, action: () => Promise<T>): Promise<T> => {
+    const startedAt = Date.now();
+    try {
+      return await action();
+    } finally {
+      phaseTimings[key] = (phaseTimings[key] ?? 0) + Date.now() - startedAt;
+    }
+  };
+  const recordPhaseTiming = (key: string, ms: number): void => {
+    phaseTimings[key] = (phaseTimings[key] ?? 0) + ms;
+  };
   try {
+    options = { ...options, onPhaseTiming: recordPhaseTiming };
     let apiCapture: ApiResponseCapture | null = null;
-    host = await ExtensionDetectorHost.start(options, {
+    host = await timed('hostStartMs', () => ExtensionDetectorHost.start(options, {
       onTargetPageReady(page) {
         apiCapture = startApiResponseCapture(page);
       }
-    });
+    }));
     const capturedApiCandidates: DetectedApiListCandidate[] = [];
     const restartApiCapture = (page: Page): void => {
       if (apiCapture) {
@@ -200,7 +213,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
     let page = host.page;
     if (!apiCapture) apiCapture = startApiResponseCapture(page);
     page.setDefaultTimeout(options.timeoutMs);
-    await waitForPageSettled(page, options.waitMs);
+    await timed('initialSettleMs', () => waitForPageSettled(page, options.waitMs));
     const popupDismissals: DetectedPopupDismissal[] = [];
     const manualPopupPromptKeys = new Set<string>();
     let loginIntervention = await handleLoginIntervention('打开页面后检测到登录要求');
@@ -208,8 +221,8 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
     page = host.page;
     restartApiCapture(page);
     if (options.dismissPopups && !options.manual) {
-      popupDismissals.push(...await dismissPageObstructions(page));
-      if (popupDismissals.length) await waitForPageSettled(page, Math.min(options.waitMs, 800));
+      popupDismissals.push(...await timed('popupDismissalMs', () => dismissPageObstructions(page)));
+      if (popupDismissals.length) await timed('popupSettleMs', () => waitForPageSettled(page, Math.min(options.waitMs, 800)));
     }
     if (options.dismissPopups && options.manual) {
       popupDismissals.push(...await confirmManualPopupDismissal(page, runtimeConsole, manualPopupPromptKeys));
@@ -274,16 +287,16 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
     }
     let manualStartDecision: ManualStartDecision = { dismissPopups: false, allowSessionSave: true };
     const allowPopupDismissal = options.dismissPopups && (!options.manual || manualStartDecision.dismissPopups);
-    if (allowPopupDismissal) popupDismissals.push(...await dismissPageObstructions(page));
-    const scrollProbe = await autoScroll(page, options.scrolls);
-    await waitForPageSettled(page, Math.min(options.waitMs, 1000));
-    if (allowPopupDismissal) popupDismissals.push(...await dismissPageObstructions(page));
+    if (allowPopupDismissal) popupDismissals.push(...await timed('popupDismissalMs', () => dismissPageObstructions(page)));
+    const scrollProbe = await timed('autoScrollMs', () => autoScroll(page, options.scrolls));
+    await timed('postScrollSettleMs', () => waitForPageSettled(page, Math.min(options.waitMs, 1000)));
+    if (allowPopupDismissal) popupDismissals.push(...await timed('popupDismissalMs', () => dismissPageObstructions(page)));
     if (options.dismissPopups && options.manual) {
       popupDismissals.push(...await confirmManualPopupDismissal(page, runtimeConsole, manualPopupPromptKeys));
       if (popupDismissals.length) await waitForPageSettled(page, Math.min(options.waitMs, 800));
     }
     const effectiveOptions = { ...options, interactive: options.interactive || options.manual };
-    let candidates = await detectCandidates(page, effectiveOptions, scrollProbe);
+    let candidates = await timed('detectCandidatesMs', () => detectCandidates(page, effectiveOptions, scrollProbe));
     if (options.dismissPopups && options.manual) {
       popupDismissals.push(...await confirmManualPopupDismissal(page, runtimeConsole, manualPopupPromptKeys));
       if (popupDismissals.length) {
@@ -314,7 +327,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
         }
       }
     }
-    candidates = await attachAgentDiagnostics(page, candidates).catch(() => candidates);
+    candidates = await timed('attachDiagnosticsMs', () => attachAgentDiagnostics(page, candidates).catch(() => candidates));
     if (options.agentScreenshotPath) {
       candidates = await attachCandidateVisualElements(page, candidates).catch(() => candidates);
     }
@@ -329,7 +342,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
       ...detectKnownApiListCandidates(page.url()),
       ...capturedApiCandidates,
       ...apiCapture.candidates(),
-      ...await detectApiListCandidatesFromResourceTimings(page).catch(() => [])
+      ...await timed('apiCandidateDetectionMs', () => detectApiListCandidatesFromResourceTimings(page).catch(() => []))
     ]);
     const shouldSaveSession = options.saveSession || (canOfferSessionSave && await chooseSaveSessionInBrowser(page, runtimeConsole)
         .catch(() => chooseSaveSessionInteractively(runtimeConsole)));
@@ -341,6 +354,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
       finalUrl: page.url(),
       title: await page.title(),
       capturedAt: new Date().toISOString(),
+      phaseTimings,
       candidates,
       ...(apiCandidates.length ? { apiCandidates } : {}),
       ...(searchPlan ? { searchPlan: { ...searchPlan, finalUrl: page.url() } } : {}),
@@ -2220,26 +2234,34 @@ function scrollProbeStable(previous: ScrollProbeSnapshot, next: ScrollProbeSnaps
 }
 
 async function detectCandidates(page: Page, options: DetectOptions, scrollProbe?: ScrollProbeSummary): Promise<DetectedCandidate[]> {
+  const timed = async <T>(key: string, action: () => Promise<T>): Promise<T> => {
+    const startedAt = Date.now();
+    try {
+      return await action();
+    } finally {
+      options.onPhaseTiming?.(key, Date.now() - startedAt);
+    }
+  };
   if (!options.legacyDetector) {
     const outputLimit = options.interactive ? Math.max(options.maxCandidates, 24) : options.maxCandidates;
     const refinementLimit = candidateRefinementLimit(outputLimit);
-    const protectedSmart = await detectProtectedSmartCandidates(page, { maxCandidates: refinementLimit, baseUrl: options.apiBaseUrl });
-    const fallback = await detectFallbackListCandidates(page, refinementLimit, options.interactive);
+    const protectedSmart = await timed('protectedSmartMs', () => detectProtectedSmartCandidates(page, { maxCandidates: refinementLimit, baseUrl: options.apiBaseUrl }));
+    const fallback = await timed('fallbackCandidatesMs', () => detectFallbackListCandidates(page, refinementLimit, options.interactive));
     if (!protectedSmart.length && !fallback.length) {
       throw new Error('No list candidates were detected. Use --legacy-detector only for debugging the old detector.');
     }
-    const merged = dedupeEquivalentCandidates([...protectedSmart, ...fallback]);
-    const withAdjacentMetadata = await augmentAdjacentMetadataFields(page, merged).catch(() => merged);
-    const withPagination = await detectPaginationForCandidates(page, withAdjacentMetadata, scrollProbe);
-    const withDiagnostics = await attachAgentDiagnostics(page, withPagination).catch(() => withPagination);
-    const withLayoutScores = await applyLayoutScores(page, withDiagnostics);
+    const merged = await timed('candidateDedupeMs', async () => dedupeEquivalentCandidates([...protectedSmart, ...fallback]));
+    const withAdjacentMetadata = await timed('adjacentMetadataMs', () => augmentAdjacentMetadataFields(page, merged).catch(() => merged));
+    const withPagination = await timed('paginationDetectionMs', () => detectPaginationForCandidates(page, withAdjacentMetadata, scrollProbe));
+    const withDiagnostics = await timed('candidateDiagnosticsMs', () => attachAgentDiagnostics(page, withPagination).catch(() => withPagination));
+    const withLayoutScores = await timed('layoutScoringMs', () => applyLayoutScores(page, withDiagnostics));
     const sanitized = sanitizeCandidatePaginationByLayout(withLayoutScores);
     const filtered = filterDetectedBoilerplateCandidates(sanitized);
     const ranked = options.goal ? applyGoalScores(filtered, options.goal) : rankCandidates(filtered);
     return options.llmRank ? applyLlmRankPreparation(ranked.slice(0, outputLimit), options.goal) : ranked.slice(0, outputLimit);
   }
 
-  const candidates = await detectRawCandidates(page, options.interactive);
+  const candidates = await timed('legacyRawCandidatesMs', () => detectRawCandidates(page, options.interactive));
 
   const seen = new Set<string>();
   const outputLimit = options.interactive ? Math.max(options.maxCandidates, 24) : options.maxCandidates;
@@ -2259,10 +2281,10 @@ async function detectCandidates(page: Page, options: DetectOptions, scrollProbe?
     title: candidateTitle(candidate),
     ...candidate
   }));
-  const withPagination = await detectPaginationForCandidates(page, detected, scrollProbe);
-  const withRefinedFields = await refineCandidateFields(page, withPagination);
-  const withAdjacentMetadata = await augmentAdjacentMetadataFields(page, withRefinedFields).catch(() => withRefinedFields);
-  const withLayoutScores = await applyLayoutScores(page, withAdjacentMetadata);
+  const withPagination = await timed('paginationDetectionMs', () => detectPaginationForCandidates(page, detected, scrollProbe));
+  const withRefinedFields = await timed('fieldRefinementMs', () => refineCandidateFields(page, withPagination));
+  const withAdjacentMetadata = await timed('adjacentMetadataMs', () => augmentAdjacentMetadataFields(page, withRefinedFields).catch(() => withRefinedFields));
+  const withLayoutScores = await timed('layoutScoringMs', () => applyLayoutScores(page, withAdjacentMetadata));
   const sanitized = sanitizeCandidatePaginationByLayout(withLayoutScores);
   const filtered = filterDetectedBoilerplateCandidates(sanitized);
   const deduped = dedupeEquivalentCandidates(filtered);
