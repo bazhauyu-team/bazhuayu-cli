@@ -113,7 +113,9 @@ function relativeXPathFromBase(baseXPath: string, fieldXPath: string): string {
   if (!fieldXPath.startsWith(baseXPath)) return relativeXPathFromItem(fieldXPath);
   const suffix = fieldXPath.slice(baseXPath.length);
   if (!suffix) return '.';
-  return suffix.startsWith('//') ? `.${suffix}` : `.${suffix}`;
+  // Note: suffix starting with '//' (descendant-or-self) is treated the same as other paths.
+  // Both result in '.${suffix}' which produces valid relative XPath like './/...'
+  return `.${suffix}`;
 }
 
 function normalizeXPath(xpath: string): string {

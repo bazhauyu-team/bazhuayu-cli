@@ -107,7 +107,8 @@ async function fetchApiListPage(apiList: ApiListTask, page: number): Promise<{ u
       'User-Agent': 'Mozilla/5.0',
       ...(request.headers ?? {})
     },
-    ...(body !== undefined ? { body } : {})
+    ...(body !== undefined ? { body } : {}),
+    signal: AbortSignal.timeout(30_000)
   });
   if (!response.ok) throw new Error(`API list request failed: HTTP ${response.status} ${response.statusText} (${url})`);
   const payload = await response.json() as unknown;

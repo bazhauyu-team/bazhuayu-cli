@@ -207,7 +207,16 @@ async function runAgentCommand(options: {
   if (!rawPlan.trim()) {
     throw new Error('Agent command did not write a plan to OCTOPUS_AGENT_PLAN or stdout.');
   }
-  const plan = JSON.parse(rawPlan) as AgentPlan;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawPlan);
+  } catch {
+    throw new Error(`Agent plan is not valid JSON: ${rawPlan.slice(0, 120)}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`Agent plan must be a JSON object, got: ${JSON.stringify(parsed)?.slice(0, 120)}`);
+  }
+  const plan = parsed as AgentPlan;
   if (!existsSync(options.planFile)) await writeFile(options.planFile, `${JSON.stringify(plan, null, 2)}\n`, 'utf8');
   return { plan, stdout };
 }
@@ -344,6 +353,12 @@ async function captureProcessOutput(run: () => Promise<number>): Promise<{ code:
   const originalStderrWrite = process.stderr.write;
   let stdout = '';
   let stderr = '';
+  // Restore streams on unexpected process exit (e.g. process.exit() inside run())
+  const restoreOnExit = () => {
+    process.stdout.write = originalStdoutWrite;
+    process.stderr.write = originalStderrWrite;
+  };
+  process.once('exit', restoreOnExit);
   process.stdout.write = ((chunk: unknown, ..._args: unknown[]) => {
     stdout += String(chunk);
     return true;
@@ -356,6 +371,7 @@ async function captureProcessOutput(run: () => Promise<number>): Promise<{ code:
     const code = await run();
     return { code, stdout, stderr };
   } finally {
+    process.removeListener('exit', restoreOnExit);
     process.stdout.write = originalStdoutWrite;
     process.stderr.write = originalStderrWrite;
   }

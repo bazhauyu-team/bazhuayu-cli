@@ -16,12 +16,18 @@ export async function persistGeneratedTask(options: {
 
   const auth = await resolveAuth();
   if (!auth.credential) {
-    throw new Error('生成任务已写入本地文件，但云端保存需要登录。请运行 "octopus auth login" 后重试。');
+    console.warn('[warn] 任务已保存到本地，但云端同步需要登录。请运行 "octopus auth login"。');
+    return;
   }
 
-  await saveDetectedTaskToCloud({
-    auth: auth.credential,
-    baseUrl: valueAfter(options.args, '--api-base-url'),
-    task: options.task
-  });
+  try {
+    await saveDetectedTaskToCloud({
+      auth: auth.credential,
+      baseUrl: valueAfter(options.args, '--api-base-url'),
+      task: options.task
+    });
+  } catch (cloudError) {
+    const msg = cloudError instanceof Error ? cloudError.message : String(cloudError);
+    console.warn(`[warn] 云端保存失败（本地文件已写入）: ${msg}`);
+  }
 }

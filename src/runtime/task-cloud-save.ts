@@ -11,7 +11,7 @@ const TASK_SCHEDULE_MANUAL = 5;
 const WORKFLOW_TYPE_ADVANCED = 1;
 const TASK_DOWNLOAD_STATUS_ASK = 0;
 const DEFAULT_TASK_GROUP_ID = 1;
-const DEFAULT_EFFECTIVE_TO = '2078-07-06T00:00:00.000Z';
+const DEFAULT_EFFECTIVE_TO = '9999-12-31T23:59:59.999Z';
 
 export interface SaveDetectedTaskToCloudOptions {
   auth: AuthCredential;
@@ -95,6 +95,8 @@ export function detectedTaskToCloudTaskInfo(task: CloudSavableTask, userId = '',
 }
 
 export function encodeTaskXml(xml: string): string {
+  // NOTE: Server expects UTF-16 LE byte order (ucs2 alias). Do NOT change to 'utf8'.
+  // Changing encoding will break all existing cloud-stored task XML decoding.
   const textBuffer = Buffer.from(xml, 'ucs2');
   const zipBuffer = gzipSync(textBuffer);
   const lengthPrefix = Buffer.alloc(4);
