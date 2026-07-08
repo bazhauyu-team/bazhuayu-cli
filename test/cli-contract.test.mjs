@@ -10,6 +10,12 @@ import { promisify } from 'node:util';
 import { authCommand, createWindowsUrlLauncherFile } from '../dist/commands/auth.js';
 import { doctorCommand } from '../dist/commands/doctor.js';
 import { cloudCommand, cloudHistory } from '../dist/commands/cloud.js';
+import { dataCount, dataExport, dataPreview } from '../dist/commands/data.js';
+import { scheduleCommand } from '../dist/commands/schedule.js';
+import { taskGroupCommand } from '../dist/commands/task-group.js';
+import { taskCopy, taskDelete, taskList, taskMove, taskRename } from '../dist/commands/task.js';
+import { templateCommand, templateTaskCommand } from '../dist/commands/template.js';
+import { acquisitionSettingsCommand, userConfigCommand } from '../dist/commands/user-config.js';
 import { ApiRequestError, fetchAccountInfo, fetchUserDefaultTaskGroupId, saveTaskInfo, validateApiKey } from '../dist/runtime/api-client.js';
 import { DEFAULT_OAUTH_REDIRECT_URI, exchangeCodeForToken, runOAuthLogin } from '../dist/runtime/oauth.js';
 import { injectGlobalCookie, localDataExportCommand, runTask, setEngineHostFactoryForTesting } from '../dist/commands/run.js';
@@ -371,6 +377,21 @@ test('capabilities is available before authentication and documents API key cont
   assert.match(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.routingRule, /Do not use detect --auto as the default agent path/);
   assert.ok(payload.data.machineContract.agentEntrypoint.intentAliases.some((item) => /采集任务/.test(item)));
   assert.ok(payload.data.commands.find((item) => item.command === 'run <taskId>')?.authRequired);
+  assert.ok(payload.data.commands.find((item) => item.command === 'task rename/move/delete <taskId>')?.requiresConfirmation);
+  assert.ok(payload.data.commands.find((item) => item.command === 'task-group update/delete/set-default')?.requiresConfirmation);
+  assert.equal(payload.data.commands.some((item) => item.command.includes('task-url')), false);
+  assert.ok(payload.data.commands.find((item) => item.command === 'template search/view/version')?.authRequired);
+  assert.ok(payload.data.commands.find((item) => item.command === 'template-task update <taskId>')?.requiresConfirmation);
+  assert.ok(payload.data.commands.find((item) => item.command === 'schedule cloud update/start/stop <taskId>')?.requiresConfirmation);
+  assert.equal(payload.data.commands.some((item) => item.command.includes('schedule local')), false);
+  assert.ok(payload.data.commands.find((item) => item.command === 'user-config get/search')?.authRequired);
+  assert.ok(payload.data.commands.find((item) => item.command === 'user-config set/delete')?.requiresConfirmation);
+  assert.equal(payload.data.commands.some((item) => item.command.includes('acquisition-settings')), false);
+  assert.ok(payload.data.commands.find((item) => item.command === 'data count/preview <taskId>')?.authRequired);
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('CONFIRMATION_REQUIRED'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('TEMPLATE_TASK_CREATE_FAILED'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('SCHEDULE_CLOUD_UPDATE_FAILED'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('UNSUPPORTED_OPERATION'));
   assert.equal(payload.data.commands.some((item) => item.command.includes('run-url')), false);
   assert.equal(payload.data.browserRuntime.linuxArm64.affectedCommands.includes('run-url'), false);
   assert.equal(payload.data.machineContract.stable, true);
@@ -955,6 +976,1047 @@ test('fetchUserDefaultTaskGroupId reads the client default group endpoint', asyn
   }
 });
 
+test('task-group create uses the domestic TaskGroup API and json envelope', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'group-key';
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), init });
+    return new Response(JSON.stringify({
+      isSuccess: true,
+      data: 88
+    }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    const code = await taskGroupCommand('create', ['运营组', '--api-base-url', 'https://example.invalid', '--json']);
+    assert.equal(code, 0);
+    const payload = parseJson(lines[0]);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.name, '运营组');
+    assert.equal(payload.data.data, 88);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, 'https://example.invalid/api/TaskGroup');
+    assert.equal(seen[0].init.method, 'POST');
+    assert.equal(seen[0].init.headers['x-api-key'], 'group-key');
+    assert.deepEqual(JSON.parse(seen[0].init.body), {
+      taskGroupId: '',
+      taskGroupName: '运营组'
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('task list forwards template filters to the domestic search API', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'task-list-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, search: parsed.searchParams });
+    return new Response(JSON.stringify({
+      isSuccess: true,
+      data: {
+        total: 1,
+        currentTotal: 1,
+        dataList: [{ taskId: 'task-1', taskName: 'Template Task' }]
+      }
+    }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    const code = await taskList([
+      '--template-id',
+      'template-registration-1',
+      '--template-version-id',
+      'template-version-2',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]);
+    assert.equal(code, 0);
+    const payload = parseJson(lines[0]);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.tasks[0].taskId, 'task-1');
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url.startsWith('https://example.invalid/api/task/searchTaskListV3?'), true);
+    assert.equal(seen[0].search.get('templateId'), 'template-registration-1');
+    assert.equal(seen[0].search.get('templateVersionId'), 'template-version-2');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('task-group list and mutations use domestic task group APIs', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'group-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
+    if (parsed.pathname === '/api/taskGroup/getTaskGroupList') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: [{ taskGroupId: 7, taskGroupName: '默认组', isDefault: true }]
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: true, data: true }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await taskGroupCommand('list', ['--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await taskGroupCommand('update', ['7', '--name', '新组', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await taskGroupCommand('delete', ['7', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await taskGroupCommand('set-default', ['7', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
+
+    assert.equal(parseJson(lines[0]).data.data[0].taskGroupId, 7);
+    assert.equal(seen[0].path, '/api/taskGroup/getTaskGroupList');
+    assert.equal(seen[0].init.method, 'GET');
+    assert.equal(seen[1].path, '/api/taskGroup');
+    assert.equal(seen[1].init.method, 'PUT');
+    assert.deepEqual(JSON.parse(seen[1].init.body), {
+      taskGroupId: '7',
+      taskGroupName: '新组'
+    });
+    assert.equal(seen[2].path, '/api/taskGroup');
+    assert.equal(seen[2].init.method, 'DELETE');
+    assert.equal(seen[2].search.get('taskGroupId'), '7');
+    assert.equal(seen[3].path, '/api/TaskGroup/Default');
+    assert.equal(seen[3].init.method, 'PUT');
+    assert.equal(seen[3].search.get('groupId'), '7');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('dangerous task-group and task commands require explicit confirmation', async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await taskGroupCommand('delete', ['23', '--json']), 1);
+    assert.equal(await taskDelete(['task-1', '--json']), 1);
+    const payloads = lines.map((line) => parseJson(line));
+    assert.equal(payloads[0].ok, false);
+    assert.equal(payloads[0].error.code, 'CONFIRMATION_REQUIRED');
+    assert.match(payloads[0].error.message, /--yes/);
+    assert.equal(payloads[1].ok, false);
+    assert.equal(payloads[1].error.code, 'CONFIRMATION_REQUIRED');
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('task copy, move, and delete use domestic task management APIs', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'task-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
+    return new Response(JSON.stringify({ isSuccess: true, data: true }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await taskCopy(['task-1', '--task-group', '8', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await taskMove(['task-1', '--task-group', '8', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await taskDelete(['task-1', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
+
+    assert.equal(lines.map((line) => parseJson(line).ok).every(Boolean), true);
+    assert.equal(seen[0].path, '/api/task/copyTask');
+    assert.equal(seen[0].init.method, 'POST');
+    assert.equal(seen[0].search.get('taskId'), 'task-1');
+    assert.equal(seen[0].search.get('groupId'), '8');
+    assert.equal(seen[0].search.get('returnId'), 'true');
+    assert.equal(seen[1].path, '/api/task/updateTaskGroup');
+    assert.equal(seen[1].init.method, 'POST');
+    assert.equal(seen[1].search.get('taskId'), 'task-1');
+    assert.equal(seen[1].search.get('groupId'), '8');
+    assert.equal(seen[2].path, '/api/task/deleteTask');
+    assert.equal(seen[2].init.method, 'POST');
+    assert.equal(seen[2].search.get('taskId'), 'task-1');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('template catalog commands use domestic simpletemplate APIs', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'template-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
+    if (parsed.pathname === '/api/simpletemplate/templateRegistration/templates') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          total: 1,
+          currentTotal: 1,
+          items: [{ id: 101, name: '电商模板', status: 1 }]
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/simpletemplate/templateRegistration/101/currentTemplate') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          templateRegistrationId: 101,
+          id: 202,
+          name: '电商模板',
+          version: 3,
+          currentTemplateVersion: 3,
+          status: 1
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await templateCommand('search', ['电商', '--page-size', '5', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await templateCommand('view', ['101', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await templateCommand('version', ['101', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    const searchPayload = parseJson(lines[0]);
+    const viewPayload = parseJson(lines[1]);
+    const versionPayload = parseJson(lines[2]);
+    assert.equal(searchPayload.ok, true);
+    assert.equal(searchPayload.data.templates[0].id, 101);
+    assert.equal(viewPayload.data.data.name, '电商模板');
+    assert.equal(versionPayload.data.templateVersionId, 202);
+    assert.equal(versionPayload.data.currentTemplateVersion, 3);
+    assert.equal(seen[0].path, '/api/simpletemplate/templateRegistration/templates');
+    assert.equal(seen[0].search.get('keyword'), '电商');
+    assert.equal(seen[0].search.get('pageSize'), '5');
+    assert.equal(seen[1].path, '/api/simpletemplate/templateRegistration/101/currentTemplate');
+    assert.equal(seen[2].path, '/api/simpletemplate/templateRegistration/101/currentTemplate');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('template-task create builds domestic TemplateConfig request body', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'template-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname });
+    if (parsed.pathname === '/api/simpletemplate/templateRegistration/101/currentTemplate') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          templateRegistrationId: 101,
+          id: 202,
+          name: '电商模板',
+          type: 1,
+          currentTemplateVersion: 3
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/TaskGroup/Default') {
+      return new Response(JSON.stringify({ isSuccess: true, data: 9 }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/tasks/templateMapping') {
+      return new Response(JSON.stringify({ isSuccess: true, data: { taskId: 'task-template-1' } }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    const code = await templateTaskCommand('create', [
+      '101',
+      '--name',
+      '新模板任务',
+      '--params',
+      '{"UIParameters":[{"Id":"q","Value":"phone"}]}',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]);
+    assert.equal(code, 0);
+    const payload = parseJson(lines[0]);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.data.taskId, 'task-template-1');
+    assert.equal(seen[0].path, '/api/simpletemplate/templateRegistration/101/currentTemplate');
+    assert.equal(seen[1].path, '/api/TaskGroup/Default');
+    assert.equal(seen[2].path, '/api/tasks/templateMapping');
+    const body = JSON.parse(seen[2].init.body);
+    assert.deepEqual(body, {
+      taskGroupId: 9,
+      taskId: '',
+      taskName: '新模板任务',
+      templateId: 101,
+      templateType: 1,
+      templateVersion: 3,
+      templateVersionId: 202,
+      templateRegistrationId: 101,
+      userInputParameters: '{"UIParameters":[{"Id":"q","Value":"phone"}]}',
+      urlSourceTaskId: '',
+      urlSourceTaskField: ''
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('template-task update requires confirmation and merges existing mapping', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'template-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname });
+    if (parsed.pathname === '/api/tasks/task-1/templateMapping' && init.method === 'GET') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          taskId: 'task-1',
+          templateId: 101,
+          templateType: 1,
+          templateVersion: 2,
+          templateVersionId: 202,
+          templateRegistrationId: 101,
+          userInputParameters: '{}',
+          urlSourceTaskId: '',
+          urlSourceTaskField: ''
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/task/getTask') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          taskId: 'task-1',
+          taskGroupId: 7,
+          taskName: '旧模板任务',
+          templateId: 101,
+          templateVersionId: 202
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/tasks/task-1/templateMapping' && init.method === 'POST') {
+      return new Response(JSON.stringify({ isSuccess: true, data: true }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await templateTaskCommand('update', ['task-1', '--params', '{"TemplateParameters":[{"ParamName":"q","Value":"phone"}]}', '--json']), 1);
+    assert.equal(parseJson(lines[0]).error.code, 'CONFIRMATION_REQUIRED');
+    assert.equal(await templateTaskCommand('update', [
+      'task-1',
+      '--name',
+      '新名称',
+      '--params',
+      '{"TemplateParameters":[{"ParamName":"q","Value":"phone"}]}',
+      '--yes',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 0);
+    const payload = parseJson(lines[1]);
+    assert.equal(payload.ok, true);
+    assert.equal(seen[0].path, '/api/tasks/task-1/templateMapping');
+    assert.equal(seen[0].init.method, 'GET');
+    assert.equal(seen[1].path, '/api/task/getTask');
+    assert.equal(seen[2].path, '/api/tasks/task-1/templateMapping');
+    assert.equal(seen[2].init.method, 'POST');
+    const body = JSON.parse(seen[2].init.body);
+    assert.equal(body.taskGroupId, 7);
+    assert.equal(body.taskName, '新名称');
+    assert.equal(body.templateId, 101);
+    assert.equal(body.templateVersionId, 202);
+    assert.equal(body.userInputParameters, '{"TemplateParameters":[{"ParamName":"q","Value":"phone"}]}');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('cloud schedule commands use domestic schedule APIs and guard mutations', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'schedule-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
+    if (parsed.pathname === '/api/task/getTaskSchedule') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          taskId: 'task-1',
+          scheduleType: 5,
+          scheduleDate: '1',
+          scheduleTime: '10',
+          scheduleMonth: '1',
+          status: 0
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/task/nextexecutiontime') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: { nextExecutionTimes: ['2026-07-07T10:00:00+08:00'] }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/task/updateSchedule') {
+      return new Response(JSON.stringify({ isSuccess: true, data: true }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/task/startScheduleWithNextTimeReturn') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: { taskId: 'task-1', isSuccess: true, nextTime: '2026-07-07T10:00:00+08:00' }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/task/stopSchedule') {
+      return new Response(JSON.stringify({ isSuccess: true, data: true }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await scheduleCommand('cloud', ['update', 'task-1', '--type', 'daily', '--date', '0,1,2,3,4,5,6', '--time', '10.00', '--json']), 1);
+    assert.equal(parseJson(lines[0]).error.code, 'CONFIRMATION_REQUIRED');
+    assert.equal(seen.length, 0);
+
+    assert.equal(await scheduleCommand('cloud', ['get', 'task-1', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await scheduleCommand('cloud', ['next', '--type', 'daily', '--date', '0,1,2,3,4,5,6', '--time', '10.00', '--timezone-offset', '480', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await scheduleCommand('cloud', ['update', 'task-1', '--type', 'daily', '--date', '0,1,2,3,4,5,6', '--time', '10.00', '--enabled', 'true', '--timezone-offset', '480', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await scheduleCommand('cloud', ['stop', 'task-1', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
+
+    assert.equal(parseJson(lines[1]).data.data.scheduleType, 5);
+    assert.deepEqual(parseJson(lines[2]).data.data.nextExecutionTimes, ['2026-07-07T10:00:00+08:00']);
+    assert.equal(parseJson(lines[3]).data.enabledAction.action, 'start');
+    assert.equal(parseJson(lines[4]).data.action, 'stop');
+    assert.equal(seen[0].path, '/api/task/getTaskSchedule');
+    assert.equal(seen[0].search.get('taskId'), 'task-1');
+    assert.equal(seen[1].path, '/api/task/nextexecutiontime');
+    assert.equal(seen[1].search.get('timezoneOffset'), '480');
+    assert.deepEqual(JSON.parse(seen[1].init.body), {
+      scheduleType: 6,
+      scheduleDate: '0,1,2,3,4,5,6',
+      scheduleTime: '10.00',
+      scheduleMonth: '1'
+    });
+    assert.equal(seen[2].path, '/api/task/getTaskSchedule');
+    assert.equal(seen[3].path, '/api/task/updateSchedule');
+    assert.equal(seen[3].search.get('timezoneOffset'), '480');
+    assert.deepEqual(JSON.parse(seen[3].init.body), {
+      taskId: 'task-1',
+      scheduleType: 6,
+      scheduleDate: '0,1,2,3,4,5,6',
+      scheduleTime: '10.00',
+      scheduleMonth: '1',
+      status: 0,
+      scheduleStatus: 0
+    });
+    assert.equal(seen[4].path, '/api/task/startScheduleWithNextTimeReturn');
+    assert.equal(seen[4].search.get('taskId'), 'task-1');
+    assert.equal(seen[5].path, '/api/task/stopSchedule');
+    assert.equal(seen[5].search.get('taskId'), 'task-1');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('local schedule is not exposed because it requires the desktop local scheduler', async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await scheduleCommand('local', ['get', 'task-local', '--json']), 1);
+    const payload = parseJson(lines[0]);
+    assert.equal(payload.ok, false);
+    assert.equal(payload.error.code, 'UNSUPPORTED_OPERATION');
+    assert.match(payload.error.message, /node-schedule/);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('user-config commands use domestic configType plus configName APIs', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'user-config-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
+    if (parsed.pathname === '/api/userConfig/getConfigByTypeAndName') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          configType: 20,
+          configName: 'cloud-drive',
+          config: '{"enabled":true}',
+          relativeId: 'task-1'
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/userConfig/getConfigpageByType') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          total: 1,
+          currentTotal: 1,
+          dataList: [{
+            configType: 20,
+            configName: 'cloud-drive',
+            config: '{"enabled":true}',
+            relativeId: 'task-1'
+          }]
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/userConfig/saveConfig') {
+      return new Response(JSON.stringify({ isSuccess: true, data: { isSuccess: true } }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/userConfig/removeConfig') {
+      return new Response(JSON.stringify({ isSuccess: true, data: { isSuccess: true } }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await userConfigCommand('set', ['cloud-drive', '--type', '20', '--config-json', '{"enabled":true}', '--json']), 1);
+    assert.equal(parseJson(lines[0]).error.code, 'CONFIRMATION_REQUIRED');
+    assert.equal(seen.length, 0);
+
+    assert.equal(await userConfigCommand('get', ['cloud-drive', '--type', '20', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await userConfigCommand('search', ['--type', '20', '--keyword', 'cloud', '--page-size', '5', '--relative-id', 'task-1', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await userConfigCommand('set', ['cloud-drive', '--type', '20', '--config-json', '{"enabled":true}', '--relative-id', 'task-1', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await userConfigCommand('delete', ['cloud-drive', '--type', '20', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
+
+    assert.equal(parseJson(lines[1]).data.data.configName, 'cloud-drive');
+    assert.equal(parseJson(lines[2]).data.configs[0].configName, 'cloud-drive');
+    assert.equal(parseJson(lines[3]).data.action, 'set');
+    assert.equal(parseJson(lines[4]).data.action, 'delete');
+    assert.equal(seen[0].path, '/api/userConfig/getConfigByTypeAndName');
+    assert.equal(seen[0].search.get('type'), '20');
+    assert.equal(seen[0].search.get('name'), 'cloud-drive');
+    assert.equal(seen[1].path, '/api/userConfig/getConfigpageByType');
+    assert.equal(seen[1].search.get('type'), '20');
+    assert.equal(seen[1].search.get('keyword'), 'cloud');
+    assert.equal(seen[1].search.get('pageSize'), '5');
+    assert.equal(seen[1].search.get('relativeId'), 'task-1');
+    assert.equal(seen[2].path, '/api/userConfig/saveConfig');
+    assert.deepEqual(JSON.parse(seen[2].init.body), {
+      configType: 20,
+      configName: 'cloud-drive',
+      config: '{"enabled":true}',
+      relativeId: 'task-1'
+    });
+    assert.equal(seen[3].path, '/api/userConfig/removeConfig');
+    assert.deepEqual(JSON.parse(seen[3].init.body), {
+      configType: '20',
+      configName: 'cloud-drive'
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('user-config search falls back to list-by-type when page endpoint fails', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'user-config-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
+    if (parsed.pathname === '/api/userConfig/getConfigpageByType') {
+      return new Response(JSON.stringify({ error: 'server error' }), {
+        status: 500,
+        statusText: 'Internal Server Error',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/userConfig/getConfigListByType') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: [
+          {
+            id: 'config-1',
+            name: 'CLI_SMOKE_TEST_USER_CONFIG_20260708',
+            type: 'CloudCommonConfig',
+            setting: '{"enabled":true}',
+            relativeId: ''
+          },
+          {
+            id: 'config-2',
+            name: 'other',
+            type: 'CloudCommonConfig',
+            setting: '{}',
+            relativeId: ''
+          }
+        ]
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await userConfigCommand('search', [
+      '--type',
+      '22',
+      '--keyword',
+      'CLI_SMOKE_TEST',
+      '--page-size',
+      '5',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 0);
+    const payload = parseJson(lines[0]);
+    assert.equal(payload.data.endpoint, '/api/userConfig/getConfigListByType');
+    assert.equal(payload.data.total, 1);
+    assert.equal(payload.data.configs[0].name, 'CLI_SMOKE_TEST_USER_CONFIG_20260708');
+    assert.equal(seen[0].path, '/api/userConfig/getConfigpageByType');
+    assert.equal(seen[1].path, '/api/userConfig/getConfigListByType');
+    assert.equal(seen[1].search.get('type'), '22');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('acquisition-settings is not exposed because the domestic API rejects the CLI context', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), init });
+    return new Response('{}', { status: 500, statusText: 'Unexpected' });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await acquisitionSettingsCommand('get', ['--json']), 1);
+    assert.equal(await acquisitionSettingsCommand('update', ['--template-daily', '10', '--yes', '--json']), 1);
+    assert.equal(parseJson(lines[0]).error.code, 'UNSUPPORTED_OPERATION');
+    assert.equal(parseJson(lines[1]).error.code, 'UNSUPPORTED_OPERATION');
+    assert.equal(seen.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+  }
+});
+
+test('task rename uses the domestic updateTaskName API after confirmation', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'task-key';
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), init });
+    return new Response(JSON.stringify({
+      isSuccess: true,
+      data: 1
+    }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    const code = await taskRename(['task-1', '--name', '新名称', '--yes', '--api-base-url', 'https://example.invalid', '--json']);
+    assert.equal(code, 0);
+    const payload = parseJson(lines[0]);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.taskId, 'task-1');
+    assert.equal(payload.data.name, '新名称');
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].url, 'https://example.invalid/api/task/updateTaskName');
+    assert.equal(seen[0].init.method, 'POST');
+    assert.deepEqual(JSON.parse(seen[0].init.body), {
+      taskId: 'task-1',
+      taskName: '新名称'
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('data count and preview read local run artifacts', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'octopus-data-preview-'));
+  const output = join(root, 'runs');
+  const runDir = join(output, 'run-1');
+  await mkdir(runDir, { recursive: true });
+  await writeFile(join(runDir, 'meta.json'), JSON.stringify({
+    runId: 'run-1',
+    lotId: 'lot-1',
+    taskId: 'task-local',
+    taskName: 'Local Task',
+    status: 'completed',
+    total: 0,
+    outputDir: output,
+    startedAt: '2026-01-01T00:00:00.000Z'
+  }));
+  await writeFile(join(runDir, 'rows.jsonl'), [
+    JSON.stringify({ id: 1 }),
+    JSON.stringify({ id: 2 }),
+    JSON.stringify({ id: 3 })
+  ].join('\n') + '\n');
+
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await dataCount(['task-local', '--output', output, '--json']), 0);
+    assert.equal(await dataPreview(['task-local', '--output', output, '--limit', '2', '--json']), 0);
+    const countPayload = parseJson(lines[0]);
+    const previewPayload = parseJson(lines[1]);
+    assert.equal(countPayload.ok, true);
+    assert.equal(countPayload.data.total, 3);
+    assert.equal(previewPayload.ok, true);
+    assert.equal(previewPayload.data.offset, 1);
+    assert.deepEqual(previewPayload.data.rows, [{ id: 2 }, { id: 3 }]);
+  } finally {
+    console.log = originalLog;
+  }
+});
+
+test('cloud data count and preview use count plus offset batch endpoints', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'data-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
+    if (parsed.pathname === '/api/taskData/getAllDataCount') {
+      return new Response(JSON.stringify({ isSuccess: true, data: 42 }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/taskData/getByOffset') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          offset: 42,
+          restTotal: 0,
+          total: 42,
+          rows: [{ id: 40 }, { id: 41 }, { id: 42 }]
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await dataCount(['task-cloud', '--source', 'cloud', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    assert.equal(await dataPreview(['task-cloud', '--source', 'cloud', '--api-base-url', 'https://example.invalid', '--limit', '3', '--json']), 0);
+    const countPayload = parseJson(lines[0]);
+    const previewPayload = parseJson(lines[1]);
+    assert.equal(countPayload.ok, true);
+    assert.equal(countPayload.data.total, 42);
+    assert.equal(previewPayload.ok, true);
+    assert.equal(previewPayload.data.offset, 39);
+    assert.deepEqual(previewPayload.data.rows, [{ id: 40 }, { id: 41 }, { id: 42 }]);
+    assert.equal(seen[0].path, '/api/taskData/getAllDataCount');
+    assert.equal(seen[1].path, '/api/taskData/getAllDataCount');
+    assert.equal(seen[2].path, '/api/taskData/getByOffset');
+    assert.equal(seen[2].search.get('offset'), '39');
+    assert.equal(seen[2].search.get('size'), '3');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('cloud unexported data export reads unexported rows without marking them exported', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'octopus-cloud-unexported-export-'));
+  const file = join(root, 'rows.json');
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'data-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
+    if (parsed.pathname === '/api/taskData/getUnexportedByOffset') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          offset: 2,
+          restTotal: 0,
+          total: 2,
+          rows: [{ id: 1 }, { id: 2 }]
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/task/getTask') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          taskId: 'task-cloud',
+          taskName: 'Cloud Task'
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    const code = await dataExport([
+      'task-cloud',
+      '--source',
+      'cloud',
+      '--unexported',
+      '--batch-size',
+      '2',
+      '--format',
+      'json',
+      '--file',
+      file,
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]);
+    assert.equal(code, 0);
+    const payload = parseJson(lines[0]);
+    assert.equal(payload.ok, true);
+    assert.equal(payload.data.unexported, true);
+    assert.equal(payload.data.rows, 2);
+    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), [{ id: 1 }, { id: 2 }]);
+    assert.equal(seen[0].path, '/api/taskData/getUnexportedByOffset');
+    assert.equal(seen[0].search.get('taskId'), 'task-cloud');
+    assert.equal(seen[0].search.get('offset'), '0');
+    assert.equal(seen[0].search.get('size'), '2');
+    assert.equal(seen[1].path, '/api/task/getTask');
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
 test('OAuth authorization code exchange maps token response', async () => {
   const seen = [];
   const fetchImpl = async (url, init) => {
@@ -1288,6 +2350,9 @@ test('usage failures honor --json envelopes', async () => {
 
   const unknown = await runCli(['nope', '--json']);
   assertJsonFailure(unknown, 'UNKNOWN_COMMAND');
+
+  const taskUrl = await runCli(['task-url', 'list', 'task-1', '--json']);
+  assertJsonFailure(taskUrl, 'UNKNOWN_COMMAND');
 });
 
 test('capabilities documents Linux arm64 local runtime unsupported', async () => {

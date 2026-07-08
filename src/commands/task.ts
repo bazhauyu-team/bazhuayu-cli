@@ -1,9 +1,11 @@
 import { firstPositionalArg, hasFlag, parseCsv, parsePositiveInt, valueAfter } from '../cli/args.js';
+import { requireExplicitYes } from '../cli/guardrails.js';
 import { printEnvelope, printUsageError } from '../cli/output.js';
-import { ApiRequestError, fetchTaskList } from '../runtime/api-client.js';
+import { ApiRequestError, copyTask, deleteTask, fetchTaskInfo, fetchTaskList, moveTask, renameTask } from '../runtime/api-client.js';
 import { API_KEY_ENV, resolveAuth } from '../runtime/auth.js';
 import { inspectTask, TaskDefinitionProvider } from '../runtime/task-definition-provider.js';
 import { EXIT_OK, EXIT_OPERATION_FAILED, EXIT_UNSUPPORTED_TASK } from '../types.js';
+import { printAuthRequired } from './auth.js';
 
 export async function taskList(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
@@ -26,7 +28,9 @@ export async function taskList(args: string[]): Promise<number> {
       taskGroup: valueAfter(args, '--task-group'),
       status: valueAfter(args, '--status'),
       taskType: valueAfter(args, '--task-type'),
-      isScheduled: valueAfter(args, '--scheduled')
+      isScheduled: valueAfter(args, '--scheduled'),
+      templateRegistrationId: valueAfter(args, '--template-registration-id') ?? valueAfter(args, '--template-id'),
+      templateVersionId: valueAfter(args, '--template-version-id')
     });
 
     if (json) {
@@ -57,6 +61,118 @@ export async function taskList(args: string[]): Promise<number> {
       }
     }
     return EXIT_OPERATION_FAILED;
+  }
+}
+
+export async function taskShow(args: string[]): Promise<number> {
+  const taskId = firstPositionalArg(args, ['--api-base-url']);
+  const json = hasFlag(args, '--json');
+  if (!taskId) {
+    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus task show <taskId> [--json]');
+  }
+
+  const auth = await resolveAuth();
+  if (!auth.authenticated || !auth.credential) return printAuthRequired(json);
+
+  try {
+    const task = await fetchTaskInfo({ auth: auth.credential, taskId, baseUrl: valueAfter(args, '--api-base-url') });
+    if (json) {
+      printEnvelope(true, { taskId, task });
+    } else {
+      console.log(JSON.stringify(task, null, 2));
+    }
+    return EXIT_OK;
+  } catch (error) {
+    return printApiError(json, '获取任务详情失败', error, 'TASK_SHOW_FAILED');
+  }
+}
+
+export async function taskCopy(args: string[]): Promise<number> {
+  const taskId = firstPositionalArg(args, ['--api-base-url', '--task-group', '--group-id']);
+  const json = hasFlag(args, '--json');
+  const groupId = valueAfter(args, '--task-group') ?? valueAfter(args, '--group-id');
+  if (!taskId) {
+    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus task copy <taskId> [--task-group <groupId>] [--json]');
+  }
+
+  const auth = await resolveAuth();
+  if (!auth.authenticated || !auth.credential) return printAuthRequired(json);
+
+  try {
+    const result = await copyTask({ auth: auth.credential, taskId, groupId, baseUrl: valueAfter(args, '--api-base-url') });
+    if (json) printEnvelope(true, { taskId, action: 'copy', ...result });
+    else console.log(`Copied task: ${taskId}`);
+    return EXIT_OK;
+  } catch (error) {
+    return printApiError(json, '复制任务失败', error, 'TASK_COPY_FAILED');
+  }
+}
+
+export async function taskRename(args: string[]): Promise<number> {
+  const taskId = firstPositionalArg(args, ['--api-base-url', '--name']);
+  const json = hasFlag(args, '--json');
+  const name = valueAfter(args, '--name');
+  if (!taskId || !name) {
+    return printUsageError(json, '错误: 缺少 taskId 或 --name', '用法: octopus task rename <taskId> --name <name> --yes [--json]');
+  }
+  const guard = requireExplicitYes(args, json, '重命名任务', `taskId=${taskId}`);
+  if (guard !== null) return guard;
+
+  const auth = await resolveAuth();
+  if (!auth.authenticated || !auth.credential) return printAuthRequired(json);
+
+  try {
+    const result = await renameTask({ auth: auth.credential, taskId, name, baseUrl: valueAfter(args, '--api-base-url') });
+    if (json) printEnvelope(true, { taskId, name, action: 'rename', ...result });
+    else console.log(`Renamed task: ${taskId}`);
+    return EXIT_OK;
+  } catch (error) {
+    return printApiError(json, '重命名任务失败', error, 'TASK_RENAME_FAILED');
+  }
+}
+
+export async function taskMove(args: string[]): Promise<number> {
+  const taskId = firstPositionalArg(args, ['--api-base-url', '--task-group', '--group-id']);
+  const json = hasFlag(args, '--json');
+  const groupId = valueAfter(args, '--task-group') ?? valueAfter(args, '--group-id');
+  if (!taskId || !groupId) {
+    return printUsageError(json, '错误: 缺少 taskId 或 --task-group', '用法: octopus task move <taskId> --task-group <groupId> --yes [--json]');
+  }
+  const guard = requireExplicitYes(args, json, '移动任务', `taskId=${taskId}, groupId=${groupId}`);
+  if (guard !== null) return guard;
+
+  const auth = await resolveAuth();
+  if (!auth.authenticated || !auth.credential) return printAuthRequired(json);
+
+  try {
+    const result = await moveTask({ auth: auth.credential, taskId, groupId, baseUrl: valueAfter(args, '--api-base-url') });
+    if (json) printEnvelope(true, { taskId, groupId, action: 'move', ...result });
+    else console.log(`Moved task: ${taskId} -> group ${groupId}`);
+    return EXIT_OK;
+  } catch (error) {
+    return printApiError(json, '移动任务失败', error, 'TASK_MOVE_FAILED');
+  }
+}
+
+export async function taskDelete(args: string[]): Promise<number> {
+  const taskId = firstPositionalArg(args, ['--api-base-url']);
+  const json = hasFlag(args, '--json');
+  if (!taskId) {
+    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus task delete <taskId> --yes [--json]');
+  }
+  const guard = requireExplicitYes(args, json, '删除任务', `taskId=${taskId}`);
+  if (guard !== null) return guard;
+
+  const auth = await resolveAuth();
+  if (!auth.authenticated || !auth.credential) return printAuthRequired(json);
+
+  try {
+    const result = await deleteTask({ auth: auth.credential, taskId, baseUrl: valueAfter(args, '--api-base-url') });
+    if (json) printEnvelope(true, { taskId, action: 'delete', ...result });
+    else console.log(`Deleted task: ${taskId}`);
+    return EXIT_OK;
+  } catch (error) {
+    return printApiError(json, '删除任务失败', error, 'TASK_DELETE_FAILED');
   }
 }
 
@@ -106,4 +222,18 @@ export async function taskInspect(command: string, args: string[]): Promise<numb
     }
     return EXIT_UNSUPPORTED_TASK;
   }
+}
+
+function printApiError(json: boolean, label: string, error: unknown, fallbackCode: string): number {
+  const code = error instanceof ApiRequestError ? error.code : fallbackCode;
+  const message = error instanceof Error ? error.message : String(error);
+  if (json) {
+    printEnvelope(false, undefined, code, message);
+  } else {
+    console.error(`${label}: ${message}`);
+    if (error instanceof ApiRequestError && error.body && code !== 'AUTH_INVALID') {
+      console.error(`响应: ${error.body}`);
+    }
+  }
+  return EXIT_OPERATION_FAILED;
 }

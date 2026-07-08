@@ -32,6 +32,8 @@ export interface TaskListOptions {
   status?: string | number;
   taskType?: string | number;
   isScheduled?: string | boolean;
+  templateRegistrationId?: string | number;
+  templateVersionId?: string | number;
 }
 
 export interface TaskListResult {
@@ -134,6 +136,110 @@ export interface TaskSaveResult {
   raw: unknown;
 }
 
+export interface TaskGroupInfo {
+  taskGroupId?: number;
+  taskGroupName?: string;
+  isDefault?: boolean;
+  [key: string]: unknown;
+}
+
+export interface TemplateSearchOptions {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  pageIndex?: number;
+  pageSize?: number;
+  keyword?: string;
+  kindId?: string | number;
+  free?: string | boolean;
+  sort?: string | number;
+  accountLimits?: string;
+  runOn?: string | number;
+  languages?: string | number;
+  templateLanguages?: string;
+  scope?: string | number;
+}
+
+export interface TemplateSearchResult {
+  baseUrl: string;
+  endpoint: string;
+  pageIndex: number;
+  pageSize: number;
+  total: number;
+  currentTotal: number;
+  templates: unknown[];
+  raw: unknown;
+}
+
+export interface TemplateTaskMappingBody {
+  taskGroupId?: string | number;
+  taskId?: string;
+  taskName?: string;
+  templateId?: string | number;
+  templateType?: string | number;
+  templateVersion?: string | number;
+  templateVersionId?: string | number;
+  templateRegistrationId?: string | number;
+  userInputParameters?: string;
+  urlSourceTaskId?: string;
+  urlSourceTaskField?: string;
+  [key: string]: unknown;
+}
+
+export interface TaskScheduleBody {
+  nextExecuteTime?: string | number;
+  effectiveFrom?: string | number;
+  effectiveTo?: string | number;
+  scheduleTime?: string | number;
+  scheduleDate?: string | number;
+  scheduleMonth?: string | number;
+  scheduleType?: string | number;
+  taskId?: string;
+  status?: string | number;
+  taskStatus?: string | number;
+  scheduleStatus?: string | number;
+  isSpeedMode?: boolean;
+  isDownloadEnabled?: boolean;
+  isAutoClose?: boolean;
+  [key: string]: unknown;
+}
+
+export interface UserConfigInfo {
+  userId?: string;
+  configType?: string | number;
+  configName?: string;
+  config?: string;
+  relativeId?: string;
+  id?: string;
+  [key: string]: unknown;
+}
+
+export interface UserConfigSearchOptions {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  configType: string | number;
+  keyword?: string;
+  pageIndex?: number;
+  pageSize?: number;
+  relativeId?: string;
+  sortBy?: string;
+  sortType?: string;
+  dbType?: string;
+  isOpen?: string | boolean;
+}
+
+export interface UserConfigSearchResult {
+  baseUrl: string;
+  endpoint: string;
+  pageIndex: number;
+  pageSize: number;
+  total: number;
+  currentTotal: number;
+  configs: UserConfigInfo[];
+  raw: unknown;
+}
+
 export class ApiRequestError extends Error {
   constructor(
     message: string,
@@ -170,6 +276,8 @@ export async function fetchTaskList(options: TaskListOptions): Promise<TaskListR
     taskIds: options.taskIds?.join(',') ?? '',
     taskType: normalizeFilter(options.taskType, ''),
     isScheduled: normalizeScheduled(options.isScheduled),
+    templateId: normalizeFilter(options.templateRegistrationId, ''),
+    templateVersionId: normalizeFilter(options.templateVersionId, ''),
     userId: '',
     extractCountRange: '',
     endExecuteTimeRange: '',
@@ -406,6 +514,220 @@ export async function fetchUserDefaultTaskGroupId(options: { apiKey?: string; au
   return numberValue(result.data) ?? numberValue(getRecord(result.data)?.data);
 }
 
+export async function fetchTaskGroups(options: { apiKey?: string; auth?: AuthCredential; baseUrl?: string; userId?: string }): Promise<ApiResult<TaskGroupInfo[]>> {
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/taskGroup/getTaskGroupList',
+    query: { userId: options.userId ?? '' },
+    method: 'GET'
+  });
+  return {
+    ...result,
+    data: normalizeArray<TaskGroupInfo>(result.data)
+  };
+}
+
+export async function createTaskGroup(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  name: string;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/TaskGroup',
+    method: 'POST',
+    body: {
+      taskGroupId: '',
+      taskGroupName: options.name
+    }
+  });
+}
+
+export async function updateTaskGroup(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  groupId: string | number;
+  name: string;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/taskGroup',
+    method: 'PUT',
+    body: {
+      taskGroupId: options.groupId,
+      taskGroupName: options.name
+    }
+  });
+}
+
+export async function deleteTaskGroup(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  groupId: string | number;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/taskGroup',
+    query: { taskGroupId: options.groupId },
+    method: 'DELETE'
+  });
+}
+
+export async function setDefaultTaskGroup(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  groupId: string | number;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/TaskGroup/Default',
+    query: { groupId: options.groupId },
+    method: 'PUT'
+  });
+}
+
+export async function fetchTemplateList(options: TemplateSearchOptions): Promise<TemplateSearchResult> {
+  const pageIndex = positiveInt(options.pageIndex, 1);
+  const pageSize = positiveInt(options.pageSize, 20);
+  const endpoint = '/api/simpletemplate/templateRegistration/templates';
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint,
+    query: {
+      pageIndex,
+      pageSize,
+      keyword: options.keyword ?? '',
+      kindId: options.kindId,
+      free: options.free,
+      sort: options.sort,
+      accountLimits: options.accountLimits,
+      runOn: options.runOn,
+      languages: options.languages,
+      templateLanguages: options.templateLanguages,
+      scope: options.scope
+    },
+    method: 'GET'
+  });
+  const data = getRecord(result.data);
+  const templates = normalizeArray<unknown>(result.data);
+  return {
+    baseUrl: result.baseUrl,
+    endpoint: result.endpoint,
+    pageIndex,
+    pageSize,
+    total: numberValue(data?.total) ?? templates.length,
+    currentTotal: numberValue(data?.currentTotal) ?? templates.length,
+    templates,
+    raw: result.raw
+  };
+}
+
+export async function fetchTemplateDetail(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  templateRegistrationId: string | number;
+}): Promise<ApiResult<Record<string, unknown>>> {
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: `/api/simpletemplate/templateRegistration/${encodeURIComponent(String(options.templateRegistrationId))}/currentTemplate`,
+    method: 'GET'
+  });
+  return {
+    ...result,
+    data: getRecord(result.data) ?? {}
+  };
+}
+
+export async function fetchTemplateInfo(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  templateId: string | number;
+}): Promise<ApiResult<Record<string, unknown>>> {
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: `/api/simpletemplate/templateRegistration/template/${encodeURIComponent(String(options.templateId))}`,
+    method: 'GET'
+  });
+  return {
+    ...result,
+    data: getRecord(result.data) ?? {}
+  };
+}
+
+export async function fetchTemplateTaskMapping(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  taskId: string;
+}): Promise<ApiResult<Record<string, unknown>>> {
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: `/api/tasks/${encodeURIComponent(options.taskId)}/templateMapping`,
+    method: 'GET'
+  });
+  return {
+    ...result,
+    data: getRecord(result.data) ?? {}
+  };
+}
+
+export async function createTemplateTaskMapping(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  body: TemplateTaskMappingBody;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/tasks/templateMapping',
+    method: 'POST',
+    body: options.body
+  });
+}
+
+export async function updateTemplateTaskMapping(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  taskId: string;
+  body: TemplateTaskMappingBody;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: `/api/tasks/${encodeURIComponent(options.taskId)}/templateMapping`,
+    method: 'POST',
+    body: options.body
+  });
+}
+
 export async function saveTaskInfo(options: {
   apiKey?: string;
   auth?: AuthCredential;
@@ -453,6 +775,333 @@ export async function stopCloudTask(options: { apiKey?: string; auth?: AuthCrede
   });
 }
 
+export async function fetchCloudSchedule(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  taskId: string;
+  baseUrl?: string;
+}): Promise<ApiResult<Record<string, unknown>>> {
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/task/getTaskSchedule',
+    query: { taskId: options.taskId },
+    method: 'GET'
+  });
+  return {
+    ...result,
+    data: getRecord(result.data) ?? {}
+  };
+}
+
+export async function updateCloudSchedule(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  body: TaskScheduleBody;
+  timezoneOffset?: string | number;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/task/updateSchedule',
+    query: { timezoneOffset: options.timezoneOffset },
+    method: 'POST',
+    body: options.body
+  });
+}
+
+export async function startCloudSchedule(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  taskId: string;
+  baseUrl?: string;
+}): Promise<ApiResult<Record<string, unknown>>> {
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/task/startScheduleWithNextTimeReturn',
+    query: { taskId: options.taskId },
+    method: 'POST'
+  });
+  return {
+    ...result,
+    data: getRecord(result.data) ?? {}
+  };
+}
+
+export async function stopCloudSchedule(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  taskId: string;
+  baseUrl?: string;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/task/stopSchedule',
+    query: { taskId: options.taskId },
+    method: 'POST'
+  });
+}
+
+export async function fetchCloudScheduleNextTimes(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  body: TaskScheduleBody;
+  timezoneOffset?: string | number;
+}): Promise<ApiResult<Record<string, unknown>>> {
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/task/nextexecutiontime',
+    query: { timezoneOffset: options.timezoneOffset },
+    method: 'POST',
+    body: options.body
+  });
+  return {
+    ...result,
+    data: getRecord(result.data) ?? {}
+  };
+}
+
+export async function fetchUserConfig(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  configType: string | number;
+  configName: string;
+}): Promise<ApiResult<UserConfigInfo>> {
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/userConfig/getConfigByTypeAndName',
+    query: {
+      type: options.configType,
+      name: options.configName
+    },
+    method: 'GET'
+  });
+  return {
+    ...result,
+    data: getRecord(result.data) ?? {}
+  };
+}
+
+export async function searchUserConfigs(options: UserConfigSearchOptions): Promise<UserConfigSearchResult> {
+  const pageIndex = positiveInt(options.pageIndex, 1);
+  const pageSize = positiveInt(options.pageSize, 20);
+  const endpoint = '/api/userConfig/getConfigpageByType';
+  let result: ApiResult<unknown>;
+  try {
+    result = await apiResult<unknown>({
+      apiKey: options.apiKey,
+      auth: options.auth,
+      baseUrl: options.baseUrl,
+      endpoint,
+      query: {
+        type: options.configType,
+        pageIndex,
+        keyword: options.keyword ?? '',
+        pageSize,
+        relativeId: options.relativeId ?? '',
+        sortBy: options.sortBy ?? '',
+        sortType: options.sortType ?? '',
+        dbType: options.dbType ?? '',
+        isOpen: options.isOpen
+      },
+      method: 'GET'
+    });
+  } catch (error) {
+    if (!(error instanceof ApiRequestError) || !error.status || error.status < 500) throw error;
+    return searchUserConfigsByListFallback(options, pageIndex, pageSize);
+  }
+  return normalizeUserConfigSearchResult(result, endpoint, pageIndex, pageSize);
+}
+
+async function searchUserConfigsByListFallback(
+  options: UserConfigSearchOptions,
+  pageIndex: number,
+  pageSize: number
+): Promise<UserConfigSearchResult> {
+  const endpoint = '/api/userConfig/getConfigListByType';
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint,
+    query: {
+      type: options.configType,
+      relativeType: options.dbType ?? ''
+    },
+    method: 'GET'
+  });
+  const keyword = (options.keyword ?? '').trim().toLowerCase();
+  const allConfigs = normalizeArray<UserConfigInfo>(result.data)
+    .filter((config) => !options.relativeId || String(config.relativeId ?? '') === options.relativeId)
+    .filter((config) => !keyword || userConfigMatchesKeyword(config, keyword));
+  const offset = (pageIndex - 1) * pageSize;
+  const configs = allConfigs.slice(offset, offset + pageSize);
+  return {
+    baseUrl: result.baseUrl,
+    endpoint,
+    pageIndex,
+    pageSize,
+    total: allConfigs.length,
+    currentTotal: configs.length,
+    configs,
+    raw: result.raw
+  };
+}
+
+function normalizeUserConfigSearchResult(result: ApiResult<unknown>, endpoint: string, pageIndex: number, pageSize: number): UserConfigSearchResult {
+  const data = getRecord(result.data);
+  const configs = normalizeArray<UserConfigInfo>(result.data);
+  return {
+    baseUrl: result.baseUrl,
+    endpoint,
+    pageIndex,
+    pageSize,
+    total: numberValue(data?.total) ?? configs.length,
+    currentTotal: numberValue(data?.currentTotal) ?? configs.length,
+    configs,
+    raw: result.raw
+  };
+}
+
+function userConfigMatchesKeyword(config: UserConfigInfo, keyword: string): boolean {
+  const record = config as Record<string, unknown>;
+  const values = [
+    record.configName,
+    record.name,
+    record.id,
+    record.relativeId,
+    record.config,
+    record.setting
+  ];
+  return values.some((value) => String(value ?? '').toLowerCase().includes(keyword));
+}
+
+export async function saveUserConfig(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  body: UserConfigInfo;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/userConfig/saveConfig',
+    method: 'POST',
+    body: options.body
+  });
+}
+
+export async function removeUserConfig(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  baseUrl?: string;
+  configType: string | number;
+  configName: string;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/userConfig/removeConfig',
+    method: 'POST',
+    body: {
+      configType: options.configType,
+      configName: options.configName
+    }
+  });
+}
+
+export async function copyTask(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  taskId: string;
+  groupId?: string;
+  baseUrl?: string;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/task/copyTask',
+    query: {
+      taskId: options.taskId,
+      groupId: options.groupId ?? '',
+      returnId: true
+    },
+    method: 'POST'
+  });
+}
+
+export async function renameTask(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  taskId: string;
+  name: string;
+  baseUrl?: string;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/task/updateTaskName',
+    method: 'POST',
+    body: {
+      taskId: options.taskId,
+      taskName: options.name
+    }
+  });
+}
+
+export async function moveTask(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  taskId: string;
+  groupId: string | number;
+  baseUrl?: string;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/task/updateTaskGroup',
+    query: {
+      taskId: options.taskId,
+      groupId: options.groupId
+    },
+    method: 'POST'
+  });
+}
+
+export async function deleteTask(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  taskId: string;
+  baseUrl?: string;
+}): Promise<ApiResult> {
+  return apiResult({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/task/deleteTask',
+    query: { taskId: options.taskId },
+    method: 'POST'
+  });
+}
+
 export async function fetchCloudStatus(options: { apiKey?: string; auth?: AuthCredential; taskId: string; baseUrl?: string }): Promise<ApiResult> {
   return apiResult({
     apiKey: options.apiKey,
@@ -485,10 +1134,11 @@ export async function fetchCloudDataBatch(options: {
   offset: number;
   size: number;
   baseUrl?: string;
+  unexported?: boolean;
 }): Promise<ApiResult<Record<string, unknown>>> {
   const endpoint = options.lotId
     ? `/api/taskData/${encodeURIComponent(options.taskId)}/lot/${encodeURIComponent(options.lotId)}/exportData`
-    : '/api/taskData/getByOffset';
+    : options.unexported ? '/api/taskData/getUnexportedByOffset' : '/api/taskData/getByOffset';
   return apiResult<Record<string, unknown>>({
     apiKey: options.apiKey,
     auth: options.auth,
@@ -503,13 +1153,53 @@ export async function fetchCloudDataBatch(options: {
   });
 }
 
+export async function fetchCloudDataCount(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  taskId: string;
+  baseUrl?: string;
+}): Promise<ApiResult<number>> {
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/taskData/getAllDataCount',
+    query: { taskId: options.taskId },
+    method: 'GET'
+  });
+  return {
+    ...result,
+    data: countValue(result.data)
+  };
+}
+
+export async function fetchCloudUnexportedDataCount(options: {
+  apiKey?: string;
+  auth?: AuthCredential;
+  taskId: string;
+  baseUrl?: string;
+}): Promise<ApiResult<number>> {
+  const result = await apiResult<unknown>({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    baseUrl: options.baseUrl,
+    endpoint: '/api/taskData/getNotExportDataCount',
+    query: { taskId: options.taskId },
+    method: 'GET'
+  });
+  return {
+    ...result,
+    data: countValue(result.data)
+  };
+}
+
 async function apiResult<T = unknown>(options: {
   apiKey?: string;
   auth?: AuthCredential;
   baseUrl?: string;
   endpoint: string;
-  query?: Record<string, string>;
-  method: 'GET' | 'POST';
+  query?: QueryParams;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
 }): Promise<ApiResult<T>> {
   const { payload, baseUrl } = await apiRequest(options);
@@ -526,14 +1216,14 @@ async function apiRequest(options: {
   auth?: AuthCredential;
   baseUrl?: string;
   endpoint: string;
-  query?: Record<string, string>;
-  method: 'GET' | 'POST';
+  query?: QueryParams;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
 }): Promise<{ payload: unknown; baseUrl: string }> {
   const baseUrl = await resolveApiBaseUrl(options.baseUrl);
   const url = new URL(options.endpoint, `${baseUrl}/`);
   for (const [key, value] of Object.entries(options.query ?? {})) {
-    url.searchParams.set(key, value);
+    if (value !== undefined) url.searchParams.set(key, String(value));
   }
 
   const response = await fetch(url, {
@@ -588,6 +1278,27 @@ function getRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+type QueryParams = Record<string, string | number | boolean | undefined>;
+
+function normalizeArray<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+  const record = getRecord(value);
+  if (Array.isArray(record?.dataList)) return record.dataList as T[];
+  if (Array.isArray(record?.items)) return record.items as T[];
+  if (Array.isArray(record?.data)) return record.data as T[];
+  return [];
+}
+
+function countValue(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const record = getRecord(value);
+  return numberValue(record?.totalCount)
+    ?? numberValue(record?.notExportedCount)
+    ?? numberValue(record?.count)
+    ?? numberValue(record?.total)
+    ?? 0;
+}
+
 function getAppError(payload: unknown): string {
   const record = getRecord(payload);
   if (!record || record.isSuccess !== false) return '';
@@ -607,6 +1318,10 @@ function numberValue(value: unknown): number | undefined {
     if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
 }
 
 function trimBody(body: string): string {

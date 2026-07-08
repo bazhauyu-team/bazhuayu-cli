@@ -60,30 +60,130 @@ Purpose:
   Hidden internal command for switching API environment.
 `,
     task: `Usage:
-  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--json]
+  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
+  octopus task show <taskId> [--json]
+  octopus task copy <taskId> [--task-group <groupId>] [--json]
+  octopus task rename <taskId> --name <name> --yes [--json]
+  octopus task move <taskId> --task-group <groupId> --yes [--json]
+  octopus task delete <taskId> --yes [--json]
   octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
   octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+
+Notes:
+  rename/move/delete modify remote tasks and require --yes.
 `,
     'task list': `Usage:
-  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--json]
+  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
 
 Options:
-  --page <n>          Page number to fetch. Defaults to 1.
-  --page-size <n>     Number of tasks per page. Defaults to 20.
-  --limit <n>         Alias for --page-size.
-  --keyword <text>    Filter tasks by keyword.
-  --json              Print a machine-readable JSON envelope.
+  --page <n>                    Page number to fetch. Defaults to 1.
+  --page-size <n>               Number of tasks per page. Defaults to 20.
+  --limit <n>                   Alias for --page-size.
+  --keyword <text>              Filter tasks by keyword.
+  --task-group <groupId>        Filter tasks by task group.
+  --status <value>              Filter tasks by platform status.
+  --task-type <value>           Filter tasks by platform task type.
+  --scheduled <true|false>      Filter scheduled or unscheduled tasks.
+  --template-id <id>            Filter tasks created from a template registration.
+  --template-registration-id <id>
+                                Alias for --template-id.
+  --template-version-id <id>    Filter tasks by template version.
+  --json                        Print a machine-readable JSON envelope.
 
 Examples:
   octopus task list
   octopus task list --page 2 --page-size 20
   octopus task list --keyword news --page 2 --page-size 10
+  octopus task list --template-id template-123 --json
 `,
     'task inspect': `Usage:
   octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
 `,
     'task validate': `Usage:
   octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+`,
+    'task-group': `Usage:
+  octopus task-group list [--json]
+  octopus task-group create <name> [--json]
+  octopus task-group update <groupId> --name <name> --yes [--json]
+  octopus task-group delete <groupId> --yes [--json]
+  octopus task-group set-default <groupId> --yes [--json]
+
+Notes:
+  update/delete/set-default modify remote task group state and require --yes.
+`,
+    template: `Usage:
+  octopus template search <keyword> [--page <n>] [--page-size <n>] [--json]
+  octopus template view <templateRegistrationId> [--json]
+  octopus template version <templateRegistrationId> [--json]
+
+Notes:
+  Domestic template APIs use templateRegistrationId for catalog detail lookup.
+`,
+    'template search': `Usage:
+  octopus template search <keyword> [--page <n>] [--page-size <n>] [--kind-id <id>] [--free true|false] [--run-on <n>] [--scope <n>] [--json]
+`,
+    'template view': `Usage:
+  octopus template view <templateRegistrationId> [--json]
+`,
+    'template version': `Usage:
+  octopus template version <templateRegistrationId> [--json]
+`,
+    'template-task': `Usage:
+  octopus template-task create <templateRegistrationId> [--name <taskName>] [--task-group <groupId>] [--params <json>|--params-file <file>] [--json]
+  octopus template-task update <taskId> [--params <json>|--params-file <file>] --yes [--json]
+
+Notes:
+  --params must be the domestic template userInputParameters JSON object.
+  update modifies remote template task mapping and requires --yes.
+`,
+    schedule: `Usage:
+  octopus schedule cloud get <taskId> [--json]
+  octopus schedule cloud update <taskId> --type <type> --date <value> --time <value> [--month <value>] [--enabled true|false] --yes [--json]
+  octopus schedule cloud start <taskId> --yes [--json]
+  octopus schedule cloud stop <taskId> --yes [--json]
+  octopus schedule cloud next --type <type> --date <value> --time <value> [--month <value>] [--json]
+
+Schedule types:
+  1=date/once, 2=weekly, 3=monthly, 4=interval-minute, 5=every-hour, 6=daily.
+
+Notes:
+  cloud update/start/stop modify remote schedule state and require --yes.
+  cloud next uses the domestic nextexecutiontime API and returns nextExecutionTimes.
+  Local schedule is not exposed in the CLI because it depends on the desktop client's
+  local SQLite/node-schedule queue.
+`,
+    'schedule cloud': `Usage:
+  octopus schedule cloud get <taskId> [--json]
+  octopus schedule cloud update <taskId> --type <type> --date <value> --time <value> [--month <value>] [--enabled true|false] --yes [--json]
+  octopus schedule cloud start <taskId> --yes [--json]
+  octopus schedule cloud stop <taskId> --yes [--json]
+  octopus schedule cloud next --type <type> --date <value> --time <value> [--month <value>] [--json]
+
+Schedule types:
+  1=date/once, 2=weekly, 3=monthly, 4=interval-minute, 5=every-hour, 6=daily.
+`,
+    'user-config': `Usage:
+  octopus user-config get <configName> --type <configType> [--json]
+  octopus user-config search --type <configType> [--keyword <text>] [--page <n>] [--page-size <n>] [--relative-id <id>] [--json]
+  octopus user-config set <configName> --type <configType> (--config <text>|--config-json <json>|--config-file <file>) [--relative-id <id>] --yes [--json]
+  octopus user-config delete <configName> --type <configType> --yes [--json]
+
+Notes:
+  Domestic user configs are keyed by configType + configName, not the demo CLI key/value API.
+  config is stored as a string. Its serialization format depends on configType.
+  set/delete modify remote user configuration and require --yes.
+`,
+    'user-config search': `Usage:
+  octopus user-config search --type <configType> [--keyword <text>] [--page <n>] [--page-size <n>] [--relative-id <id>] [--json]
+`,
+    'acquisition-settings': `Unsupported:
+  acquisition-settings is not exposed as a supported CLI capability.
+
+Notes:
+  The domestic desktop client has account-level acquisition spending limit APIs,
+  but they return 405 in the current CLI auth/API context. Use the desktop client
+  for acquisition spending limits.
 `,
     run: `Usage:
   octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
@@ -209,18 +309,31 @@ Notes:
 `,
     data: `Usage:
   octopus data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
-  octopus data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]
+  octopus data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
+  octopus data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
+  octopus data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
 
 Defaults:
   --source local
+  data preview returns the latest rows unless --offset is provided.
+  --unexported reads cloud unexported rows but does not mark them as exported.
   --format xlsx, unless inferred from --file extension
   --file task-name.<format>, with Windows-style duplicate suffixes
 `,
     'data history': `Usage:
   octopus data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
 `,
+    'data count': `Usage:
+  octopus data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
+`,
+    'data preview': `Usage:
+  octopus data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
+`,
     'data export': `Usage:
-  octopus data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]
+  octopus data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
+
+Notes:
+  --unexported reads cloud unexported rows but does not mark them as exported.
 `,
     runs: `Usage:
   octopus runs list [--output <dir>] [--json]
@@ -261,9 +374,19 @@ Usage:
   octopus auth status [--json]
   octopus auth info [--json]
   octopus auth logout [--json]
-  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--json]
+  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
+  octopus task show <taskId> [--json]
+  octopus task copy <taskId> [--task-group <groupId>] [--json]
+  octopus task rename <taskId> --name <name> --yes [--json]
+  octopus task move <taskId> --task-group <groupId> --yes [--json]
+  octopus task delete <taskId> --yes [--json]
   octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
   octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+  octopus task-group list/create/update/delete/set-default [--json]
+  octopus template search/view/version [--json]
+  octopus template-task create/update [--json]
+  octopus schedule cloud get/update/start/stop/next [--json]
+  octopus user-config get/search/set/delete [--json]
   octopus detect URL --prepare-agent --json --goal <text> --output context.json
   octopus detect --preview-agent-plan plan.json --agent-context context.json [--json]
   octopus detect --apply-agent-plan plan.json --agent-context context.json --output task.json
@@ -283,7 +406,9 @@ Usage:
   octopus local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]
   octopus local cleanup [--json]
   octopus data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
-  octopus data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]
+  octopus data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
+  octopus data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
+  octopus data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
 
 Task file format:
   {

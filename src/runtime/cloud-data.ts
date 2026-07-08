@@ -18,6 +18,26 @@ export interface CloudDataExportOptions {
   lotId?: string;
   baseUrl?: string;
   batchSize?: number;
+  unexported?: boolean;
+}
+
+export interface CloudRowsBatchOptions extends CloudDataExportOptions {
+  offset?: number;
+  size?: number;
+  unexported?: boolean;
+}
+
+export interface CloudRowsBatchResult {
+  taskId: string;
+  lotId?: string;
+  offset: number;
+  size: number;
+  nextOffset: number;
+  restTotal: number;
+  total: number;
+  duplicate: number;
+  rows: Record<string, unknown>[];
+  raw: unknown;
 }
 
 export async function fetchCloudRows(options: CloudDataExportOptions): Promise<Record<string, unknown>[]> {
@@ -33,22 +53,65 @@ export async function fetchCloudRows(options: CloudDataExportOptions): Promise<R
       lotId: options.lotId,
       baseUrl: options.baseUrl,
       offset,
-      size
+      size,
+      unexported: options.unexported
     });
     const data = toRecord(result.data);
-    const files = Array.isArray(data.files) ? data.files : [];
-    for (const file of files) {
-      const row = decodeCloudDataFile(file);
-      if (row) rows.push(row);
-    }
+    const batchRows = decodeCloudRows(result.data);
+    rows.push(...batchRows);
 
     const nextOffset = toNumber(data.offset);
     const restTotal = toNumber(data.restTotal);
-    if (!files.length || restTotal <= 0 || nextOffset <= offset) break;
+    if (!batchRows.length || restTotal <= 0 || nextOffset <= offset) break;
     offset = nextOffset;
   }
 
   return rows;
+}
+
+export async function fetchCloudRowsBatch(options: CloudRowsBatchOptions): Promise<CloudRowsBatchResult> {
+  const offset = Math.max(0, Math.floor(options.offset ?? 0));
+  const size = Math.max(1, Math.floor(options.size ?? options.batchSize ?? 20));
+  const result = await fetchCloudDataBatch({
+    apiKey: options.apiKey,
+    auth: options.auth,
+    taskId: options.taskId,
+    lotId: options.lotId,
+    baseUrl: options.baseUrl,
+    offset,
+    size,
+    unexported: options.unexported
+  });
+  const data = toRecord(result.data);
+  return {
+    taskId: options.taskId,
+    lotId: options.lotId,
+    offset,
+    size,
+    nextOffset: toNumber(data.offset),
+    restTotal: toNumber(data.restTotal),
+    total: toNumber(data.total),
+    duplicate: toNumber(data.duplicate),
+    rows: decodeCloudRows(result.data),
+    raw: result.raw
+  };
+}
+
+export function decodeCloudRows(data: unknown): Record<string, unknown>[] {
+  if (Array.isArray(data)) return data.map((item) => toRecord(item));
+  const record = toRecord(data);
+  const files = Array.isArray(record.files) ? record.files : [];
+  if (files.length) {
+    return files.flatMap((file) => {
+      const row = decodeCloudDataFile(file);
+      return row ? [row] : [];
+    });
+  }
+  for (const key of ['rows', 'dataList', 'items', 'data']) {
+    const value = record[key];
+    if (Array.isArray(value)) return value.map((item) => toRecord(item));
+  }
+  return [];
 }
 
 function decodeCloudDataFile(file: unknown): Record<string, unknown> | null {

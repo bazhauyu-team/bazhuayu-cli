@@ -23,14 +23,18 @@ import { printUsageError } from './cli/output.js';
 import { authCommand, ensureAuthenticated } from './commands/auth.js';
 import { capabilitiesCommand } from './commands/capabilities.js';
 import { cloudCommand } from './commands/cloud.js';
-import { dataExport, dataHistory } from './commands/data.js';
+import { dataCount, dataExport, dataHistory, dataPreview } from './commands/data.js';
 import { doctorCommand } from './commands/doctor.js';
 import { hiddenEnvCommand } from './commands/env.js';
 import { localCommand } from './commands/local.js';
 import { runTask } from './commands/run.js';
 import { detectCommand, detectUrlCommand } from './commands/detect.js';
 import { runsCleanup, runsControl, runsData, runsList, runsLogs, runsStatus } from './commands/runs.js';
-import { taskInspect, taskList } from './commands/task.js';
+import { scheduleCommand } from './commands/schedule.js';
+import { taskCopy, taskDelete, taskInspect, taskList, taskMove, taskRename, taskShow } from './commands/task.js';
+import { taskGroupCommand } from './commands/task-group.js';
+import { templateCommand, templateTaskCommand } from './commands/template.js';
+import { acquisitionSettingsCommand, userConfigCommand } from './commands/user-config.js';
 import { maybePrintUpdateNotice } from './runtime/update-check.js';
 import {
   EXIT_OK,
@@ -125,6 +129,14 @@ async function main(argv: string[]): Promise<number> {
     return dataHistory(rest);
   }
 
+  if (command === 'data' && subcommand === 'count') {
+    return dataCount(rest);
+  }
+
+  if (command === 'data' && subcommand === 'preview') {
+    return dataPreview(rest);
+  }
+
   if (command === 'data' && subcommand === 'export') {
     return dataExport(rest);
   }
@@ -135,6 +147,50 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === 'task' && (subcommand === 'inspect' || subcommand === 'validate')) {
     return taskInspect(subcommand, rest);
+  }
+
+  if (command === 'task' && subcommand === 'show') {
+    return taskShow(rest);
+  }
+
+  if (command === 'task' && subcommand === 'copy') {
+    return taskCopy(rest);
+  }
+
+  if (command === 'task' && subcommand === 'rename') {
+    return taskRename(rest);
+  }
+
+  if (command === 'task' && subcommand === 'move') {
+    return taskMove(rest);
+  }
+
+  if (command === 'task' && subcommand === 'delete') {
+    return taskDelete(rest);
+  }
+
+  if (command === 'task-group') {
+    return taskGroupCommand(subcommand, rest);
+  }
+
+  if (command === 'template') {
+    return templateCommand(subcommand, rest);
+  }
+
+  if (command === 'template-task') {
+    return templateTaskCommand(subcommand, rest);
+  }
+
+  if (command === 'schedule') {
+    return scheduleCommand(subcommand, rest);
+  }
+
+  if (command === 'user-config') {
+    return userConfigCommand(subcommand, rest);
+  }
+
+  if (command === 'acquisition-settings') {
+    return acquisitionSettingsCommand(subcommand, rest);
   }
 
   if (command === 'run') {
@@ -195,7 +251,15 @@ function requiresAuthentication(argv: string[]): boolean {
   if (command === 'detect' && hasFlagWithValue(argv, '--preview-agent-plan')) {
     return false;
   }
+  if (command === 'schedule' && argv[1] === 'local') {
+    return false;
+  }
   return command === 'task'
+    || command === 'task-group'
+    || command === 'template'
+    || command === 'template-task'
+    || command === 'schedule'
+    || command === 'user-config'
     || command === 'run'
     || command === 'run-url'
     || command === 'detect'
