@@ -388,8 +388,12 @@ test('capabilities is available before authentication and documents API key cont
   assert.ok(payload.data.commands.find((item) => item.command === 'data count/preview <taskId>')?.authRequired);
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('CONFIRMATION_REQUIRED'));
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('TEMPLATE_TASK_CREATE_FAILED'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('TEMPLATE_PARAM_UNKNOWN'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('TEMPLATE_PARAMS_REQUIRED'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('TEMPLATE_PARAMS_UNSUPPORTED'));
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('SCHEDULE_CLOUD_UPDATE_FAILED'));
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('UNSUPPORTED_OPERATION'));
+  assert.equal(payload.data.machineContract.json.commonErrorCodes.includes('USER_CONFIG_SET_FAILED'), false);
   assert.equal(payload.data.commands.some((item) => item.command.includes('run-url')), false);
   assert.equal(payload.data.browserRuntime.linuxArm64.affectedCommands.includes('run-url'), false);
   assert.equal(payload.data.machineContract.stable, true);
@@ -1221,7 +1225,13 @@ test('template catalog commands use domestic simpletemplate APIs', async () => {
           name: '电商模板',
           version: 3,
           currentTemplateVersion: 3,
-          status: 1
+          status: 1,
+          userInputParameters: JSON.stringify({
+            UIParameters: [
+              { Id: 'q', name: 'keyword', label: '关键词', Value: '', required: true },
+              { Id: 'city', name: 'city', label: '城市', Value: '上海' }
+            ]
+          })
         }
       }), {
         status: 200,
@@ -1247,6 +1257,12 @@ test('template catalog commands use domestic simpletemplate APIs', async () => {
     assert.equal(searchPayload.ok, true);
     assert.equal(searchPayload.data.templates[0].id, 101);
     assert.equal(viewPayload.data.data.name, '电商模板');
+    assert.equal(viewPayload.data.templateRegistrationId, 101);
+    assert.equal(viewPayload.data.parameterSource, 'UIParameters');
+    assert.deepEqual(viewPayload.data.parameters.map((item) => item.name), ['keyword', 'city']);
+    assert.equal(viewPayload.data.parameters[0].required, true);
+    assert.equal(viewPayload.data.parameterExample.city, '上海');
+    assert.match(viewPayload.data.createExamples.simple, /template-task create 101 --param keyword=value --json/);
     assert.equal(versionPayload.data.templateVersionId, 202);
     assert.equal(versionPayload.data.currentTemplateVersion, 3);
     assert.equal(seen[0].path, '/api/simpletemplate/templateRegistration/templates');
@@ -1342,6 +1358,214 @@ test('template-task create builds domestic TemplateConfig request body', async (
       urlSourceTaskId: '',
       urlSourceTaskField: ''
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('template-task create accepts normalized --param values and supports dry-run', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'template-key';
+  globalThis.fetch = async (url, init) => {
+    const parsed = new URL(String(url));
+    seen.push({ url: String(url), init, path: parsed.pathname });
+    if (parsed.pathname === '/api/simpletemplate/templateRegistration/101/currentTemplate') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          templateRegistrationId: 101,
+          id: 202,
+          name: '电商模板',
+          type: 1,
+          currentTemplateVersion: 3,
+          userInputParameters: JSON.stringify({
+            UIParameters: [
+              { Id: 'q', name: 'keyword', label: '关键词', Value: '', required: true },
+              { Id: 'city', name: 'city', label: '城市', Value: '上海' }
+            ]
+          })
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/simpletemplate/templateRegistration/102/currentTemplate') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          templateRegistrationId: 102,
+          id: 203,
+          name: '模板参数模板',
+          type: 1,
+          currentTemplateVersion: 1,
+          userInputParameters: JSON.stringify({
+            TemplateParameters: [
+              { ParamName: 'q', name: 'keyword', Value: '', required: true }
+            ]
+          })
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/simpletemplate/templateRegistration/103/currentTemplate') {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: {
+          templateRegistrationId: 103,
+          id: 204,
+          name: '采集配置模板',
+          type: 1,
+          currentTemplateVersion: 1,
+          collectParam: [
+            { Id: 'q', name: 'keyword', Value: '', required: true }
+          ]
+        }
+      }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/TaskGroup/Default') {
+      return new Response(JSON.stringify({ isSuccess: true, data: 9 }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    if (parsed.pathname === '/api/tasks/templateMapping') {
+      return new Response(JSON.stringify({ isSuccess: true, data: { taskId: 'task-template-param' } }), {
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' }
+      });
+    }
+    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
+      status: 404,
+      statusText: 'Not Found',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await templateTaskCommand('create', [
+      '101',
+      '--name',
+      '参数模板任务',
+      '--param',
+      'keyword=phone',
+      '--param',
+      'city=New York',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 0);
+    assert.equal(await templateTaskCommand('create', [
+      '101',
+      '--param',
+      'keyword=laptop',
+      '--dry-run',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 0);
+    assert.equal(await templateTaskCommand('create', [
+      '101',
+      '--param',
+      'missing=value',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 1);
+    assert.equal(await templateTaskCommand('create', [
+      '101',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json',
+      '--param'
+    ]), 1);
+    assert.equal(await templateTaskCommand('create', [
+      '101',
+      '--param',
+      'keyword=',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 1);
+    assert.equal(await templateTaskCommand('create', [
+      '101',
+      '--param',
+      'keyword=phone',
+      '--params',
+      '{"UIParameters":[]}',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 1);
+    assert.equal(await templateTaskCommand('create', [
+      '101',
+      '--param',
+      'city=杭州',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 1);
+    assert.equal(await templateTaskCommand('create', [
+      '102',
+      '--param',
+      'keyword=book',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 0);
+    assert.equal(await templateTaskCommand('create', [
+      '103',
+      '--param',
+      'keyword=book',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 1);
+
+    const createdPayload = parseJson(lines[0]);
+    const dryRunPayload = parseJson(lines[1]);
+    const missingPayload = parseJson(lines[2]);
+    const missingValuePayload = parseJson(lines[3]);
+    const emptyRequiredPayload = parseJson(lines[4]);
+    const conflictPayload = parseJson(lines[5]);
+    const missingRequiredPayload = parseJson(lines[6]);
+    const templateParametersPayload = parseJson(lines[7]);
+    const unsupportedPayload = parseJson(lines[8]);
+    assert.equal(createdPayload.data.data.taskId, 'task-template-param');
+    assert.equal(dryRunPayload.data.dryRun, true);
+    assert.equal(missingPayload.error.code, 'TEMPLATE_PARAM_UNKNOWN');
+    assert.equal(missingValuePayload.error.code, 'USAGE_ERROR');
+    assert.equal(emptyRequiredPayload.error.code, 'TEMPLATE_PARAMS_REQUIRED');
+    assert.equal(conflictPayload.error.code, 'USAGE_ERROR');
+    assert.equal(missingRequiredPayload.error.code, 'TEMPLATE_PARAMS_REQUIRED');
+    assert.equal(templateParametersPayload.data.parameterSource, 'TemplateParameters');
+    assert.equal(unsupportedPayload.error.code, 'TEMPLATE_PARAMS_UNSUPPORTED');
+    const mappingCalls = seen.filter((item) => item.path === '/api/tasks/templateMapping');
+    assert.equal(mappingCalls.length, 2);
+
+    const createBody = JSON.parse(mappingCalls[0].init.body);
+    assert.equal(createBody.userInputParameters, '{"UIParameters":[{"Id":"q","Value":"phone"},{"Id":"city","Value":"New York"}]}');
+    assert.equal(dryRunPayload.data.request.userInputParameters, '{"UIParameters":[{"Id":"q","Value":"laptop"},{"Id":"city","Value":"上海"}]}');
+    const templateParametersBody = JSON.parse(mappingCalls[1].init.body);
+    assert.equal(templateParametersBody.userInputParameters, '{"TemplateParameters":[{"ParamName":"q","Value":"book"}]}');
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;

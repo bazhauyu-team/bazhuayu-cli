@@ -125,16 +125,22 @@ Notes:
 `,
     'template view': `Usage:
   octopus template view <templateRegistrationId> [--json]
+
+JSON output includes normalized parameters, parameterExample, parameterSource, and
+createExamples for agent/template-task creation workflows.
 `,
     'template version': `Usage:
   octopus template version <templateRegistrationId> [--json]
 `,
     'template-task': `Usage:
-  octopus template-task create <templateRegistrationId> [--name <taskName>] [--task-group <groupId>] [--params <json>|--params-file <file>] [--json]
+  octopus template-task create <templateRegistrationId> [--name <taskName>] [--task-group <groupId>] [--param key=value]... [--params <json>|--params-file <file>] [--dry-run] [--json]
   octopus template-task update <taskId> [--params <json>|--params-file <file>] --yes [--json]
 
 Notes:
+  Prefer --param key=value for agent-friendly template creation when template view
+  returns normalized parameters.
   --params must be the domestic template userInputParameters JSON object.
+  --dry-run builds and prints the request without creating a task.
   update modifies remote template task mapping and requires --yes.
 `,
     schedule: `Usage:
