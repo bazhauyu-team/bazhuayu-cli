@@ -34,7 +34,6 @@ import { scheduleCommand } from './commands/schedule.js';
 import { taskCopy, taskDelete, taskInspect, taskList, taskMove, taskRename, taskShow } from './commands/task.js';
 import { taskGroupCommand } from './commands/task-group.js';
 import { templateCommand, templateTaskCommand } from './commands/template.js';
-import { acquisitionSettingsCommand, userConfigCommand } from './commands/user-config.js';
 import { maybePrintUpdateNotice } from './runtime/update-check.js';
 import {
   EXIT_OK,
@@ -185,14 +184,6 @@ async function main(argv: string[]): Promise<number> {
     return scheduleCommand(subcommand, rest);
   }
 
-  if (command === 'user-config') {
-    return userConfigCommand(subcommand, rest);
-  }
-
-  if (command === 'acquisition-settings') {
-    return acquisitionSettingsCommand(subcommand, rest);
-  }
-
   if (command === 'run') {
     return runTask(subcommand, rest);
   }
@@ -259,7 +250,6 @@ function requiresAuthentication(argv: string[]): boolean {
     || command === 'template'
     || command === 'template-task'
     || command === 'schedule'
-    || command === 'user-config'
     || command === 'run'
     || command === 'run-url'
     || command === 'detect'

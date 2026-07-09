@@ -15,7 +15,6 @@ import { scheduleCommand } from '../dist/commands/schedule.js';
 import { taskGroupCommand } from '../dist/commands/task-group.js';
 import { taskCopy, taskDelete, taskList, taskMove, taskRename } from '../dist/commands/task.js';
 import { templateCommand, templateTaskCommand } from '../dist/commands/template.js';
-import { acquisitionSettingsCommand, userConfigCommand } from '../dist/commands/user-config.js';
 import { ApiRequestError, fetchAccountInfo, fetchUserDefaultTaskGroupId, saveTaskInfo, validateApiKey } from '../dist/runtime/api-client.js';
 import { DEFAULT_OAUTH_REDIRECT_URI, exchangeCodeForToken, runOAuthLogin } from '../dist/runtime/oauth.js';
 import { injectGlobalCookie, localDataExportCommand, runTask, setEngineHostFactoryForTesting } from '../dist/commands/run.js';
@@ -384,8 +383,7 @@ test('capabilities is available before authentication and documents API key cont
   assert.ok(payload.data.commands.find((item) => item.command === 'template-task update <taskId>')?.requiresConfirmation);
   assert.ok(payload.data.commands.find((item) => item.command === 'schedule cloud update/start/stop <taskId>')?.requiresConfirmation);
   assert.equal(payload.data.commands.some((item) => item.command.includes('schedule local')), false);
-  assert.ok(payload.data.commands.find((item) => item.command === 'user-config get/search')?.authRequired);
-  assert.ok(payload.data.commands.find((item) => item.command === 'user-config set/delete')?.requiresConfirmation);
+  assert.equal(payload.data.commands.some((item) => item.command.includes('user-config')), false);
   assert.equal(payload.data.commands.some((item) => item.command.includes('acquisition-settings')), false);
   assert.ok(payload.data.commands.find((item) => item.command === 'data count/preview <taskId>')?.authRequired);
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('CONFIRMATION_REQUIRED'));
@@ -1581,214 +1579,6 @@ test('local schedule is not exposed because it requires the desktop local schedu
   }
 });
 
-test('user-config commands use domestic configType plus configName APIs', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalApiKey = process.env.OCTOPUS_API_KEY;
-  const originalLog = console.log;
-  const seen = [];
-  const lines = [];
-  process.env.OCTOPUS_API_KEY = 'user-config-key';
-  globalThis.fetch = async (url, init) => {
-    const parsed = new URL(String(url));
-    seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
-    if (parsed.pathname === '/api/userConfig/getConfigByTypeAndName') {
-      return new Response(JSON.stringify({
-        isSuccess: true,
-        data: {
-          configType: 20,
-          configName: 'cloud-drive',
-          config: '{"enabled":true}',
-          relativeId: 'task-1'
-        }
-      }), {
-        status: 200,
-        statusText: 'OK',
-        headers: { 'content-type': 'application/json' }
-      });
-    }
-    if (parsed.pathname === '/api/userConfig/getConfigpageByType') {
-      return new Response(JSON.stringify({
-        isSuccess: true,
-        data: {
-          total: 1,
-          currentTotal: 1,
-          dataList: [{
-            configType: 20,
-            configName: 'cloud-drive',
-            config: '{"enabled":true}',
-            relativeId: 'task-1'
-          }]
-        }
-      }), {
-        status: 200,
-        statusText: 'OK',
-        headers: { 'content-type': 'application/json' }
-      });
-    }
-    if (parsed.pathname === '/api/userConfig/saveConfig') {
-      return new Response(JSON.stringify({ isSuccess: true, data: { isSuccess: true } }), {
-        status: 200,
-        statusText: 'OK',
-        headers: { 'content-type': 'application/json' }
-      });
-    }
-    if (parsed.pathname === '/api/userConfig/removeConfig') {
-      return new Response(JSON.stringify({ isSuccess: true, data: { isSuccess: true } }), {
-        status: 200,
-        statusText: 'OK',
-        headers: { 'content-type': 'application/json' }
-      });
-    }
-    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
-      status: 404,
-      statusText: 'Not Found',
-      headers: { 'content-type': 'application/json' }
-    });
-  };
-  console.log = (line = '') => { lines.push(String(line)); };
-
-  try {
-    assert.equal(await userConfigCommand('set', ['cloud-drive', '--type', '20', '--config-json', '{"enabled":true}', '--json']), 1);
-    assert.equal(parseJson(lines[0]).error.code, 'CONFIRMATION_REQUIRED');
-    assert.equal(seen.length, 0);
-
-    assert.equal(await userConfigCommand('get', ['cloud-drive', '--type', '20', '--api-base-url', 'https://example.invalid', '--json']), 0);
-    assert.equal(await userConfigCommand('search', ['--type', '20', '--keyword', 'cloud', '--page-size', '5', '--relative-id', 'task-1', '--api-base-url', 'https://example.invalid', '--json']), 0);
-    assert.equal(await userConfigCommand('set', ['cloud-drive', '--type', '20', '--config-json', '{"enabled":true}', '--relative-id', 'task-1', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
-    assert.equal(await userConfigCommand('delete', ['cloud-drive', '--type', '20', '--yes', '--api-base-url', 'https://example.invalid', '--json']), 0);
-
-    assert.equal(parseJson(lines[1]).data.data.configName, 'cloud-drive');
-    assert.equal(parseJson(lines[2]).data.configs[0].configName, 'cloud-drive');
-    assert.equal(parseJson(lines[3]).data.action, 'set');
-    assert.equal(parseJson(lines[4]).data.action, 'delete');
-    assert.equal(seen[0].path, '/api/userConfig/getConfigByTypeAndName');
-    assert.equal(seen[0].search.get('type'), '20');
-    assert.equal(seen[0].search.get('name'), 'cloud-drive');
-    assert.equal(seen[1].path, '/api/userConfig/getConfigpageByType');
-    assert.equal(seen[1].search.get('type'), '20');
-    assert.equal(seen[1].search.get('keyword'), 'cloud');
-    assert.equal(seen[1].search.get('pageSize'), '5');
-    assert.equal(seen[1].search.get('relativeId'), 'task-1');
-    assert.equal(seen[2].path, '/api/userConfig/saveConfig');
-    assert.deepEqual(JSON.parse(seen[2].init.body), {
-      configType: 20,
-      configName: 'cloud-drive',
-      config: '{"enabled":true}',
-      relativeId: 'task-1'
-    });
-    assert.equal(seen[3].path, '/api/userConfig/removeConfig');
-    assert.deepEqual(JSON.parse(seen[3].init.body), {
-      configType: '20',
-      configName: 'cloud-drive'
-    });
-  } finally {
-    globalThis.fetch = originalFetch;
-    console.log = originalLog;
-    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
-    else process.env.OCTOPUS_API_KEY = originalApiKey;
-  }
-});
-
-test('user-config search falls back to list-by-type when page endpoint fails', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalApiKey = process.env.OCTOPUS_API_KEY;
-  const originalLog = console.log;
-  const seen = [];
-  const lines = [];
-  process.env.OCTOPUS_API_KEY = 'user-config-key';
-  globalThis.fetch = async (url, init) => {
-    const parsed = new URL(String(url));
-    seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
-    if (parsed.pathname === '/api/userConfig/getConfigpageByType') {
-      return new Response(JSON.stringify({ error: 'server error' }), {
-        status: 500,
-        statusText: 'Internal Server Error',
-        headers: { 'content-type': 'application/json' }
-      });
-    }
-    if (parsed.pathname === '/api/userConfig/getConfigListByType') {
-      return new Response(JSON.stringify({
-        isSuccess: true,
-        data: [
-          {
-            id: 'config-1',
-            name: 'CLI_SMOKE_TEST_USER_CONFIG_20260708',
-            type: 'CloudCommonConfig',
-            setting: '{"enabled":true}',
-            relativeId: ''
-          },
-          {
-            id: 'config-2',
-            name: 'other',
-            type: 'CloudCommonConfig',
-            setting: '{}',
-            relativeId: ''
-          }
-        ]
-      }), {
-        status: 200,
-        statusText: 'OK',
-        headers: { 'content-type': 'application/json' }
-      });
-    }
-    return new Response(JSON.stringify({ isSuccess: false, error: 'unexpected' }), {
-      status: 404,
-      statusText: 'Not Found',
-      headers: { 'content-type': 'application/json' }
-    });
-  };
-  console.log = (line = '') => { lines.push(String(line)); };
-
-  try {
-    assert.equal(await userConfigCommand('search', [
-      '--type',
-      '22',
-      '--keyword',
-      'CLI_SMOKE_TEST',
-      '--page-size',
-      '5',
-      '--api-base-url',
-      'https://example.invalid',
-      '--json'
-    ]), 0);
-    const payload = parseJson(lines[0]);
-    assert.equal(payload.data.endpoint, '/api/userConfig/getConfigListByType');
-    assert.equal(payload.data.total, 1);
-    assert.equal(payload.data.configs[0].name, 'CLI_SMOKE_TEST_USER_CONFIG_20260708');
-    assert.equal(seen[0].path, '/api/userConfig/getConfigpageByType');
-    assert.equal(seen[1].path, '/api/userConfig/getConfigListByType');
-    assert.equal(seen[1].search.get('type'), '22');
-  } finally {
-    globalThis.fetch = originalFetch;
-    console.log = originalLog;
-    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
-    else process.env.OCTOPUS_API_KEY = originalApiKey;
-  }
-});
-
-test('acquisition-settings is not exposed because the domestic API rejects the CLI context', async () => {
-  const originalFetch = globalThis.fetch;
-  const originalLog = console.log;
-  const seen = [];
-  const lines = [];
-  globalThis.fetch = async (url, init) => {
-    seen.push({ url: String(url), init });
-    return new Response('{}', { status: 500, statusText: 'Unexpected' });
-  };
-  console.log = (line = '') => { lines.push(String(line)); };
-
-  try {
-    assert.equal(await acquisitionSettingsCommand('get', ['--json']), 1);
-    assert.equal(await acquisitionSettingsCommand('update', ['--template-daily', '10', '--yes', '--json']), 1);
-    assert.equal(parseJson(lines[0]).error.code, 'UNSUPPORTED_OPERATION');
-    assert.equal(parseJson(lines[1]).error.code, 'UNSUPPORTED_OPERATION');
-    assert.equal(seen.length, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-    console.log = originalLog;
-  }
-});
-
 test('task rename uses the domestic updateTaskName API after confirmation', async () => {
   const originalFetch = globalThis.fetch;
   const originalApiKey = process.env.OCTOPUS_API_KEY;
@@ -2439,6 +2229,8 @@ test('agent-facing commands expose json envelopes for key contract paths', async
     { args: ['data', 'history', '--source', 'cloud', '--json'], code: 'USAGE_ERROR' },
     { args: ['data', 'export', '--source', 'cloud', '--json'], code: 'USAGE_ERROR' },
     { args: ['data', 'export', 'missing-task', '--source', 'local', '--format', 'bad', '--json'], code: 'UNSUPPORTED_EXPORT_FORMAT' },
+    { args: ['user-config', 'get', '--type', '20', '--json'], code: 'UNKNOWN_COMMAND' },
+    { args: ['acquisition-settings', 'get', '--json'], code: 'UNKNOWN_COMMAND' },
     { args: ['runs', 'status', '--output', output, '--json'], code: 'USAGE_ERROR' },
     { args: ['runs', 'status', 'missing-run', '--output', output, '--json'], code: 'RUN_NOT_FOUND' },
     { args: ['runs', 'logs', '--output', output, '--limit', '1', '--json'], code: 'USAGE_ERROR' },

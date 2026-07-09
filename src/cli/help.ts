@@ -163,28 +163,6 @@ Notes:
 Schedule types:
   1=date/once, 2=weekly, 3=monthly, 4=interval-minute, 5=every-hour, 6=daily.
 `,
-    'user-config': `Usage:
-  octopus user-config get <configName> --type <configType> [--json]
-  octopus user-config search --type <configType> [--keyword <text>] [--page <n>] [--page-size <n>] [--relative-id <id>] [--json]
-  octopus user-config set <configName> --type <configType> (--config <text>|--config-json <json>|--config-file <file>) [--relative-id <id>] --yes [--json]
-  octopus user-config delete <configName> --type <configType> --yes [--json]
-
-Notes:
-  Domestic user configs are keyed by configType + configName, not the demo CLI key/value API.
-  config is stored as a string. Its serialization format depends on configType.
-  set/delete modify remote user configuration and require --yes.
-`,
-    'user-config search': `Usage:
-  octopus user-config search --type <configType> [--keyword <text>] [--page <n>] [--page-size <n>] [--relative-id <id>] [--json]
-`,
-    'acquisition-settings': `Unsupported:
-  acquisition-settings is not exposed as a supported CLI capability.
-
-Notes:
-  The domestic desktop client has account-level acquisition spending limit APIs,
-  but they return 405 in the current CLI auth/API context. Use the desktop client
-  for acquisition spending limits.
-`,
     run: `Usage:
   octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
 
@@ -386,7 +364,6 @@ Usage:
   octopus template search/view/version [--json]
   octopus template-task create/update [--json]
   octopus schedule cloud get/update/start/stop/next [--json]
-  octopus user-config get/search/set/delete [--json]
   octopus detect URL --prepare-agent --json --goal <text> --output context.json
   octopus detect --preview-agent-plan plan.json --agent-context context.json [--json]
   octopus detect --apply-agent-plan plan.json --agent-context context.json --output task.json

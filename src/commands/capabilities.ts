@@ -348,8 +348,6 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
       { command: 'template-task update <taskId>', risk: 'high', json: true, authRequired: true, requiresConfirmation: true },
       { command: 'schedule cloud get/next', risk: 'low', json: true, authRequired: true },
       { command: 'schedule cloud update/start/stop <taskId>', risk: 'high', json: true, authRequired: true, requiresConfirmation: true },
-      { command: 'user-config get/search', risk: 'low', json: true, authRequired: true, note: 'domestic configType + configName model' },
-      { command: 'user-config set/delete', risk: 'high', json: true, authRequired: true, requiresConfirmation: true, note: 'config serialization depends on configType' },
       { command: 'detect <url>', risk: 'medium', json: true, authRequired: true, agentWorkflow: 'machineContract.recipes.createTaskFromUrlWithAgent' },
       { command: 'run <taskId>', risk: 'medium', json: true, jsonl: true, authRequired: true },
       { command: 'cloud start/stop <taskId>', risk: 'medium', json: true, authRequired: true },
