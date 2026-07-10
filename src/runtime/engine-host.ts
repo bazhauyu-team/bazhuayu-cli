@@ -33,8 +33,29 @@ import { startVirtualDisplayIfNeeded, type VirtualDisplayHandle } from './virtua
 const require = createRequire(import.meta.url);
 const defaultEngineModule = require('@octopus/engine');
 
+/** Minimal surface we actually call on the proprietary WorkflowAgent instance. */
+export interface WorkflowAgentLike {
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+  start(options: { headless?: boolean; path?: string }): Promise<void> | void;
+  stop(): void;
+  stopTask(): void;
+  pauseTask(): void;
+  resumeTask(): void;
+  close(): void;
+  capthcaToken(payload: Record<string, unknown>): void;
+  sendProxy(payload: unknown): void;
+  browser?: WorkflowBrowserLike | null;
+}
+
+export interface WorkflowBrowserLike {
+  isConnected?(): boolean;
+  close(): Promise<void> | void;
+}
+
+export type WorkflowAgentConstructor = new (options: Record<string, unknown>) => WorkflowAgentLike;
+
 export interface EngineModuleLike {
-  default?: new (options: Record<string, unknown>) => any;
+  default?: WorkflowAgentConstructor;
   WorkflowEvents: Record<string, string>;
   resolveChrome: (options?: {
     onStatus?: (status: ChromeResolveStatus) => void;
@@ -48,6 +69,46 @@ export interface BridgeHubLike extends EventEmitter {
 }
 
 export type BridgeHubFactory = () => BridgeHubLike;
+
+/** Loose bridge diagnostic payloads — only fields we log are typed. */
+interface BridgeListeningEvent {
+  wsUrl?: unknown;
+}
+interface BridgeSessionEvent {
+  sessionId?: unknown;
+  wsUrl?: unknown;
+}
+interface BridgeRegisteredEvent {
+  sessionId?: unknown;
+  success?: unknown;
+  error?: unknown;
+}
+interface BridgeDisconnectedEvent {
+  sessionId?: unknown;
+}
+interface BridgeErrorEvent {
+  sessionId?: unknown;
+  message?: unknown;
+}
+interface BridgeCommandEvent {
+  sessionId?: unknown;
+  action?: unknown;
+  id?: unknown;
+}
+interface BridgeResponseEvent {
+  sessionId?: unknown;
+  id?: unknown;
+  success?: unknown;
+}
+interface BridgeGenericEvent {
+  sessionId?: unknown;
+  type?: unknown;
+}
+
+/** Engine workflow event envelopes — shape is proprietary and partially unknown. */
+interface WorkflowMessageEnvelope {
+  data?: unknown;
+}
 
 export interface EngineHostEvents {
   'run.started': { runId: string; lotId: string; taskId: string; taskName: string };
@@ -104,7 +165,7 @@ export interface RuntimeBillingErrorEvent {
 }
 
 export class EngineHost extends EventEmitter {
-  private workflow: any | null = null;
+  private workflow: WorkflowAgentLike | null = null;
   private bridgeHub: BridgeHubLike | null = null;
   private virtualDisplay: VirtualDisplayHandle | null = null;
 
@@ -117,7 +178,8 @@ export class EngineHost extends EventEmitter {
 
   async start(task: TaskDefinition, options: RunOptions): Promise<RunSummary> {
     maybePrintRuntimeSecurityNotice();
-    const WorkflowAgent = this.engineModule.default ?? this.engineModule as unknown as new (options: Record<string, unknown>) => any;
+    const WorkflowAgent = this.engineModule.default
+      ?? (this.engineModule as unknown as WorkflowAgentConstructor);
     const WorkflowEvents = this.engineModule.WorkflowEvents;
     const resolveChrome = this.engineModule.resolveChrome;
     const { runId, lotId } = createRunIdentity(task.taskId);
@@ -163,17 +225,24 @@ export class EngineHost extends EventEmitter {
 
     this.workflow = workflow;
 
-    workflow.on(WorkflowEvents.ExtraData, (message: any) => {
-      total = message?.data?.total ?? total;
+    workflow.on(WorkflowEvents.ExtraData, (message: unknown) => {
+      const envelope = asWorkflowMessage(message);
+      const data = asRecord(envelope.data);
+      // Match original: total = message?.data?.total ?? total
+      if (data && data.total !== undefined && data.total !== null) {
+        total = data.total as number;
+      }
       this.emit('row', {
         runId,
         total,
-        data: message?.data?.rowData ?? {}
+        data: (asRecord(data?.rowData) ?? {}) as Record<string, unknown>
       });
     });
 
-    workflow.on(WorkflowEvents.Log, (message: any) => {
-      const [level, key, args] = Array.isArray(message?.data) ? message.data : ['info', 'log', []];
+    workflow.on(WorkflowEvents.Log, (message: unknown) => {
+      const envelope = asWorkflowMessage(message);
+      const payload = Array.isArray(envelope.data) ? envelope.data : ['info', 'log', []];
+      const [level, key, args] = payload;
       this.emit('log', {
         runId,
         level: String(level ?? 'info'),
@@ -181,16 +250,19 @@ export class EngineHost extends EventEmitter {
       });
     });
 
-    workflow.on(WorkflowEvents.DownloadFile, (message: any) => {
+    workflow.on(WorkflowEvents.DownloadFile, (message: unknown) => {
+      const envelope = asWorkflowMessage(message);
       this.emit('download', {
         runId,
-        ...normalizeDownloadEvent(message?.data ?? message)
+        ...normalizeDownloadEvent(envelope.data ?? message)
       });
     });
 
     const stopped = new Promise<RunSummary>((resolve) => {
-      workflow.on(WorkflowEvents.Stopped, (message: any) => {
-        const status = message?.data?.status === 'completed' ? 'completed' : 'stopped';
+      workflow.on(WorkflowEvents.Stopped, (message: unknown) => {
+        const envelope = asWorkflowMessage(message);
+        const data = asRecord(envelope.data);
+        const status = data?.status === 'completed' ? 'completed' : 'stopped';
         const summary: RunSummary = {
           runId,
           lotId,
@@ -206,8 +278,9 @@ export class EngineHost extends EventEmitter {
         resolve(summary);
       });
     });
-    workflow.on(WorkflowEvents.Captcha, (message: any) => {
-      const request = normalizeCaptchaRequest(message?.data ?? message);
+    workflow.on(WorkflowEvents.Captcha, (message: unknown) => {
+      const envelope = asWorkflowMessage(message);
+      const request = normalizeCaptchaRequest(envelope.data ?? message);
       this.emit('captcha', {
         runId,
         phase: 'requested',
@@ -228,8 +301,9 @@ export class EngineHost extends EventEmitter {
       void this.resolveProxy(workflow, task, lotId, options, runId);
     });
 
-    workflow.on(WorkflowEvents.CollectProxyLog, (message: any) => {
-      const proxyInfo = Array.isArray(message?.data) ? message.data[0] : message?.data;
+    workflow.on(WorkflowEvents.CollectProxyLog, (message: unknown) => {
+      const envelope = asWorkflowMessage(message);
+      const proxyInfo = Array.isArray(envelope.data) ? envelope.data[0] : envelope.data;
       void collectProxyLog(proxyInfo).catch((error) => {
         this.emit('log', {
           runId,
@@ -277,11 +351,11 @@ export class EngineHost extends EventEmitter {
   }
 
   async close(): Promise<void> {
-    const workflow = this.workflow as any | null;
+    const workflow = this.workflow;
     const browser = workflow?.browser;
     let browserClosed = false;
     if (browser?.isConnected?.()) {
-      await browser.close()
+      await Promise.resolve(browser.close())
         .then(() => {
           browserClosed = true;
         })
@@ -297,10 +371,10 @@ export class EngineHost extends EventEmitter {
   }
 
   private attachBridgeDiagnostics(bridgeHub: BridgeHubLike, runId: string, debugBridge: boolean): void {
-    bridgeHub.on('bridge.listening', (event: any) => {
+    bridgeHub.on('bridge.listening', (event: BridgeListeningEvent) => {
       this.emit('log', { runId, level: 'debug', message: `bridge.listening ${event.wsUrl}` });
     });
-    bridgeHub.on('bridge.session.created', (event: any) => {
+    bridgeHub.on('bridge.session.created', (event: BridgeSessionEvent) => {
       this.emit('log', {
         runId,
         level: 'debug',
@@ -310,17 +384,17 @@ export class EngineHost extends EventEmitter {
     bridgeHub.on('bridge.connection', () => {
       this.emit('log', { runId, level: 'debug', message: 'bridge.connection' });
     });
-    bridgeHub.on('bridge.registered', (event: any) => {
+    bridgeHub.on('bridge.registered', (event: BridgeRegisteredEvent) => {
       this.emit('log', {
         runId,
         level: event.success ? 'info' : 'warn',
         message: `bridge.registered ${event.sessionId} success=${Boolean(event.success)}${event.error ? ` error=${event.error}` : ''}`
       });
     });
-    bridgeHub.on('bridge.disconnected', (event: any) => {
+    bridgeHub.on('bridge.disconnected', (event: BridgeDisconnectedEvent) => {
       this.emit('log', { runId, level: 'debug', message: `bridge.disconnected ${event.sessionId}` });
     });
-    bridgeHub.on('bridge.error', (event: any) => {
+    bridgeHub.on('bridge.error', (event: BridgeErrorEvent) => {
       this.emit('log', {
         runId,
         level: 'error',
@@ -330,21 +404,21 @@ export class EngineHost extends EventEmitter {
 
     if (!debugBridge) return;
 
-    bridgeHub.on('bridge.command', (event: any) => {
+    bridgeHub.on('bridge.command', (event: BridgeCommandEvent) => {
       this.emit('log', {
         runId,
         level: 'debug',
         message: `bridge.command ${event.sessionId} ${event.action} ${event.id}`
       });
     });
-    bridgeHub.on('bridge.response', (event: any) => {
+    bridgeHub.on('bridge.response', (event: BridgeResponseEvent) => {
       this.emit('log', {
         runId,
         level: 'debug',
         message: `bridge.response ${event.sessionId} ${event.id} success=${Boolean(event.success)}`
       });
     });
-    bridgeHub.on('bridge.event', (event: any) => {
+    bridgeHub.on('bridge.event', (event: BridgeGenericEvent) => {
       this.emit('log', {
         runId,
         level: 'debug',
@@ -354,13 +428,14 @@ export class EngineHost extends EventEmitter {
   }
 
   private async resolveCaptcha(
-    workflow: any,
+    workflow: WorkflowAgentLike,
     request: CaptchaRequest,
     task: TaskDefinition,
     lotId: string,
     options: RunOptions,
     runId: string
   ): Promise<void> {
+    void options;
     try {
       const answer = await solveCaptcha(request, task, lotId);
       if (answer === undefined) return;
@@ -409,12 +484,13 @@ export class EngineHost extends EventEmitter {
   }
 
   private async resolveProxy(
-    workflow: any,
+    workflow: WorkflowAgentLike,
     task: TaskDefinition,
     lotId: string,
     options: RunOptions,
     runId: string
   ): Promise<void> {
+    void options;
     try {
       this.emit('proxy', {
         runId,
@@ -482,6 +558,18 @@ export class EngineHost extends EventEmitter {
   }
 }
 
+function asWorkflowMessage(message: unknown): WorkflowMessageEnvelope {
+  if (message && typeof message === 'object') return message as WorkflowMessageEnvelope;
+  return { data: message };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
 function normalizeRuntimeError(error: unknown): { code: string; status?: number; message: string } {
   if (error instanceof BillingRuntimeError) {
     return { code: error.code, status: error.status, message: error.message };
@@ -498,7 +586,7 @@ function statusValue(answer: unknown): number | undefined {
   return typeof status === 'number' && Number.isFinite(status) ? status : undefined;
 }
 
-function normalizeDownloadEvent(data: any): Omit<RuntimeDownloadEvent, 'runId'> {
+function normalizeDownloadEvent(data: unknown): Omit<RuntimeDownloadEvent, 'runId'> {
   const payload = Array.isArray(data) ? data[0] : data;
   const record = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
   const rawStatus = String(record.status ?? '').toLowerCase();
@@ -527,7 +615,7 @@ function numberField(value: unknown): number {
   return 0;
 }
 
-function normalizeCaptchaRequest(data: any): CaptchaRequest {
+function normalizeCaptchaRequest(data: unknown): CaptchaRequest {
   const payload = Array.isArray(data) ? data[0] : data;
   if (!payload || typeof payload !== 'object') {
     return { data: payload, captchaType: 'unknown' };

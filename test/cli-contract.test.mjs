@@ -3187,6 +3187,18 @@ test('runtime captcha success is resolved and returned to the workflow', async (
   assert.ok(result.events.some((item) => item.event === 'captcha' && item.phase === 'resolved'));
 });
 
+test('runtime captcha handler absence is reported as failed without a false resolved event', async () => {
+  const result = await runWithFakeRuntimeEvent('captcha-missing-handler');
+  assert.equal(result.code, 0);
+  assert.deepEqual(result.captchaTokens, []);
+
+  const captchaFailed = result.jsonl.find((item) => item.event === 'captcha' && item.phase === 'failed');
+  assert.equal(captchaFailed?.code, 'RUNTIME_SERVICE_FAILED');
+  assert.match(captchaFailed?.message ?? '', /capthcaToken/);
+  assert.equal(result.jsonl.some((item) => item.event === 'captcha' && item.phase === 'resolved'), false);
+  assert.equal(result.jsonl.some((item) => item.event === 'billing.error'), false);
+});
+
 test('runtime proxy success is resolved and returned to the workflow', async () => {
   const result = await runWithFakeRuntimeEvent('proxy-success');
   assert.equal(result.code, 0);
@@ -3200,6 +3212,29 @@ test('runtime proxy success is resolved and returned to the workflow', async () 
   assert.ok(result.jsonl.some((item) => item.event === 'proxy' && item.phase === 'sent' && item.hasProxy === true));
   assert.equal(result.jsonl.some((item) => item.event === 'billing.error'), false);
   assert.ok(result.events.some((item) => item.event === 'proxy' && item.phase === 'sent'));
+});
+
+test('runtime proxy handler absence is reported as failed without a false sent event', async () => {
+  const result = await runWithFakeRuntimeEvent('proxy-missing-handler');
+  assert.equal(result.code, 0);
+  assert.deepEqual(result.sentProxy, []);
+
+  const proxyFailed = result.jsonl.find((item) => item.event === 'proxy' && item.phase === 'failed');
+  assert.equal(proxyFailed?.code, 'RUNTIME_SERVICE_FAILED');
+  assert.match(proxyFailed?.message ?? '', /sendProxy/);
+  assert.ok(result.jsonl.some((item) => item.event === 'proxy' && item.phase === 'resolved'));
+  assert.equal(result.jsonl.some((item) => item.event === 'proxy' && item.phase === 'sent'), false);
+  assert.equal(result.jsonl.some((item) => item.event === 'billing.error'), false);
+});
+
+test('engine host forwards workflow control methods', async () => {
+  const result = await runWithFakeRuntimeEvent('control-contract', { exerciseControls: true });
+  assert.equal(result.code, 0);
+  assert.equal(result.workflowStopCalls, 1);
+  assert.equal(result.workflowStopTaskCalls, 1);
+  assert.equal(result.workflowPauseTaskCalls, 1);
+  assert.equal(result.workflowResumeTaskCalls, 1);
+  assert.equal(result.workflowCloseCalls, 1);
 });
 
 test('local run records engine download events in artifacts and summary', async () => {
@@ -3431,7 +3466,7 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
       ...minimalTask,
       taskId: scenario,
       taskName: scenario,
-      ...(scenario === 'proxy-no-balance' || scenario === 'proxy-success'
+      ...(scenario === 'proxy-no-balance' || scenario === 'proxy-success' || scenario === 'proxy-missing-handler'
         ? {
             brokerSettings: {
               ipProxySettings: {
@@ -3458,6 +3493,9 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
   class FakeWorkflow extends EventEmitter {
     stopCalls = 0;
     stopTaskCalls = 0;
+    pauseTaskCalls = 0;
+    resumeTaskCalls = 0;
+    closeCalls = 0;
     sentProxy = [];
     captchaTokens = [];
 
@@ -3465,6 +3503,8 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
       super();
       workflowTask = task;
       workflowInstance = this;
+      if (scenario === 'captcha-missing-handler') this.capthcaToken = undefined;
+      if (scenario === 'proxy-missing-handler') this.sendProxy = undefined;
     }
 
     async start() {
@@ -3480,7 +3520,7 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
         for (const event of options.downloadEvents ?? []) {
           this.emit(workflowEvents.DownloadFile, { data: event });
         }
-        if (scenario === 'captcha-no-balance' || scenario === 'captcha-success') {
+        if (scenario === 'captcha-no-balance' || scenario === 'captcha-success' || scenario === 'captcha-missing-handler') {
           this.emit(workflowEvents.Captcha, {
             data: [{
               captchaType: 'image',
@@ -3488,8 +3528,13 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
               url: 'https://example.com'
             }]
           });
-        } else if (scenario === 'proxy-no-balance' || scenario === 'proxy-success') {
+        } else if (scenario === 'proxy-no-balance' || scenario === 'proxy-success' || scenario === 'proxy-missing-handler') {
           this.emit(workflowEvents.GetProxy, {});
+        }
+        if (options.exerciseControls) {
+          engineHost.pause();
+          engineHost.resume();
+          engineHost.stop();
         }
         setTimeout(() => {
           this.emit(workflowEvents.Stopped, { data: { status: 'completed' } });
@@ -3513,9 +3558,17 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
       this.stopTaskCalls += 1;
     }
 
-    pauseTask() {}
-    resumeTask() {}
-    close() {}
+    pauseTask() {
+      this.pauseTaskCalls += 1;
+    }
+
+    resumeTask() {
+      this.resumeTaskCalls += 1;
+    }
+
+    close() {
+      this.closeCalls += 1;
+    }
   }
 
   const fakeEngine = {
@@ -3536,8 +3589,8 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
       return new Response(JSON.stringify({
         isSuccess: true,
         data: {
-          status: scenario === 'captcha-success' ? 1 : 3,
-          captcha: scenario === 'captcha-success' ? 'captcha-token' : ''
+          status: scenario === 'captcha-success' || scenario === 'captcha-missing-handler' ? 1 : 3,
+          captcha: scenario === 'captcha-success' || scenario === 'captcha-missing-handler' ? 'captcha-token' : ''
         }
       }), {
         status: 200,
@@ -3548,7 +3601,7 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
     if (parsed.pathname === '/api/HttpProxy') {
       return new Response(JSON.stringify({
         isSuccess: true,
-        data: scenario === 'proxy-success'
+        data: scenario === 'proxy-success' || scenario === 'proxy-missing-handler'
           ? {
               status: 0,
               ip: '127.0.0.1',
@@ -3580,7 +3633,11 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
     lines.push(String(chunk).trimEnd());
     return true;
   });
-  setEngineHostFactoryForTesting(() => new EngineHost(fakeEngine, fakeBridgeFactory));
+  let engineHost;
+  setEngineHostFactoryForTesting(() => {
+    engineHost = new EngineHost(fakeEngine, fakeBridgeFactory);
+    return engineHost;
+  });
 
   try {
     const code = await runTask(scenario, [
@@ -3616,6 +3673,9 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
       rows,
       workflowStopCalls: workflowInstance?.stopCalls ?? 0,
       workflowStopTaskCalls: workflowInstance?.stopTaskCalls ?? 0,
+      workflowPauseTaskCalls: workflowInstance?.pauseTaskCalls ?? 0,
+      workflowResumeTaskCalls: workflowInstance?.resumeTaskCalls ?? 0,
+      workflowCloseCalls: workflowInstance?.closeCalls ?? 0,
       workflowTask,
       sentProxy: workflowInstance?.sentProxy ?? [],
       captchaTokens: workflowInstance?.captchaTokens ?? []
