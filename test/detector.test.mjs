@@ -12,10 +12,196 @@ import { setEngineHostFactoryForTesting } from '../dist/commands/run.js';
 import { browserSessionPath, loadBrowserSession, saveBrowserSession } from '../dist/runtime/browser-session.js';
 import { detectedTaskToCloudTaskInfo, encodeTaskXml } from '../dist/runtime/task-cloud-save.js';
 import { hasLinuxDisplayEnvironment, requiresVirtualDisplay } from '../dist/runtime/virtual-display.js';
+import * as pageDetectorFacade from '../dist/runtime/detector/page-detector.js';
 import { applyGoalScoresForTesting, augmentAdjacentMetadataFieldsForTesting, dedupeEquivalentCandidates, detectApiListCandidatesForTesting, detectInteractivePaginationOptionsForTesting, detectKnownApiListCandidatesForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, detectSearchResultBlocksForTesting, detectSemanticBusinessCardsForTesting, dismissPageObstructionsForTesting, filterDetectedBoilerplateCandidates, findSearchInputCandidatesForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, rankCandidatesForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, sanitizeCandidatePaginationByLayoutForTesting, scoreSearchResultPageForTesting, selectDetailUrlFieldForTesting, shouldPromptForLoginInterventionForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/detector/page-detector.js';
+import { ExtensionDetectorHost } from '../dist/runtime/detector/page-detector-host.js';
 import { candidateIdsForAnnotatedScreenshotForTesting, candidateIdsForCandidateScreenshotsForTesting } from '../dist/runtime/detector/agent-visual-artifacts.js';
 import { protectedSmartResultToCandidatesForTesting } from '../dist/runtime/detector/protected-smart.js';
 import { buildTaskFromCandidate } from '../dist/runtime/detector/xml.js';
+
+test('page detector facade preserves its public runtime exports', () => {
+  const expectedExports = [
+    'DetectionLoginRequiredError',
+    'applyGoalScoresForTesting',
+    'augmentAdjacentMetadataFieldsForTesting',
+    'confirmManualPopupDismissalForTesting',
+    'dedupeEquivalentCandidates',
+    'detectApiListCandidatesForTesting',
+    'detectInteractivePaginationOptionsForTesting',
+    'detectKnownApiListCandidatesForTesting',
+    'detectPage',
+    'detectPageObstructionsForTesting',
+    'detectPaginationForCandidatesForTesting',
+    'detectSearchResultBlocksForTesting',
+    'detectSemanticBusinessCardsForTesting',
+    'dismissPageObstructionsForTesting',
+    'filterDetectedBoilerplateCandidates',
+    'findSearchInputCandidatesForTesting',
+    'isPlausiblePaginationOptionForTesting',
+    'pageLooksLikeSearchResultForTesting',
+    'preferredPaginationForTesting',
+    'rankCandidatesForTesting',
+    'readManualOverlaySelectionForTesting',
+    'refineCandidateFieldsForTesting',
+    'resetManualOverlayHintKeysForTesting',
+    'resolveSearchSubmitButtonByGeometryForTesting',
+    'resolveSearchSubmitButtonForTesting',
+    'sanitizeCandidatePaginationByLayoutForTesting',
+    'scoreSearchResultPageForTesting',
+    'selectDetailUrlFieldForTesting',
+    'shouldPromptForLoginInterventionForTesting',
+    'showManualOverlayForTesting',
+    'writeManualOverlayHintOnceForTesting'
+  ];
+
+  assert.deepEqual(Object.keys(pageDetectorFacade).sort(), expectedExports.sort());
+});
+
+function minimalDetectOptions() {
+  return {
+    url: 'https://example.test/list',
+    manual: false,
+    interactive: false,
+    waitMs: 0,
+    scrolls: 0,
+    timeoutMs: 100,
+    maxCandidates: 1,
+    llmRank: false,
+    dismissPopups: false
+  };
+}
+
+function installDetectorStdioTestSinks() {
+  const originalStdoutWrite = process.stdout.write;
+  const originalStderrWrite = process.stderr.write;
+  const originalShowRuntimeStdio = process.env.OCTOPUS_SHOW_RUNTIME_STDIO;
+  const stdoutChunks = [];
+  const stderrChunks = [];
+  const stdoutWrite = (chunk) => {
+    stdoutChunks.push(String(chunk));
+    return true;
+  };
+  const stderrWrite = (chunk) => {
+    stderrChunks.push(String(chunk));
+    return true;
+  };
+
+  delete process.env.OCTOPUS_SHOW_RUNTIME_STDIO;
+  process.stdout.write = stdoutWrite;
+  process.stderr.write = stderrWrite;
+  return {
+    stdoutChunks,
+    stderrChunks,
+    stdoutWrite,
+    stderrWrite,
+    restore() {
+      process.stdout.write = originalStdoutWrite;
+      process.stderr.write = originalStderrWrite;
+      if (originalShowRuntimeStdio === undefined) delete process.env.OCTOPUS_SHOW_RUNTIME_STDIO;
+      else process.env.OCTOPUS_SHOW_RUNTIME_STDIO = originalShowRuntimeStdio;
+    }
+  };
+}
+
+test('detectPage restores suppressed stdio when detector host startup fails', async () => {
+  const originalStart = ExtensionDetectorHost.start;
+  const stdio = installDetectorStdioTestSinks();
+  const startupError = new Error('detector host startup failed');
+  let sawSuppressedStdout = false;
+  let sawSuppressedStderr = false;
+
+  try {
+    ExtensionDetectorHost.start = async () => {
+      sawSuppressedStdout = process.stdout.write !== stdio.stdoutWrite;
+      sawSuppressedStderr = process.stderr.write !== stdio.stderrWrite;
+      throw startupError;
+    };
+
+    await assert.rejects(pageDetectorFacade.detectPage(minimalDetectOptions()), (error) => error === startupError);
+    assert.equal(sawSuppressedStdout, true);
+    assert.equal(sawSuppressedStderr, true);
+    assert.strictEqual(process.stdout.write, stdio.stdoutWrite);
+    assert.strictEqual(process.stderr.write, stdio.stderrWrite);
+    assert.deepEqual(stdio.stdoutChunks, []);
+    assert.deepEqual(stdio.stderrChunks, []);
+
+    process.stdout.write('stdout restored');
+    process.stderr.write('stderr restored');
+    assert.deepEqual(stdio.stdoutChunks, ['stdout restored']);
+    assert.deepEqual(stdio.stderrChunks, ['stderr restored']);
+  } finally {
+    ExtensionDetectorHost.start = originalStart;
+    stdio.restore();
+  }
+});
+
+test('detectPage closes the detector host when downstream setup fails', async () => {
+  const originalStart = ExtensionDetectorHost.start;
+  const stdio = installDetectorStdioTestSinks();
+  const setupError = new Error('page setup failed');
+  let closeCalls = 0;
+  const page = {
+    on() {},
+    off() {},
+    setDefaultTimeout() {
+      throw setupError;
+    }
+  };
+
+  try {
+    ExtensionDetectorHost.start = async () => ({
+      page,
+      async close() {
+        closeCalls += 1;
+      }
+    });
+
+    await assert.rejects(pageDetectorFacade.detectPage(minimalDetectOptions()), (error) => error === setupError);
+    assert.equal(closeCalls, 1);
+    assert.strictEqual(process.stdout.write, stdio.stdoutWrite);
+    assert.strictEqual(process.stderr.write, stdio.stderrWrite);
+    assert.deepEqual(stdio.stdoutChunks, []);
+    assert.deepEqual(stdio.stderrChunks, []);
+  } finally {
+    ExtensionDetectorHost.start = originalStart;
+    stdio.restore();
+  }
+});
+
+test('detectPage restores stdio when detector host cleanup fails', async () => {
+  const originalStart = ExtensionDetectorHost.start;
+  const stdio = installDetectorStdioTestSinks();
+  const setupError = new Error('page setup failed before cleanup');
+  const closeError = new Error('detector host cleanup failed');
+  let closeCalls = 0;
+  const page = {
+    on() {},
+    off() {},
+    setDefaultTimeout() {
+      throw setupError;
+    }
+  };
+
+  try {
+    ExtensionDetectorHost.start = async () => ({
+      page,
+      async close() {
+        closeCalls += 1;
+        throw closeError;
+      }
+    });
+
+    await assert.rejects(pageDetectorFacade.detectPage(minimalDetectOptions()), (error) => error === closeError);
+    assert.equal(closeCalls, 1);
+    assert.strictEqual(process.stdout.write, stdio.stdoutWrite);
+    assert.strictEqual(process.stderr.write, stdio.stderrWrite);
+    assert.deepEqual(stdio.stdoutChunks, []);
+    assert.deepEqual(stdio.stderrChunks, []);
+  } finally {
+    ExtensionDetectorHost.start = originalStart;
+    stdio.restore();
+  }
+});
 
 test('resolveAvailableDetectedTaskFile creates a default file without overwriting existing tasks', async () => {
   const previousCwd = cwd();
