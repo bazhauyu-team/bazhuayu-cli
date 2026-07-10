@@ -1832,4 +1832,3 @@ export function comparePaginationOptions(a: DetectedPagination, b: DetectedPagin
   };
   return (b.confidence + typeWeight(b) + sourceWeight(b)) - (a.confidence + typeWeight(a) + sourceWeight(a));
 }
-

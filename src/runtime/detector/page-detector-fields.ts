@@ -1540,4 +1540,3 @@ export async function refineCandidateFieldsForTesting(page: Page, candidates: De
 export async function augmentAdjacentMetadataFieldsForTesting(page: Page, candidates: DetectedCandidate[]): Promise<DetectedCandidate[]> {
   return augmentAdjacentMetadataFields(page, candidates);
 }
-

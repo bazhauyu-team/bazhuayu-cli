@@ -164,4 +164,3 @@ export async function waitForPaginationManualAction(
 }
 
 let lastPaginationSelection: string | undefined;
-

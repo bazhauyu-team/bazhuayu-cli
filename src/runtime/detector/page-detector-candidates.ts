@@ -160,4 +160,3 @@ export function buildLlmRankInput(candidates: DetectedCandidate[], goal?: string
       }))
   };
 }
-

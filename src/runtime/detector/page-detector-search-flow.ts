@@ -572,4 +572,3 @@ export async function chooseSearchInputCandidateInCli(name: string, value: strin
   });
   return response.action || 'cancel';
 }
-

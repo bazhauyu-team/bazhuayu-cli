@@ -1240,4 +1240,3 @@ export async function removeCandidateOverlay(page: Page): Promise<void> {
     w.__octopusDetectionCleanup?.();
   });
 }
-

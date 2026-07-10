@@ -205,4 +205,3 @@ export async function waitForLoadingPlaceholders(page: Page, timeoutMs: number):
     return !stillLoading || likelyRows.length >= 2;
   }, { timeout: timeoutMs, polling: 250 }).catch(() => undefined);
 }
-

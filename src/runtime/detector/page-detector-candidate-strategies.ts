@@ -1702,4 +1702,3 @@ export function contentCleanupOperations(): DetectedField['operations'] {
     { type: 'trim', params: ['0'] }
   ];
 }
-
