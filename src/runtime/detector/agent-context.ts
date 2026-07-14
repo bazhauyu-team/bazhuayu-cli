@@ -6,17 +6,23 @@ import type {
   DetectAgentContext
 } from './agent-types.js';
 import { buildAgentVisualElements, ensureAgentElementIds } from './agent-elements.js';
-import { rankCandidates } from './candidate-ranking.js';
+import {
+  applyGoalScores,
+  assessPrimaryCandidateQuality,
+  inferPageTarget,
+  rankCandidates
+} from './candidate-ranking.js';
 
 export function buildAgentContext(result: PageDetectionResult, goal?: string): DetectAgentContext {
-  const candidates = ensureAgentElementIds(result.candidates);
-  const recommended = recommendedCandidate(candidates);
-  const visualArtifacts = buildAgentVisualArtifacts(result.agentScreenshot);
-  const visualElements = buildAgentVisualElements(candidates);
-  const decisionSummary = buildAgentDecisionSummary(candidates, recommended?.id, visualArtifacts);
-  return {
-    schemaVersion: 'octopus.detect.agent-context.v1',
-    instruction: [
+  try {
+    const candidates = ensureAgentElementIds(result.candidates);
+    const recommended = recommendedCandidate(candidates, goal);
+    const visualArtifacts = buildAgentVisualArtifacts(result.agentScreenshot);
+    const visualElements = buildAgentVisualElements(candidates);
+    const decisionSummary = buildAgentDecisionSummary(candidates, recommended?.id, visualArtifacts);
+    return {
+      schemaVersion: 'octopus.detect.agent-context.v1',
+      instruction: [
       'You are choosing a web scraping task plan from deterministic candidates.',
       'Select candidateId for the primary data region. Optionally filter or rename fields.',
       'Prefer selecting fields by visualElements[].id / elementId when a field appears in the annotated screenshot or candidate crop.',
@@ -91,12 +97,42 @@ export function buildAgentContext(result: PageDetectionResult, goal?: string): D
     ...(result.savedSession ? { savedSession: result.savedSession } : {}),
     candidates
   };
+  } catch (error) {
+    throw new Error(`buildAgentContext failed for URL "${result.url}": ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
-export function recommendedCandidate(candidates: DetectedCandidate[]): DetectedCandidate | undefined {
+export function recommendedCandidate(candidates: DetectedCandidate[], goal?: string): DetectedCandidate | undefined {
   const usable = candidates.filter((candidate) => candidate.type !== 'form');
-  const ranked = usable.length ? usable : candidates;
-  return rankCandidates(ranked)[0];
+  // When all candidates are forms there is nothing meaningful to recommend —
+  // return undefined so the agent is free to create a customCandidate instead
+  // of being pushed toward an input/search form it cannot scrape.
+  if (!usable.length) return undefined;
+  // Apply goal scores when present so detail goals boost type=detail and demote related lists.
+  const ranked = goal ? applyGoalScores(usable, goal) : rankCandidates(usable);
+  const pageTarget = inferPageTarget(goal);
+
+  // Prefer a quality-usable primary over a higher-ranked nav/ad/header list.
+  // Product Hunt / Amazon often surface chrome first; the real list is still present.
+  const qualityPrimary = ranked.find((candidate) => assessPrimaryCandidateQuality(candidate, goal).usable);
+  if (qualityPrimary) {
+    // On detail goals, prefer a usable detail entity over a usable related/sidebar list
+    // that may still pass generic list quality checks.
+    if (pageTarget === 'detail' && qualityPrimary.type !== 'detail') {
+      const detailPrimary = ranked.find((candidate) =>
+        candidate.type === 'detail' && assessPrimaryCandidateQuality(candidate, goal).usable
+      );
+      if (detailPrimary) return detailPrimary;
+    }
+    return qualityPrimary;
+  }
+
+  // Soft fallback for detail goals: return the best detail candidate even if quality is imperfect.
+  if (pageTarget === 'detail') {
+    const anyDetail = ranked.find((candidate) => candidate.type === 'detail');
+    if (anyDetail) return anyDetail;
+  }
+  return ranked[0];
 }
 
 function buildAgentVisualArtifacts(screenshot: DetectedAgentScreenshot | undefined): AgentVisualArtifacts | undefined {

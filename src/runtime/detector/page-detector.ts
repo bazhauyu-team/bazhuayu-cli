@@ -12,7 +12,12 @@ import { detectApiListCandidatesFromResourceTimings, startApiResponseCapture, ty
 
 import { attachAgentDiagnostics } from './candidate-diagnostics.js';
 import { attachCandidateVisualElements, detectPageVisualElements } from './candidate-visual-elements.js';
-import { applyGoalScores, rankCandidates } from './candidate-ranking.js';
+import {
+  applyGoalScores,
+  hasUsablePrimaryCandidate,
+  inferPageTarget,
+  rankCandidates
+} from './candidate-ranking.js';
 
 import type {
   PageDetectionResult,
@@ -94,6 +99,13 @@ export function applyGoalScoresForTesting(candidates: DetectedCandidate[], goal:
 }
 export function rankCandidatesForTesting(candidates: DetectedCandidate[]): DetectedCandidate[] {
   return rankCandidates(candidates);
+}
+export { assessPrimaryCandidateQuality } from './candidate-ranking.js';
+export function hasUsablePrimaryCandidateForTesting(candidates: DetectedCandidate[], goal?: string): boolean {
+  return hasUsablePrimaryCandidate(candidates, goal);
+}
+export function inferPageTargetForTesting(goal?: string) {
+  return inferPageTarget(goal);
 }
 
 export { detectApiListCandidatesForTesting } from './api-list-response-detector.js';

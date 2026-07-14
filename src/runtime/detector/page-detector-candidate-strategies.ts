@@ -24,8 +24,26 @@ export async function detectDetails(page: Page): Promise<RawCandidate[]> {
       return `/${parts.join('/')}`;
     }
     function selector(element: Element): string {
-      if ((element as HTMLElement).id) return `#${CSS.escape((element as HTMLElement).id)}`;
+      try {
+        if ((element as HTMLElement).id) return `#${CSS.escape((element as HTMLElement).id)}`;
+      } catch {
+        if ((element as HTMLElement).id) return `#${String((element as HTMLElement).id).replace(/([^a-zA-Z0-9_-])/g, '\\$1')}`;
+      }
       return element.tagName.toLowerCase();
+    }
+    function isChromeNoiseElement(element: Element): boolean {
+      const html = element as HTMLElement;
+      const attrs = `${html.id || ''} ${typeof html.className === 'string' ? html.className : ''} ${html.getAttribute('role') || ''}`;
+      if (/(?:mw-editsection|editsection|navbox|vertical-navbox|catlinks|toc|toctitle|mw-jump|vector-toc|noprint|mw-indicators|siteNotice|sistersitebox)/i.test(attrs)) return true;
+      if (element.closest('.mw-editsection, .navbox, .catlinks, #toc, .toc, .vector-toc, .mw-jump-link, footer, [role="contentinfo"], nav, [role="navigation"]')) return true;
+      return false;
+    }
+    function cleanProseText(value: string): string {
+      return value
+        .replace(/\[\s*edit\s*\]/gi, ' ')
+        .replace(/\bedit\s*$/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
     }
     function styleTextLike(value: string): boolean {
       const cssTokenCount = (value.match(/--weui-|data_color_scheme|rgba?\(|#[0-9a-f]{3,8}\b|ACTIVE-|BG-|FG-/gi) ?? []).length;
@@ -49,49 +67,180 @@ export async function detectDetails(page: Page): Promise<RawCandidate[]> {
     function contentScore(element: Element): number {
       const tag = element.tagName.toLowerCase();
       if (/^(script|style|noscript|nav|footer|header|aside|button|input|select|textarea)$/i.test(tag)) return -Infinity;
+      // Skip obvious chrome / related modules when scoring body roots.
+      const idClass = `${(element as HTMLElement).id || ''} ${(element as HTMLElement).className || ''}`;
+      if (/(?:related|recommend|sidebar|comment|footer|nav|menu|toc|table-of-contents)/i.test(idClass) && !/(?:article|content|mw-content|post|entry|markdown-body)/i.test(idClass)) {
+        return -Infinity;
+      }
       const value = text(element);
-      if (value.length < 120 || value.length > 20000 || styleTextLike(value)) return -Infinity;
+      // Allow long encyclopedia/product pages; only reject extreme dumps.
+      if (value.length < 120 || value.length > 120000 || styleTextLike(value)) return -Infinity;
       const rect = element.getBoundingClientRect();
       const paragraphs = Array.from(element.querySelectorAll('p')).filter((item) => text(item).length >= 20);
       const linkText = Array.from(element.querySelectorAll('a')).map((item) => text(item)).join(' ');
       const linkDensity = linkText.length / Math.max(1, value.length);
-      if (linkDensity > 0.35) return -Infinity;
+      // Pure link farms stay out; encyclopedia pages often sit around 0.35-0.55 link density.
+      if (linkDensity > 0.72 && paragraphs.length < 3) return -Infinity;
       const sentenceMarks = (value.match(/[。！？!?；;，,]/g) ?? []).length;
       const centerPenalty = Math.abs((rect.left + rect.width / 2) - window.innerWidth / 2) / Math.max(1, window.innerWidth);
       let score = 0;
-      score += Math.min(5, value.length / 500);
-      score += Math.min(4, paragraphs.length);
-      score += Math.min(2, sentenceMarks * 0.12);
+      score += Math.min(6, value.length / 500);
+      score += Math.min(5, paragraphs.length * 0.7);
+      score += Math.min(2, sentenceMarks * 0.08);
       score -= centerPenalty;
-      if (element.querySelector('h1,h2,h3')) score -= 0.9;
+      score -= Math.max(0, linkDensity - 0.25) * 2.2;
+      // Prefer article/main content containers.
+      if (/^(article|main)$/i.test(tag) || /(?:article|content|mw-content|post|entry|markdown-body)/i.test(idClass)) score += 1.4;
+      if (element.querySelector('h1,h2,h3')) score += 0.35;
       return score;
     }
     function contentRoot(base: Element): Element | null {
-      const candidates = [base, ...Array.from(base.querySelectorAll('article,main,section,div,[class*="article" i],[class*="content" i],[id*="article" i],[id*="content" i]'))]
+      const selectors = [
+        'article',
+        'main',
+        '#mw-content-text',
+        '#content',
+        '[role="main"]',
+        '.markdown-body',
+        '.post-content',
+        '.entry-content',
+        '.article-content',
+        'section',
+        'div[class*="article" i]',
+        'div[class*="content" i]',
+        'div[id*="article" i]',
+        'div[id*="content" i]'
+      ];
+      const extra = selectors.flatMap((sel) => Array.from(base.querySelectorAll(sel)));
+      const candidates = [base, ...extra]
         .filter((element, index, array) => array.indexOf(element) === index)
         .map((element) => ({ element, score: contentScore(element) }))
         .filter((item) => Number.isFinite(item.score))
         .sort((a, b) => b.score - a.score);
       return candidates[0]?.element ?? null;
     }
-    const root = document.querySelector('article') || document.querySelector('main') || document.body;
-    const bodyRoot = contentRoot(root) || root;
-    const title = document.querySelector('h1') || root.querySelector('h1,h2');
+    function pickTitle(): Element | null {
+      // Prefer known entity titles before generic/first h1 (GitHub/Wikipedia shells have noisy h1s).
+      const preferred = document.querySelector(
+        '#firstHeading, strong[itemprop="name"] a, [itemprop="name"] a, #repository-container-header strong a, h1.gh-header-title, .js-issue-title, article h1, .post-title, .entry-title'
+      );
+      if (preferred && text(preferred).length >= 2) {
+        const value = text(preferred);
+        if (!/search code|repositories, users|sign in|log in|provide feedback|menu|navigation/i.test(value)) {
+          return preferred;
+        }
+      }
+      const candidates = Array.from(document.querySelectorAll('h1, [class*="title" i] h1, #firstHeading, .gh-header-title, .js-issue-title'))
+        .filter((element) => {
+          const value = text(element);
+          if (!value || value.length < 3 || value.length > 220) return false;
+          // Skip search chrome / generic placeholders common on GitHub and similar shells.
+          if (/search code|repositories, users|sign in|log in|provide feedback|menu|navigation/i.test(value)) return false;
+          return true;
+        })
+        .map((element) => {
+          const value = text(element);
+          const rect = element.getBoundingClientRect();
+          let score = Math.min(40, value.length);
+          if (element.tagName.toLowerCase() === 'h1') score += 12;
+          if (element.id === 'firstHeading' || /title|headline|post-title|entry-title|itemprop="name"/i.test(`${element.id} ${(element as HTMLElement).className || ''}`)) score += 10;
+          if (rect.top >= 0 && rect.top < window.innerHeight * 0.7) score += 6;
+          return { element, score };
+        })
+        .sort((a, b) => b.score - a.score);
+      return candidates[0]?.element ?? document.querySelector('h1') ?? null;
+    }
+    function pickImage(scope: Element): HTMLImageElement | null {
+      const images = Array.from(scope.querySelectorAll('img')) as HTMLImageElement[];
+      const ranked = images
+        .map((img) => {
+          const src = img.currentSrc || img.src || '';
+          if (!src || /data:image\/svg|sprite|icon|avatar|badge|logo|pixel|1x1|spacer/i.test(src)) return null;
+          if (/badge\.svg|actions\/workflows|shields\.io|gravatar/i.test(src)) return null;
+          const rect = img.getBoundingClientRect();
+          const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+          if (area > 0 && area < 80 * 80) return null;
+          return { img, area: area || 1, top: rect.top };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (b!.area - a!.area) || (a!.top - b!.top));
+      return ranked[0]?.img ?? null;
+    }
+    // Prefer known single-entity content shells before generic article/main.
+    // Never fall back to document.body when a main shell exists — body includes footer legal text
+    // that used to make the whole detail candidate look like legal boilerplate.
+    const preferredRoot = document.querySelector('#mw-content-text .mw-parser-output')
+      || document.querySelector('#mw-content-text')
+      || document.querySelector('#readme .markdown-body, #readme, [data-testid="readme"] .markdown-body, article .markdown-body, .markdown-body')
+      || document.querySelector('article')
+      || document.querySelector('main, [role="main"], #content')
+      || document.body;
+    const root = preferredRoot;
+    // Prefer the preferred shell itself when it already has enough prose; contentScore can over-filter wiki pages.
+    const preferredText = text(preferredRoot);
+    const preferredParagraphs = Array.from(preferredRoot.querySelectorAll('p'))
+      .filter((item) => !isChromeNoiseElement(item) && cleanProseText(text(item)).length >= 40);
+    const bodyRoot = (preferredText.length >= 280 && preferredParagraphs.length >= 1)
+      ? preferredRoot
+      : (contentRoot(root) || root);
+    const title = pickTitle()
+      || document.querySelector('#firstHeading')
+      || document.querySelector('strong[itemprop="name"] a, [itemprop="name"] a')
+      || root.querySelector('h1,h2');
     const time = root.querySelector('time,[datetime],[class*="date" i],[class*="time" i]');
-    const author = root.querySelector('[class*="author" i],[rel="author"]');
-    const paragraphs = Array.from(bodyRoot.querySelectorAll('p')).map((p) => text(p)).filter((value) => value.length > 20);
-    const contentValue = text(bodyRoot) || paragraphs.join(' ');
+    const author = root.querySelector('[class*="author" i],[rel="author"], .byline, [itemprop="author"]');
+    // Prefer real prose paragraphs first; wiki/docs also use li for body content.
+    // Skip MediaWiki edit chrome / navboxes so content samples stay article-like.
+    const proseParagraphs = Array.from(bodyRoot.querySelectorAll('p'))
+      .filter((p) => !isChromeNoiseElement(p))
+      .map((p) => cleanProseText(text(p)))
+      .filter((value) => value.length > 40
+        && !/^(edit|\[edit\]|hide|show)$/i.test(value)
+        && !/^(?:this page was last edited|text is available under|by using this site, you agree)/i.test(value));
+    const listItems = Array.from(bodyRoot.querySelectorAll('li'))
+      .filter((p) => !isChromeNoiseElement(p) && !p.closest('.toc, #toc, .vector-toc, .navbox'))
+      .map((p) => cleanProseText(text(p)))
+      .filter((value) => value.length > 40 && !/^(edit|\[edit\]|hide|show)$/i.test(value));
+    // Prefer joined prose over raw body text (raw includes edit links / legal footer).
+    let contentValue = proseParagraphs.length >= 1
+      ? proseParagraphs.slice(0, 80).join('\n\n')
+      : (listItems.slice(0, 60).join('\n\n') || '');
+    // Last-resort body from document main text when scoped roots are empty/thin.
+    if (contentValue.replace(/\s+/g, ' ').trim().length < 160) {
+      const mainish = document.querySelector('#mw-content-text .mw-parser-output, #mw-content-text, main, article, #content, .markdown-body') || bodyRoot;
+      const fallbackParas = Array.from(mainish.querySelectorAll('p'))
+        .filter((p) => !isChromeNoiseElement(p))
+        .map((p) => cleanProseText(text(p)))
+        .filter((value) => value.length > 40
+          && !/^(?:this page was last edited|text is available under|by using this site, you agree)/i.test(value))
+        .slice(0, 80)
+        .join('\n\n');
+      if (fallbackParas.length > contentValue.length) contentValue = fallbackParas;
+    }
+    // Absolute last resort: first large text block under main content, stripped of chrome phrases.
+    if (contentValue.replace(/\s+/g, ' ').trim().length < 120) {
+      contentValue = cleanProseText(text(bodyRoot)).slice(0, 20000);
+    }
     const price = root.querySelector('[class*="price" i],[data-price]');
-    const image = root.querySelector('img') as HTMLImageElement | null;
+    const image = pickImage(bodyRoot) || pickImage(root);
+    let titleValue = title ? cleanProseText(text(title)) : (document.title || '').replace(/\s+[|\-–—].*$/, '').trim();
+    // Drop wiki/github chrome titles that leaked through.
+    if (/^(?:search code|provide feedback|edit|menu|navigation|sign in|log in)$/i.test(titleValue)) {
+      const heading = document.querySelector('#firstHeading, article h1, .post-title, .entry-title, h1');
+      const alt = heading ? cleanProseText(text(heading)) : '';
+      if (alt && !/^(?:search code|provide feedback|edit|menu|navigation|sign in|log in)$/i.test(alt)) titleValue = alt;
+    }
     return {
       rootSelector: selector(root),
       rootXPath: xpath(root),
       fields: {
-        title: title ? { value: text(title), xpath: xpath(title), selector: selector(title) } : null,
+        title: titleValue
+          ? { value: titleValue, xpath: title ? xpath(title) : xpath(root), selector: title ? selector(title) : selector(root) }
+          : null,
         time: time ? { value: text(time) || (time as HTMLElement).getAttribute('datetime') || '', xpath: xpath(time), selector: selector(time) } : null,
         author: author ? { value: text(author), xpath: xpath(author), selector: selector(author) } : null,
         price: price ? { value: text(price) || (price as HTMLElement).getAttribute('data-price') || '', xpath: xpath(price), selector: selector(price) } : null,
-        content: contentValue ? { value: contentValue, xpath: xpath(bodyRoot), selector: selector(bodyRoot), diagnostics: fieldDiagnostics(bodyRoot) } : null,
+        content: contentValue ? { value: contentValue.slice(0, 20000), xpath: xpath(bodyRoot), selector: selector(bodyRoot), diagnostics: fieldDiagnostics(bodyRoot) } : null,
         image: image?.src ? { value: image.src, xpath: xpath(image), selector: selector(image) } : null
       }
     };
@@ -112,7 +261,14 @@ export async function detectDetails(page: Page): Promise<RawCandidate[]> {
     });
   }
   const meaningful = fields.filter((field) => field.name !== 'image');
+  // Accept title+content (or any 2 semantic fields). Image alone is not enough.
   if (meaningful.length < 2) return [];
+  const contentLen = String(fields.find((field) => field.name === 'content')?.samples[0] ?? '').replace(/\s+/g, ' ').trim().length;
+  const titleLen = String(fields.find((field) => field.name === 'title')?.samples[0] ?? '').replace(/\s+/g, ' ').trim().length;
+  // Drop nearly empty "detail" shells that would lose to lists for no benefit.
+  if (contentLen < 80 && titleLen < 8) return [];
+  // Prefer substance: title + short content is ok for product cards; pure chrome is not.
+  if (contentLen < 40 && titleLen < 12) return [];
   return [{
     type: 'detail',
     selector: detail.rootSelector,
@@ -126,6 +282,7 @@ export async function detectDetails(page: Page): Promise<RawCandidate[]> {
     confidence: scoreCandidate({ itemCount: 1, fieldCount: fields.length, semantic: fields.some((field) => field.name === 'title') ? 1 : 0, penalty: 0.05 })
   }];
 }
+
 
 export async function detectTables(page: Page): Promise<RawCandidate[]> {
   const tableInfos = await page.evaluate(() => {

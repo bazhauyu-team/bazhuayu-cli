@@ -1,8 +1,30 @@
-import { isLegalBoilerplateText } from './candidate-boilerplate.js';
+import { isCookieConsentText, isLegalBoilerplateText, isStrongLegalBoilerplateText } from './candidate-boilerplate.js';
 import type { DetectedCandidate } from './types.js';
+
+/** Inferred extraction target for ranking / quality gates. */
+export type PageTarget = 'detail' | 'list' | 'auto';
+
+/**
+ * Infer whether the user wants a single detail entity vs a repeated list.
+ * Explicit detail goals beat generic "title/article" tokens that also appear on list pages.
+ */
+export function inferPageTarget(goal?: string): PageTarget {
+  if (!goal?.trim()) return 'auto';
+  const detail = goalAsksForDetailContent(goal);
+  const list = goalAsksForListContent(goal);
+  if (detail && !list) return 'detail';
+  if (list && !detail) return 'list';
+  if (detail && list) {
+    // Mixed wording: prefer detail when the goal centers on one page/entity.
+    if (goalPrefersSingleEntity(goal)) return 'detail';
+    return 'list';
+  }
+  return 'auto';
+}
 
 export function applyGoalScores(candidates: DetectedCandidate[], goal: string): DetectedCandidate[] {
   const tokens = goalTokens(goal);
+  const pageTarget = inferPageTarget(goal);
   return candidates
     .map((candidate) => {
       const haystack = [
@@ -19,9 +41,34 @@ export function applyGoalScores(candidates: DetectedCandidate[], goal: string): 
           reasons.push(`matches "${token}"`);
         }
       }
-      if (/标题|title|链接|url|文章|商品|列表|结果|价格|price/i.test(goal) && candidate.type !== 'form' && candidate.type !== 'link_collection') {
+      // List boost only when target is list (or auto without a detail preference).
+      // Previously "标题|文章" also boosted lists on pure detail goals and buried detail candidates.
+      if (
+        pageTarget !== 'detail'
+        && /标题|title|链接|url|文章|商品|列表|结果|价格|price/i.test(goal)
+        && candidate.type !== 'form'
+        && candidate.type !== 'link_collection'
+        && candidate.type !== 'detail'
+      ) {
         score += 0.12;
-        reasons.push('goal asks for extractable list/detail data');
+        reasons.push('goal asks for extractable list data');
+      }
+      if (pageTarget === 'detail' && candidate.type === 'detail') {
+        score += 0.28;
+        reasons.push('goal prefers single-page detail entity');
+      }
+      if (pageTarget === 'detail' && candidateLooksLikeRelatedOrSidebarList(candidate)) {
+        score -= 0.32;
+        reasons.push('related/sidebar list demoted for detail goal');
+      }
+      if (pageTarget === 'detail' && isListLikeCandidate(candidate) && !candidateLooksLikeRelatedOrSidebarList(candidate)) {
+        // Secondary demotion for any multi-item list when user wants the page entity.
+        score -= 0.1;
+        reasons.push('list candidate demoted for detail goal');
+      }
+      if (pageTarget === 'list' && candidate.type === 'detail') {
+        score -= 0.18;
+        reasons.push('detail demoted for list goal');
       }
       if (/搜索|查询|关键词|input|search/i.test(goal) && candidate.type === 'form') {
         score += 0.16;
@@ -34,14 +81,17 @@ export function applyGoalScores(candidates: DetectedCandidate[], goal: string): 
       if (candidate.type === 'link_collection' && !/链接|url|导航|分类|link/i.test(goal)) {
         score -= 0.12;
       }
-      const rawGoalScore = score + layoutRankingBoost(candidate);
+      // Store goalScore WITHOUT layoutRankingBoost so that candidateRankingScore
+      // can add the *current* layout boost after applyLayoutScores updates candidate.layout.
+      // Previously layoutRankingBoost was embedded here, making it stale after layout scoring.
+      const rawGoalScore = score;
       return {
         candidate: {
           ...candidate,
           goalScore: Number(Math.max(0, Math.min(0.99, rawGoalScore)).toFixed(2)),
           goalReasons: reasons
         },
-        rankingScore: rawGoalScore + candidateDataQualityBoost(candidate)
+        rankingScore: rawGoalScore + layoutRankingBoost(candidate) + candidateDataQualityBoost(candidate)
       };
     })
     .sort((a, b) => b.rankingScore - a.rankingScore)
@@ -74,7 +124,166 @@ export function dedupeEquivalentCandidates(candidates: DetectedCandidate[]): Det
 }
 
 export function filterDetectedBoilerplateCandidates(candidates: DetectedCandidate[]): DetectedCandidate[] {
-  return candidates.filter((candidate) => !candidateIsLegalBoilerplate(candidate) && !candidateLooksLikePaginationControls(candidate));
+  return candidates.filter((candidate) => !candidateIsLegalBoilerplate(candidate) && !candidateIsCookieConsent(candidate) && !candidateLooksLikePaginationControls(candidate));
+}
+
+export interface PrimaryCandidateQuality {
+  usable: boolean;
+  reasons: string[];
+}
+
+/**
+ * Preview / auto selection gate: true when the top non-form candidate is good enough
+ * to skip expensive fallback scans and quality retries.
+ */
+export function hasUsablePrimaryCandidate(candidates: DetectedCandidate[], goal?: string): boolean {
+  const ranked = goal ? applyGoalScores(candidates, goal) : rankCandidates(candidates);
+  const primary = ranked.find((candidate) => candidate.type !== 'form');
+  if (!primary) return false;
+  return assessPrimaryCandidateQuality(primary, goal).usable;
+}
+
+export function assessPrimaryCandidateQuality(candidate: DetectedCandidate, goal?: string): PrimaryCandidateQuality {
+  const reasons: string[] = [];
+  const pageTarget = inferPageTarget(goal);
+  const role = candidate.layout?.role;
+  if (role === 'header' || role === 'nav' || role === 'footer' || role === 'ad') {
+    reasons.push(`layout role is ${role}`);
+  }
+  if ((candidate.layout?.boilerplatePenalty ?? 0) >= 0.55) {
+    reasons.push('high boilerplate penalty');
+  }
+  if ((candidate.layout?.sidebarPenalty ?? 0) >= 0.45 && role !== 'main') {
+    reasons.push('high sidebar penalty');
+  }
+
+  // Detail candidates are single-entity: sampleRows=1 is normal, not a quality failure.
+  if (candidate.type === 'detail') {
+    return assessDetailCandidateQuality(candidate, reasons, pageTarget);
+  }
+
+  // Explicit detail goals should extract the single page entity, not TOC/related/section lists.
+  // Mark multi-item lists unusable so ranking falls through to type=detail (or quality retry).
+  if (pageTarget === 'detail' && isListLikeCandidate(candidate) && candidate.itemCount >= 2) {
+    reasons.push('list candidate rejected for detail goal');
+    return { usable: false, reasons };
+  }
+
+  const fieldCount = candidate.fields.filter((field) => field.samples.some((sample) => String(sample ?? '').trim())).length;
+  const sampleRowCount = candidate.sampleRows.length;
+  const warningCount = candidate.diagnostics?.warnings.length ?? 0;
+  const visualCoverage = candidate.diagnostics?.visualCoverage ?? candidate.layout?.visualCoverage ?? 1;
+  const titleValues = candidateTitleLikeTextValues(candidate);
+  const hrefs = candidateHrefValues(candidate);
+  const longTitleRate = titleValues.length
+    ? titleValues.filter(isLikelyRecordTitleSample).length / titleValues.length
+    : 0;
+  const contentStrong = sampleRowCount >= 3
+    && fieldCount >= 2
+    && candidate.confidence >= 0.5
+    && (
+      candidateHasRecordLikeSignals(candidate)
+      || longTitleRate >= 0.35
+      || (candidate.itemCount >= 6 && hrefs.length >= 3)
+    );
+
+  if (candidate.confidence < 0.45) reasons.push('low confidence');
+  if (fieldCount < 2) reasons.push('fewer than 2 filled fields');
+  if (sampleRowCount < 2) reasons.push('fewer than 2 sample rows');
+  // Dense news/product grids often report low visualCoverage while still having
+  // strong title/href rows. Only treat coverage as a hard fail when content is weak.
+  if (visualCoverage < 0.08 && (!contentStrong || visualCoverage < 0.02)) {
+    reasons.push('low visual coverage');
+  }
+  if (warningCount >= 3 && !contentStrong) reasons.push('too many diagnostics warnings');
+
+  if (candidateLooksLikePaginationControls(candidate)) reasons.push('looks like pagination controls');
+  if (candidateIsLegalBoilerplate(candidate)) reasons.push('legal boilerplate');
+  if (candidateIsCookieConsent(candidate)) reasons.push('cookie consent');
+  if (candidateLooksLikeWikiSectionEditList(candidate)) reasons.push('looks like wiki section edit controls');
+  if (candidateLooksLikeNavigationList(candidate)) reasons.push('looks like navigation/menu list');
+  if (candidateLooksLikeFooterOrNavigation(candidate)) reasons.push('looks like footer/navigation');
+
+  if (candidateLooksLikeLinkGridNavigation(candidate, titleValues, hrefs)) {
+    reasons.push('looks like link-grid navigation');
+  }
+  if (candidateLooksLikeTaxonomyFilterList(candidate)) reasons.push('looks like taxonomy/filter list');
+  if (candidateLooksLikeLocalSeoLinks(candidate, titleValues, hrefs)) reasons.push('looks like local SEO links');
+
+  if (goal && goalAsksForRecordContent(goal) && !candidateHasRecordLikeSignals(candidate) && candidateLooksLikeNavigationList(candidate)) {
+    reasons.push('goal asks for records but candidate looks like navigation');
+  }
+
+  return { usable: reasons.length === 0, reasons };
+}
+
+function assessDetailCandidateQuality(
+  candidate: DetectedCandidate,
+  baseReasons: string[],
+  pageTarget: PageTarget
+): PrimaryCandidateQuality {
+  const reasons = [...baseReasons];
+  const fieldCount = candidate.fields.filter((field) => field.samples.some((sample) => String(sample ?? '').trim())).length;
+  const contentField = candidate.fields.find((field) => /^(?:content|body|正文|内容|描述|description|summary|摘要|introduction|介绍)$/i.test(field.name));
+  const contentLen = contentField
+    ? String(contentField.samples[0] ?? '').replace(/\s+/g, ' ').trim().length
+    : 0;
+  const titleField = candidate.fields.find((field) => /^(?:title|标题|name|名称)$/i.test(field.name));
+  const titleLen = titleField
+    ? String(titleField.samples[0] ?? '').replace(/\s+/g, ' ').trim().length
+    : 0;
+  const hasSemantic = Boolean(titleField || contentField
+    || candidate.fields.some((field) => /author|作者|time|date|日期|price|价格|image|图片/i.test(field.name)));
+
+  if (candidate.confidence < 0.35) reasons.push('low confidence');
+  if (fieldCount < 2) reasons.push('fewer than 2 filled fields');
+  // Detail pages often have title + content only; require some substance.
+  if (!hasSemantic && fieldCount < 3) reasons.push('detail fields lack semantic signals');
+  if (titleLen > 0 && titleLen < 4 && contentLen < 80) reasons.push('detail title/content too short');
+  if (contentField && contentLen > 0 && contentLen < 40 && pageTarget === 'detail') {
+    reasons.push('detail content too short');
+  }
+  if (candidateIsLegalBoilerplate(candidate)) reasons.push('legal boilerplate');
+  if (candidateIsCookieConsent(candidate)) reasons.push('cookie consent');
+
+  return { usable: reasons.length === 0, reasons };
+}
+
+export function candidateLooksLikeNavigationList(candidate: DetectedCandidate): boolean {
+  if (candidate.type === 'form' || candidate.type === 'detail') return false;
+  if (candidate.layout && ['header', 'nav', 'footer', 'ad'].includes(candidate.layout.role)) return true;
+
+  const titleValues = candidateTitleLikeTextValues(candidate);
+  const hrefs = candidateHrefValues(candidate);
+  if (!titleValues.length && !hrefs.length) return false;
+
+  const shortTitleRate = titleValues.length
+    ? titleValues.filter((value) => {
+      const normalized = normalizeSampleValue(value);
+      return normalized.length > 0 && (normalized.length <= 18 || isLabelOnlySample(value));
+    }).length / titleValues.length
+    : 0;
+  const navHrefRate = hrefs.length
+    ? hrefs.filter((value) => isLikelyNavigationHrefValue(value)).length / hrefs.length
+    : 0;
+  const navTextRate = titleValues.length
+    ? titleValues.filter((value) => isLikelyNavigationLabel(value)).length / titleValues.length
+    : 0;
+  const fieldCount = candidate.fields.length;
+  const hasDate = candidateHasDateSignal(candidate);
+  const hasPrice = candidate.fields.some((field) => /price|价格|金额|薪资|salary|rating|评分/i.test(field.name)
+    || field.samples.some((sample) => /(?:¥|￥|\$|€|£)\s?\d|\d+\.\d{2}\b|\d+\s?(?:元|万|USD|CNY)/i.test(String(sample ?? ''))));
+  const hasRecordMetadata = candidateHasRecordMetadataSignal(candidate);
+  const longTitleRate = titleValues.length
+    ? titleValues.filter(isLikelyRecordTitleSample).length / titleValues.length
+    : 0;
+  const shallow = fieldCount <= 3 && !hasDate && !hasPrice && !hasRecordMetadata && longTitleRate < 0.25;
+
+  if (navHrefRate >= 0.55 && shortTitleRate >= 0.6 && shallow) return true;
+  if (navTextRate >= 0.45 && shortTitleRate >= 0.7 && shallow) return true;
+  if (candidate.type === 'link_collection' && shortTitleRate >= 0.75 && !hasDate && longTitleRate < 0.2) return true;
+  if (shallow && candidate.itemCount >= 6 && shortTitleRate >= 0.8 && navHrefRate >= 0.35) return true;
+  return false;
 }
 
 function candidateIsLegalBoilerplate(candidate: Pick<DetectedCandidate, 'sampleRows' | 'fields' | 'reasons' | 'layout' | 'type'>): boolean {
@@ -83,8 +292,63 @@ function candidateIsLegalBoilerplate(candidate: Pick<DetectedCandidate, 'sampleR
   const values = [
     ...candidate.sampleRows.flatMap((row) => Object.values(row)),
     ...candidate.fields.flatMap((field) => field.samples)
-  ];
-  return values.some((value) => isLegalBoilerplateText(value));
+  ].map((value) => String(value ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (!values.length) return false;
+
+  // Long article/product bodies often mention "copyright" or "privacy" as subject matter
+  // (e.g. Wikipedia "Web scraping"). Only treat short, footer-like samples as legal chrome.
+  // Previously any sample matching isLegalBoilerplateText killed the whole candidate.
+  if (candidate.type === 'detail') {
+    const contentValues = candidate.fields
+      .filter((field) => /^(?:content|body|正文|内容|描述|description|summary|摘要|introduction|介绍)$/i.test(field.name))
+      .flatMap((field) => field.samples)
+      .map((value) => String(value ?? '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    const longest = [...contentValues, ...values].sort((a, b) => b.length - a.length)[0] ?? '';
+    if (longest.length >= 200) {
+      // Keep only if the body itself is almost entirely a legal blurb.
+      return sampleLooksLikeStandaloneLegalBlurb(longest);
+    }
+  }
+
+  // Short ICP/备案/© footer tokens are high-precision chrome signals for list modules.
+  if (values.some((value) => sampleLooksLikeStandaloneLegalBlurb(value) && isStrongLegalBoilerplateText(value))) {
+    return true;
+  }
+  const legalHits = values.filter((value) => isLegalBoilerplateText(value));
+  if (!legalHits.length) return false;
+  // List rows: only drop when most non-empty samples are short legal blurbs, not when one
+  // title happens to contain the word "copyright".
+  const shortLegal = legalHits.filter((value) => sampleLooksLikeStandaloneLegalBlurb(value));
+  if (shortLegal.length >= Math.max(2, Math.ceil(values.length * 0.5))) return true;
+  if (values.length <= 2 && shortLegal.length === values.length) return true;
+  return values.every((value) => isLegalBoilerplateText(value) && value.length < 280);
+}
+
+/** True when the sample is a short privacy/terms/copyright footer line, not long prose. */
+function sampleLooksLikeStandaloneLegalBlurb(value: string): boolean {
+  const normalized = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!normalized || !isLegalBoilerplateText(normalized)) return false;
+  if (normalized.length <= 220) return true;
+  // Longer text: require legal phrases to dominate (footer dump), not a single in-article mention.
+  const legalTokens = (normalized.match(/\b(?:privacy\s+policy|terms\s+of\s+(?:use|service)|all\s+rights\s+reserved|copyright|©|icp|备案|用户协议|隐私政策|使用条款)\b/gi) ?? []).length;
+  const words = normalized.split(/\s+/).filter(Boolean).length;
+  return legalTokens >= 2 && legalTokens / Math.max(1, words) >= 0.08 && normalized.length < 900;
+}
+
+function candidateIsCookieConsent(candidate: Pick<DetectedCandidate, 'sampleRows' | 'fields' | 'reasons' | 'layout' | 'type'>): boolean {
+  if (candidate.type === 'form' || candidate.type === 'detail') return false;
+  const reasonText = candidate.reasons.join(' ');
+  if (/cookie|consent|privacy preference|cmp|onetrust|cookiebot|didomi|usercentrics/i.test(reasonText)) return true;
+  const values = [
+    ...candidate.sampleRows.flatMap((row) => Object.values(row)),
+    ...candidate.fields.flatMap((field) => field.samples)
+  ].map((value) => String(value ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (!values.length) return false;
+  const cookieValues = values.filter(isCookieConsentText);
+  if (cookieValues.length >= 2) return true;
+  const combined = values.join(' ');
+  return isCookieConsentText(combined) && combined.length >= 24;
 }
 
 export function candidateLooksLikePaginationControls(candidate: Pick<DetectedCandidate, 'sampleRows' | 'fields' | 'reasons' | 'type' | 'xpath' | 'itemXPath' | 'itemCount'>): boolean {
@@ -206,10 +470,20 @@ function jaccard(left: string[], right: string[]): number {
 }
 
 function candidateRankingScore(candidate: DetectedCandidate): number {
-  return (candidate.goalScore ?? candidate.confidence + layoutRankingBoost(candidate)) + candidateDataQualityBoost(candidate);
+  // When goalScore is present it stores the pure goal score (without layout boost)
+  // so we always add the current layoutRankingBoost, which reflects the latest
+  // candidate.layout set by applyLayoutScores.
+  const base = candidate.goalScore !== undefined
+    ? candidate.goalScore + layoutRankingBoost(candidate)
+    : candidate.confidence + layoutRankingBoost(candidate);
+  return base + candidateDataQualityBoost(candidate);
 }
 
 function candidateDataQualityBoost(candidate: DetectedCandidate): number {
+  // Detail entities: reward semantic title/content substance; do not require multi-row list signals.
+  if (candidate.type === 'detail') {
+    return detailCandidateDataQualityBoost(candidate);
+  }
   const fields = candidate.fields;
   const sampleValues = [
     ...fields.flatMap((field) => field.samples),
@@ -228,6 +502,7 @@ function candidateDataQualityBoost(candidate: DetectedCandidate): number {
   const looksLikeLinkGridNavigation = candidateLooksLikeLinkGridNavigation(candidate, titleValues, hrefs);
   const businessRecordLike = candidateLooksLikeBusinessRecords(candidate);
   const localSeoLinks = candidateLooksLikeLocalSeoLinks(candidate, titleValues, hrefs);
+  const relatedSidebar = candidateLooksLikeRelatedOrSidebarList(candidate);
   const nonEmptyCells = candidate.sampleRows.flatMap((row) => Object.values(row)).filter((value) => normalizeSampleValue(value)).length;
   const totalCells = Math.max(1, candidate.sampleRows.length * Math.max(1, fields.length));
   const fillRate = nonEmptyCells / totalCells;
@@ -260,6 +535,7 @@ function candidateDataQualityBoost(candidate: DetectedCandidate): number {
   if (fields.some((field) => /reference|citation|referencetext|cs1format|脚注|引用/i.test(field.name))) boost -= 0.14;
   if (taxonomyLike) boost -= 0.55;
   if (localSeoLinks) boost -= 0.34;
+  if (relatedSidebar) boost -= 0.22;
   if (taxonomyHrefRate >= 0.7 && longTitleRate < 0.35) boost -= 0.18;
   if (looksLikeLinkGridNavigation) boost -= 0.5;
   if (shallowLinkList && !hasDate && longTitleRate < 0.25) boost -= 0.28;
@@ -272,6 +548,30 @@ function candidateDataQualityBoost(candidate: DetectedCandidate): number {
   if (candidate.type === 'repeated_card' && fields.length <= 2 && candidate.itemCount >= 40 && !hasHref) boost -= 0.08;
   if (candidate.type === 'link_collection' && !hasDate) boost -= 0.12;
   return Math.max(-0.75, Math.min(0.35, boost));
+}
+
+function detailCandidateDataQualityBoost(candidate: DetectedCandidate): number {
+  const fields = candidate.fields;
+  const title = fields.find((field) => /^(?:title|标题|name|名称)$/i.test(field.name));
+  const content = fields.find((field) => /^(?:content|body|正文|内容|描述|description|summary|摘要|introduction|介绍)$/i.test(field.name));
+  const titleLen = String(title?.samples[0] ?? '').replace(/\s+/g, ' ').trim().length;
+  const contentLen = String(content?.samples[0] ?? '').replace(/\s+/g, ' ').trim().length;
+  const hasAuthor = fields.some((field) => /author|作者/i.test(field.name) && field.samples.some(Boolean));
+  const hasTime = fields.some((field) => /time|date|日期|时间/i.test(field.name) && field.samples.some(Boolean));
+  const hasPrice = fields.some((field) => /price|价格/i.test(field.name) && field.samples.some(Boolean));
+  const hasImage = fields.some((field) => field.kind === 'src' && field.samples.some(Boolean));
+  let boost = 0.08;
+  if (titleLen >= 8) boost += 0.1;
+  if (contentLen >= 120) boost += 0.14;
+  if (contentLen >= 400) boost += 0.06;
+  if (hasAuthor) boost += 0.04;
+  if (hasTime) boost += 0.04;
+  if (hasPrice) boost += 0.05;
+  if (hasImage) boost += 0.03;
+  if (fields.length >= 3) boost += 0.04;
+  if (titleLen > 0 && titleLen < 4) boost -= 0.1;
+  if (content && contentLen < 40) boost -= 0.12;
+  return Math.max(-0.4, Math.min(0.35, boost));
 }
 
 function candidateTitleLikeTextValues(candidate: DetectedCandidate): string[] {
@@ -526,4 +826,151 @@ function goalTokens(goal: string): string[] {
     .map((token) => token.trim())
     .filter((token) => token.length >= 2)
     .slice(0, 20);
+}
+
+function goalAsksForRecordContent(goal: string): boolean {
+  return /商品|产品|列表|结果|文章|新闻|标题|价格|评分|评论|店铺|商家|详情|product|item|list|result|article|news|title|price|rating|review|shop|store|detail/i.test(goal)
+    || goalAsksForBusinessRecords(goal);
+}
+
+/** True when goal emphasizes a single-page entity (article body, product page, store profile, etc.). */
+export function goalAsksForDetailContent(goal: string): boolean {
+  return /详情页|详情|正文|文章内容|博客|博文|帖子|产品页|商品页|商品详情|介绍|简介|主内容|当前页|本页|单页|实体|店铺信息|商家信息|公司信息|个人主页|仓库信息|项目信息|detail\s*page|article\s*body|blog\s*post|product\s*page|main\s*content|introduction|description\s*page|review\s*page|single\s*(?:page|entity|item)|this\s*page|current\s*page/i.test(goal)
+    // Chinese short goals like "提取正文" / "采详情"
+    || /(?:提取|采集|抓取|预览).{0,8}(?:正文|详情|内容|介绍)/i.test(goal)
+    || /(?:title|标题).{0,12}(?:author|作者|content|正文|body|评分|地址|电话)/i.test(goal)
+    || /(?:评分|地址|电话|rating|address|phone).{0,12}(?:评分|地址|电话|rating|address|phone)/i.test(goal);
+}
+
+/** True when goal clearly wants multi-item list/feed extraction. */
+export function goalAsksForListContent(goal: string): boolean {
+  if (goalPrefersSingleEntity(goal)) return false;
+  return /列表|多条|批量|feed|卡片列表|搜索结果|结果列表|商品列表|文章列表|新闻列表|招聘列表|list\s*of|search\s*results?|listings?|cards?|grid|catalog|results?\s*page|scrape\s*(?:all|every|many)/i.test(goal)
+    || /(?:采集|抓取|提取|预览).{0,6}(?:列表|结果|商品|新闻|文章|职位|商家)/i.test(goal);
+}
+
+function goalPrefersSingleEntity(goal: string): boolean {
+  return /详情页|正文|文章内容|博客|博文|产品页|商品页|商品详情|主内容|当前页|本页|单页|店铺信息|商家信息|detail\s*page|article\s*body|blog\s*post|product\s*page|main\s*content|this\s*page|current\s*page|single\s*(?:page|entity|item)/i.test(goal);
+}
+
+function isListLikeCandidate(candidate: DetectedCandidate): boolean {
+  return candidate.type === 'table'
+    || candidate.type === 'repeated_card'
+    || candidate.type === 'search_results'
+    || candidate.type === 'link_collection'
+    || (candidate.itemCount >= 3 && candidate.type !== 'detail' && candidate.type !== 'form');
+}
+
+/**
+ * Related articles, "you may also like", sidebar recommendation modules, etc.
+ * These often win ranking on detail pages because they look like clean title+url lists.
+ */
+export function candidateLooksLikeRelatedOrSidebarList(candidate: DetectedCandidate): boolean {
+  if (candidate.type === 'detail' || candidate.type === 'form') return false;
+  const role = candidate.layout?.role;
+  if (role === 'sidebar') return true;
+  if ((candidate.layout?.sidebarPenalty ?? 0) >= 0.4 && role !== 'main') return true;
+
+  // Wikipedia/MediaWiki section chrome: repeated "edit" / action=edit rows are not the article entity.
+  if (candidateLooksLikeWikiSectionEditList(candidate)) return true;
+
+  const identity = [
+    candidate.title,
+    candidate.selector,
+    candidate.xpath,
+    candidate.itemSelector ?? '',
+    candidate.itemXPath ?? '',
+    candidate.reasons.join(' '),
+    ...candidate.fields.flatMap((field) => [field.name, field.selector, field.xpath])
+  ].join(' ');
+
+  if (/(?:related|recommend|recommendation|you\s*may\s*also|more\s*from|more\s*stories|popular|trending|sidebar|aside|widget|similar|also\s*read|read\s*next|up\s*next|sponsored|广告|推荐|相关|猜你喜欢|热门|更多文章|更多阅读|侧边|周边|附近)/i.test(identity)) {
+    // Only treat as related-module when it is multi-item (not the main article).
+    if (candidate.itemCount >= 2) return true;
+  }
+
+  // Compact multi-item title+url blocks with few fields often are "related posts".
+  if (
+    role !== 'main'
+    && candidate.itemCount >= 3
+    && candidate.itemCount <= 12
+    && candidate.fields.length <= 3
+    && !candidateHasDateSignal(candidate)
+    && !candidateHasRecordMetadataSignal(candidate)
+  ) {
+    const titleValues = candidateTitleLikeTextValues(candidate);
+    const hrefs = candidateHrefValues(candidate);
+    if (titleValues.length >= 2 && hrefs.length >= 2) {
+      const longTitleRate = titleValues.filter(isLikelyRecordTitleSample).length / titleValues.length;
+      // Related posts often have decent titles; main feeds tend to be denser or have dates.
+      if (longTitleRate >= 0.35 && candidate.fields.length <= 2) return true;
+    }
+  }
+
+  return false;
+}
+
+/** MediaWiki section edit affordances (title "edit", action=edit&section=N). */
+export function candidateLooksLikeWikiSectionEditList(candidate: DetectedCandidate): boolean {
+  if (candidate.type === 'detail' || candidate.type === 'form') return false;
+  if (candidate.itemCount < 2) return false;
+  const titleValues = candidateTitleLikeTextValues(candidate);
+  const hrefs = candidateHrefValues(candidate);
+  if (!titleValues.length && !hrefs.length) return false;
+  const editTitleRate = titleValues.length
+    ? titleValues.filter((value) => /^(?:edit|\[edit\]|编辑|編輯)$/i.test(normalizeSampleValue(value))).length / titleValues.length
+    : 0;
+  const editHrefRate = hrefs.length
+    ? hrefs.filter((value) => /[?&]action=edit\b|(?:[?&]section=\d+)|\/w\/index\.php\?[^#]*action=edit/i.test(value)).length / hrefs.length
+    : 0;
+  if (editTitleRate >= 0.5 && candidate.itemCount >= 2) return true;
+  if (editHrefRate >= 0.5 && candidate.itemCount >= 2) return true;
+  if (editTitleRate >= 0.3 && editHrefRate >= 0.3) return true;
+  return false;
+}
+
+function candidateHasRecordLikeSignals(candidate: DetectedCandidate): boolean {
+  if (candidateHasDateSignal(candidate) || candidateHasRecordMetadataSignal(candidate)) return true;
+  if (candidateLooksLikeBusinessRecords(candidate)) return true;
+  const titleValues = candidateTitleLikeTextValues(candidate);
+  const hrefs = candidateHrefValues(candidate);
+  const longTitleRate = titleValues.length
+    ? titleValues.filter(isLikelyRecordTitleSample).length / titleValues.length
+    : 0;
+  const recordHrefRate = hrefs.length
+    ? hrefs.filter(isLikelyRecordHrefValue).length / hrefs.length
+    : 0;
+  const hasPrice = candidate.fields.some((field) => /price|价格|金额|薪资|salary/i.test(field.name)
+    || field.samples.some((sample) => /(?:¥|￥|\$|€|£)\s?\d|\d+\.\d{2}\b/.test(String(sample ?? ''))));
+  return longTitleRate >= 0.35 || recordHrefRate >= 0.4 || hasPrice;
+}
+
+function isLikelyNavigationHrefValue(value: string): boolean {
+  if (!value || /^(?:javascript:|mailto:|tel:|#)/i.test(value)) return true;
+  if (isTaxonomyHrefValue(value) || isLikelyServiceNavigationHrefValue(value)) return true;
+  if (isLikelyRecordHrefValue(value)) return false;
+  try {
+    const parsed = new URL(value);
+    const path = parsed.pathname || '/';
+    const search = parsed.search || '';
+    if (/ref_?[=_]nav|nav_cs|nav-link|nav_link|nav_menu|ic=nav/i.test(`${path}${search}`)) return true;
+    if (path === '/' || path === '') return true;
+    // Shallow site sections without record-like path tokens.
+    const segments = path.split('/').filter(Boolean);
+    if (segments.length <= 1 && !/\d{3,}/.test(path)) return true;
+    if (segments.length <= 2 && /(?:shop|stores?|deals?|bestsellers?|best-sellers|new-releases|gift-cards?|customer|help|account|cart|orders?|registry|prime|music|video|kindle|books?|fashion|home|grocery|electronics|toys|beauty|sports|automotive|industrial)/i.test(segments.join('/'))) {
+      return true;
+    }
+    return false;
+  } catch {
+    return /ref_?[=_]nav|nav_cs|nav-link|\/(?:best-?sellers|new-releases|gift-cards?)(?:[/?#]|$)/i.test(value);
+  }
+}
+
+function isLikelyNavigationLabel(value: string): boolean {
+  const normalized = normalizeSampleValue(value);
+  if (!normalized) return true;
+  if (isLabelOnlySample(value)) return true;
+  return /^(?:home|about|blog|login|sign in|sign up|register|cart|account|orders?|help|support|contact|privacy|terms|careers|sell|gift cards?|best sellers?|new arrivals?|new releases?|today'?s deals?|customer service|registry|prime|amazon haul|health ai|browse|categories?|menu|more|see all|shop all|首页|登录|注册|购物车|订单|帮助|客服|关于|分类|更多|全部|热门|推荐|榜单|新品|优惠|会员)$/i.test(normalized)
+    || (normalized.length <= 16 && !/\d{2,}/.test(normalized) && !/[.!?。！？]/.test(normalized));
 }
