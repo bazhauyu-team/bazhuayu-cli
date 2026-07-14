@@ -4,7 +4,9 @@ import type { DetectedCandidate, DetectedCandidateLayout } from './types.js';
 
 export async function applyLayoutScores(page: Page, candidates: DetectedCandidate[]): Promise<DetectedCandidate[]> {
   const input = candidates
-    .filter((candidate) => candidate.type !== 'detail' && candidate.type !== 'form')
+    // Include 'detail' type so it also gets layout role/score from the DOM.
+    // Only forms are excluded — their xpath is a single input container, not a data region.
+    .filter((candidate) => candidate.type !== 'form')
     .map((candidate) => ({
       id: candidate.id,
       type: candidate.type,
@@ -84,7 +86,10 @@ export async function applyLayoutScores(page: Page, candidates: DetectedCandidat
         if (element.closest('header,[role="banner"]')) return 'header';
         if (element.closest('footer,[role="contentinfo"]')) return 'footer';
         if (element.closest('nav,[role="navigation"],[class*="nav" i],[class*="menu" i],[class*="category" i],[class*="cate" i]')) return 'nav';
-        if (element.closest('aside,[role="complementary"],[class*="sidebar" i],[class*="side" i],[class*="right" i],[class*="left" i]')) return 'sidebar';
+        // Use word-boundary-aware class patterns to avoid false positives from
+        // generic layout classes like "align-right", "title-left", "float-right".
+        if (element.closest('aside,[role="complementary"],[class*="sidebar" i],[class*="-side" i],[class*="side-" i]')) return 'sidebar';
+        if (/\bsidebar\b|\bside-bar\b/i.test((element as HTMLElement).className || '')) return 'sidebar';
         if (element.closest('[class*="ad" i],[id*="ad" i],[class*="banner" i],[id*="banner" i],[class*="sponsor" i]')) return 'ad';
       }
       if (/(header|footer|nav|menu|category|sidebar|aside|advert|banner|sponsor)/i.test(attrs)) {
@@ -125,8 +130,12 @@ export async function applyLayoutScores(page: Page, candidates: DetectedCandidat
         .map(text)
         .filter(Boolean)
         .filter((chunk) => chunk.length <= 12).length / Math.max(1, elements.slice(0, 20).filter((element) => text(element)).length);
-      const hasSemanticLayoutField = item.fieldNames.some((name) => /summary|description|snippet|image|cover|date|time|title|url|href|link|摘要|描述|图片|封面|日期|时间|标题|链接/i.test(name));
-      const repeatedRichness = clamp(item.itemCount / 8) * 0.45 + clamp(item.fieldCount / 5) * 0.35 + (hasSemanticLayoutField ? 0.2 : 0);
+      const hasSemanticLayoutField = item.fieldNames.some((name) => /summary|description|snippet|image|cover|date|time|title|url|href|link|content|body|摘要|描述|图片|封面|日期|时间|标题|链接|正文|内容/i.test(name));
+      const isDetailCandidate = item.type === 'detail' || item.itemCount <= 1;
+      // List richness rewards multi-item tables; detail pages need prose/area richness instead.
+      const repeatedRichness = isDetailCandidate
+        ? clamp(item.fieldCount / 4) * 0.35 + (hasSemanticLayoutField ? 0.35 : 0) + clamp(value.length / 2500) * 0.3
+        : clamp(item.itemCount / 8) * 0.45 + clamp(item.fieldCount / 5) * 0.35 + (hasSemanticLayoutField ? 0.2 : 0);
       const visualCoverage = clamp(areaRatio * 0.65 + widthRatio * 0.2 + heightRatio * 0.15);
       let mainScore = 0.18;
       mainScore += (1 - centerDistance) * 0.24;
@@ -135,25 +144,50 @@ export async function applyLayoutScores(page: Page, candidates: DetectedCandidat
       mainScore += textDensity * 0.08;
       if (rect.left > viewportWidth * 0.16 && rect.right < viewportWidth * 0.86) mainScore += 0.08;
       if (rect.width > viewportWidth * 0.42) mainScore += 0.07;
-      if (documentTopRatio < 0.72 && topRatio < 1.8) mainScore += 0.06;
+      // topRatio is clamped to [0,1] so the original "< 1.8" was always true.
+      // Reward only when the element starts in the upper portion of the viewport.
+      if (documentTopRatio < 0.72 && topRatio < 0.8) mainScore += 0.06;
+      // Single-entity bodies: tall centered columns with long prose are main content even with wiki links.
+      if (isDetailCandidate && value.length >= 400 && widthRatio >= 0.35 && centerDistance < 0.4) {
+        mainScore += 0.16;
+      }
 
       let sidebarPenalty = 0;
       if (rect.right < viewportWidth * 0.24 || rect.left > viewportWidth * 0.72) sidebarPenalty += 0.32;
       if (widthRatio < 0.28) sidebarPenalty += 0.2;
       if (ld > 0.68 && shortTextRate > 0.55) sidebarPenalty += 0.16;
       if (/(sidebar|aside|right|left|rank|hot|recommend|related|widget|side)/i.test(attrs)) sidebarPenalty += 0.18;
+      // Encyclopedia bodies often have high link density; do not treat that alone as sidebar.
+      if (isDetailCandidate && value.length >= 400) sidebarPenalty *= 0.45;
 
       let boilerplatePenalty = 0;
       if (topRatio < 0.12 && rect.height < viewportHeight * 0.22) boilerplatePenalty += 0.2;
       if (documentTopRatio > 0.82) boilerplatePenalty += 0.24;
       if (ld > 0.78 && value.length < 600) boilerplatePenalty += 0.16;
-      if (/(footer|copyright|icp|privacy|terms|login|register|nav|menu|category)/i.test(`${attrs} ${value}`)) boilerplatePenalty += 0.18;
+      // Match attrs (classes/ids) for chrome, not full body text — long articles often discuss privacy/copyright.
+      if (/(footer|copyright|icp|privacy|terms|login|register|nav|menu|category)/i.test(attrs)) boilerplatePenalty += 0.18;
+      else if (!isDetailCandidate && /(footer|copyright|icp|privacy|terms|login|register|nav|menu|category)/i.test(value) && value.length < 400) {
+        boilerplatePenalty += 0.18;
+      }
       if (/(advert|广告|推广|sponsor|banner)/i.test(`${attrs} ${value}`)) boilerplatePenalty += 0.28;
+      if (isDetailCandidate && value.length >= 400) boilerplatePenalty *= 0.5;
 
       const explicitRole = closestRole(elements, attrs);
       let role: LayoutInfo['role'] = 'unknown';
-      if (explicitRole) role = explicitRole;
-      else if (mainScore >= 0.62 && sidebarPenalty < 0.34 && boilerplatePenalty < 0.34) role = 'main';
+      // Prefer semantic main shells for detail entities over chrome closestRole false positives.
+      const looksLikeMainShell = isDetailCandidate
+        && (
+          /(?:mw-content|mw-parser|markdown-body|article|post-content|entry-content|main-content)/i.test(attrs)
+          || (value.length >= 500 && widthRatio >= 0.4 && centerDistance < 0.42 && documentTopRatio < 0.75)
+        );
+      if (explicitRole && !(looksLikeMainShell && (explicitRole === 'nav' || explicitRole === 'header' || explicitRole === 'footer'))) {
+        role = explicitRole;
+      } else if (looksLikeMainShell) {
+        role = 'main';
+        mainScore = Math.max(mainScore, 0.74);
+        sidebarPenalty *= 0.4;
+        boilerplatePenalty *= 0.5;
+      } else if (mainScore >= 0.62 && sidebarPenalty < 0.34 && boilerplatePenalty < 0.34) role = 'main';
       else if (sidebarPenalty >= 0.34) role = 'sidebar';
       else if (boilerplatePenalty >= 0.34) role = topRatio < 0.2 ? 'header' : 'footer';
 
@@ -162,6 +196,7 @@ export async function applyLayoutScores(page: Page, candidates: DetectedCandidat
         && (
           (visualCoverage > 0.45 && centerDistance < 0.32 && widthRatio > 0.45)
           || (visualCoverage > 0.62 && centerDistance < 0.35 && sidebarPenalty < 0.12)
+          || (isDetailCandidate && value.length >= 500 && widthRatio > 0.4 && centerDistance < 0.4)
         );
       if (strongMainContent) {
         role = 'main';

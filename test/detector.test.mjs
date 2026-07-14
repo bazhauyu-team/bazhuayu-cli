@@ -13,7 +13,7 @@ import { browserSessionPath, loadBrowserSession, saveBrowserSession } from '../d
 import { detectedTaskToCloudTaskInfo, encodeTaskXml } from '../dist/runtime/task-cloud-save.js';
 import { hasLinuxDisplayEnvironment, requiresVirtualDisplay } from '../dist/runtime/virtual-display.js';
 import * as pageDetectorFacade from '../dist/runtime/detector/page-detector.js';
-import { applyGoalScoresForTesting, augmentAdjacentMetadataFieldsForTesting, dedupeEquivalentCandidates, detectApiListCandidatesForTesting, detectInteractivePaginationOptionsForTesting, detectKnownApiListCandidatesForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, detectSearchResultBlocksForTesting, detectSemanticBusinessCardsForTesting, dismissPageObstructionsForTesting, filterDetectedBoilerplateCandidates, findSearchInputCandidatesForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, rankCandidatesForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, sanitizeCandidatePaginationByLayoutForTesting, scoreSearchResultPageForTesting, selectDetailUrlFieldForTesting, shouldPromptForLoginInterventionForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/detector/page-detector.js';
+import { applyGoalScoresForTesting, assessPrimaryCandidateQuality, augmentAdjacentMetadataFieldsForTesting, dedupeEquivalentCandidates, detectApiListCandidatesForTesting, detectInteractivePaginationOptionsForTesting, detectKnownApiListCandidatesForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, detectSearchResultBlocksForTesting, detectSemanticBusinessCardsForTesting, dismissPageObstructionsForTesting, filterDetectedBoilerplateCandidates, findSearchInputCandidatesForTesting, hasUsablePrimaryCandidateForTesting, inferPageTargetForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, rankCandidatesForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, sanitizeCandidatePaginationByLayoutForTesting, scoreSearchResultPageForTesting, selectDetailUrlFieldForTesting, shouldPromptForLoginInterventionForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/detector/page-detector.js';
 import { ExtensionDetectorHost } from '../dist/runtime/detector/page-detector-host.js';
 import { candidateIdsForAnnotatedScreenshotForTesting, candidateIdsForCandidateScreenshotsForTesting } from '../dist/runtime/detector/agent-visual-artifacts.js';
 import { protectedSmartResultToCandidatesForTesting } from '../dist/runtime/detector/protected-smart.js';
@@ -1951,6 +1951,409 @@ test('auto ranking keeps gc-zb announcement records above category navigation', 
 
   assert.equal(rankCandidatesForTesting([categoryGridCandidate, categoryNavCandidate, announcementCandidate])[0].id, 'protected_smart_3');
   assert.equal(applyGoalScoresForTesting([categoryGridCandidate, categoryNavCandidate, announcementCandidate], '采集招标公告列表')[0].id, 'protected_smart_3');
+});
+
+test('primary candidate quality gate rejects navigation-like Amazon header lists', () => {
+  const navCandidate = {
+    id: 'protected_smart_nav',
+    type: 'search_results',
+    title: 'Amazon header nav',
+    confidence: 0.96,
+    selector: '',
+    xpath: '/html/body/div[1]/header//a',
+    itemSelector: '',
+    itemXPath: '/html/body/div[1]/header//a',
+    itemCount: 12,
+    fields: [
+      { name: 'title', kind: 'text', selector: '', xpath: './span', relativeXPath: './span', samples: ['Best Sellers', 'New Releases', 'Amazon Haul', 'Customer Service'] },
+      { name: 'url', kind: 'href', selector: '', xpath: '.', relativeXPath: '.', samples: [
+        'https://www.amazon.com/gp/bestsellers?ref_=nav_cs_bestsellers',
+        'https://www.amazon.com/gp/new-releases?ref_=nav_cs_newreleases',
+        'https://www.amazon.com/haul?ref_=nav_cs_haul',
+        'https://www.amazon.com/gp/help/customer/display.html?ref_=nav_cs_help'
+      ] }
+    ],
+    sampleRows: [
+      { title: 'Best Sellers', url: 'https://www.amazon.com/gp/bestsellers?ref_=nav_cs_bestsellers' },
+      { title: 'New Releases', url: 'https://www.amazon.com/gp/new-releases?ref_=nav_cs_newreleases' },
+      { title: 'Amazon Haul', url: 'https://www.amazon.com/haul?ref_=nav_cs_haul' }
+    ],
+    reasons: ['Detected by protected SmartProxy resource', 'fullColRate=0.9'],
+    layout: {
+      role: 'header',
+      score: 0.22,
+      mainScore: 0.18,
+      sidebarPenalty: 0.1,
+      boilerplatePenalty: 0.42,
+      visualCoverage: 0.12,
+      textDensity: 0.2,
+      linkDensity: 0.95,
+      boundingBox: { x: 0, y: 0, width: 1200, height: 80 }
+    }
+  };
+  const productCandidate = {
+    id: 'protected_smart_products',
+    type: 'search_results',
+    title: 'Amazon product results',
+    confidence: 0.9,
+    selector: '',
+    xpath: '//div[@data-component-type="s-search-result"]',
+    itemSelector: '',
+    itemXPath: '//div[@data-component-type="s-search-result"]',
+    itemCount: 16,
+    fields: [
+      { name: 'title', kind: 'text', selector: '', xpath: './/h2', relativeXPath: './/h2', samples: [
+        'CORSAIR Vengeance RGB DDR5 RAM 32GB (2x16GB) 6000MHz',
+        'G.SKILL Trident Z5 RGB Series 32GB DDR5 6000'
+      ] },
+      { name: 'url', kind: 'href', selector: '', xpath: './/a', relativeXPath: './/a', samples: [
+        'https://www.amazon.com/dp/B0B1234567',
+        'https://www.amazon.com/dp/B0B7654321'
+      ] },
+      { name: 'price', kind: 'text', selector: '', xpath: './/span[contains(@class,"price")]', relativeXPath: './/span', samples: ['$109.99', '$119.99'] }
+    ],
+    sampleRows: [
+      { title: 'CORSAIR Vengeance RGB DDR5 RAM 32GB (2x16GB) 6000MHz', url: 'https://www.amazon.com/dp/B0B1234567', price: '$109.99' },
+      { title: 'G.SKILL Trident Z5 RGB Series 32GB DDR5 6000', url: 'https://www.amazon.com/dp/B0B7654321', price: '$119.99' }
+    ],
+    reasons: ['Detected by protected SmartProxy resource', 'fullColRate=0.88'],
+    layout: {
+      role: 'main',
+      score: 0.86,
+      mainScore: 0.9,
+      sidebarPenalty: 0.05,
+      boilerplatePenalty: 0.08,
+      visualCoverage: 0.55,
+      textDensity: 0.42,
+      linkDensity: 0.35,
+      boundingBox: { x: 180, y: 220, width: 900, height: 1400 }
+    }
+  };
+
+  const navQuality = assessPrimaryCandidateQuality(navCandidate, 'preview product title and price');
+  assert.equal(navQuality.usable, false);
+  assert.ok(navQuality.reasons.some((reason) => /nav|header|navigation/i.test(reason)));
+  assert.equal(hasUsablePrimaryCandidateForTesting([navCandidate], 'preview product title and price'), false);
+  assert.equal(hasUsablePrimaryCandidateForTesting([productCandidate], 'preview product title and price'), true);
+  assert.equal(hasUsablePrimaryCandidateForTesting([navCandidate, productCandidate], 'preview product title and price'), true);
+
+  // Dense news/product grids may report very low visualCoverage while still having
+  // strong title/href rows. Content strength should keep them usable.
+  const denseNewsCandidate = {
+    id: 'protected_smart_dense_news',
+    type: 'repeated_card',
+    title: 'BBC news cards',
+    confidence: 0.86,
+    selector: '',
+    xpath: '//div[contains(@class,"promo")]',
+    itemSelector: '',
+    itemXPath: '//div[contains(@class,"promo")]',
+    itemCount: 12,
+    fields: [
+      {
+        name: 'title',
+        kind: 'text',
+        selector: '',
+        xpath: './/h2',
+        relativeXPath: './/h2',
+        samples: [
+          'US inflation cools more than expected in latest report',
+          'European leaders meet to discuss new security pact',
+          'Scientists warn coral reefs face irreversible decline'
+        ]
+      },
+      {
+        name: 'url',
+        kind: 'href',
+        selector: '',
+        xpath: './/a',
+        relativeXPath: './/a',
+        samples: [
+          'https://www.bbc.com/news/articles/c1',
+          'https://www.bbc.com/news/articles/c2',
+          'https://www.bbc.com/news/articles/c3'
+        ]
+      }
+    ],
+    sampleRows: [
+      { title: 'US inflation cools more than expected in latest report', url: 'https://www.bbc.com/news/articles/c1' },
+      { title: 'European leaders meet to discuss new security pact', url: 'https://www.bbc.com/news/articles/c2' },
+      { title: 'Scientists warn coral reefs face irreversible decline', url: 'https://www.bbc.com/news/articles/c3' }
+    ],
+    reasons: ['Detected by protected SmartProxy resource'],
+    diagnostics: {
+      matchCount: 12,
+      sampleBoxes: [],
+      textLength: 420,
+      visualCoverage: 0.04,
+      warnings: []
+    },
+    layout: {
+      role: 'main',
+      score: 0.78,
+      mainScore: 0.82,
+      sidebarPenalty: 0.05,
+      boilerplatePenalty: 0.08,
+      visualCoverage: 0.04,
+      textDensity: 0.35,
+      linkDensity: 0.4,
+      boundingBox: { x: 40, y: 180, width: 1100, height: 2200 }
+    }
+  };
+  const denseQuality = assessPrimaryCandidateQuality(denseNewsCandidate, '预览新闻标题和链接');
+  assert.equal(denseQuality.usable, true, `expected dense news usable, got reasons=${denseQuality.reasons.join(',')}`);
+});
+
+test('detail page target prefers type=detail over related/sidebar lists', () => {
+  const relatedList = {
+    id: 'related_posts',
+    type: 'repeated_card',
+    title: 'Related posts',
+    confidence: 0.92,
+    selector: '.related-posts',
+    xpath: '//aside//div[contains(@class,"related")]',
+    itemSelector: '.related-item',
+    itemXPath: '//aside//div[contains(@class,"related-item")]',
+    itemCount: 6,
+    fields: [
+      {
+        name: 'title',
+        kind: 'text',
+        selector: '.title',
+        xpath: './/a',
+        relativeXPath: './/a',
+        samples: [
+          'How Zig creator calls a spade a spade in public interviews',
+          'Another long related engineering essay about performance'
+        ]
+      },
+      {
+        name: 'url',
+        kind: 'href',
+        selector: 'a',
+        xpath: './/a',
+        relativeXPath: './/a',
+        samples: [
+          'https://example.com/blog/related-1',
+          'https://example.com/blog/related-2'
+        ]
+      }
+    ],
+    sampleRows: [
+      { title: 'How Zig creator calls a spade a spade in public interviews', url: 'https://example.com/blog/related-1' },
+      { title: 'Another long related engineering essay about performance', url: 'https://example.com/blog/related-2' },
+      { title: 'Third related post with a sufficiently long title here', url: 'https://example.com/blog/related-3' }
+    ],
+    reasons: ['Related posts module', 'Fallback detector candidate'],
+    layout: {
+      role: 'sidebar',
+      score: 0.35,
+      mainScore: 0.2,
+      sidebarPenalty: 0.72,
+      boilerplatePenalty: 0.12,
+      visualCoverage: 0.18,
+      textDensity: 0.3,
+      linkDensity: 0.7,
+      boundingBox: { x: 980, y: 400, width: 280, height: 900 }
+    },
+    diagnostics: {
+      matchCount: 6,
+      sampleBoxes: [],
+      textLength: 240,
+      visualCoverage: 0.18,
+      warnings: []
+    }
+  };
+  const detailCandidate = {
+    id: 'detail_main',
+    type: 'detail',
+    title: 'Article detail',
+    confidence: 0.78,
+    selector: 'article',
+    xpath: '//article',
+    itemSelector: 'article',
+    itemXPath: '//article',
+    itemCount: 1,
+    fields: [
+      {
+        name: 'title',
+        kind: 'text',
+        selector: 'h1',
+        xpath: '//article//h1',
+        relativeXPath: './/h1',
+        samples: ['Zig Creator Calls Spade a Spade, Anthropic Blows Smoke']
+      },
+      {
+        name: 'author',
+        kind: 'text',
+        selector: '.author',
+        xpath: '//article//*[@class="author"]',
+        relativeXPath: './/*[@class="author"]',
+        samples: ['Ray Myers']
+      },
+      {
+        name: 'content',
+        kind: 'text',
+        selector: '.content',
+        xpath: '//article//div[contains(@class,"content")]',
+        relativeXPath: './/div[contains(@class,"content")]',
+        samples: [
+          'This is the main article body with enough substance for a detail extraction task. It discusses product claims, engineering culture, and public statements at length so detectors can treat it as the primary entity instead of sidebar recommendation modules.'
+        ]
+      }
+    ],
+    sampleRows: [{
+      title: 'Zig Creator Calls Spade a Spade, Anthropic Blows Smoke',
+      author: 'Ray Myers',
+      content: 'This is the main article body with enough substance for a detail extraction task. It discusses product claims, engineering culture, and public statements at length so detectors can treat it as the primary entity instead of sidebar recommendation modules.'
+    }],
+    reasons: ['Single detail page with semantic fields'],
+    layout: {
+      role: 'main',
+      score: 0.88,
+      mainScore: 0.92,
+      sidebarPenalty: 0.05,
+      boilerplatePenalty: 0.08,
+      visualCoverage: 0.62,
+      textDensity: 0.55,
+      linkDensity: 0.08,
+      boundingBox: { x: 120, y: 160, width: 780, height: 2200 }
+    },
+    diagnostics: {
+      matchCount: 1,
+      sampleBoxes: [],
+      textLength: 520,
+      visualCoverage: 0.62,
+      warnings: []
+    }
+  };
+
+  assert.equal(inferPageTargetForTesting('预览详情页标题、作者和正文'), 'detail');
+  assert.equal(inferPageTargetForTesting('采集招标公告列表'), 'list');
+  assert.equal(inferPageTargetForTesting('预览新闻标题和链接'), 'list');
+
+  const relatedQuality = assessPrimaryCandidateQuality(relatedList, '预览详情页标题、作者和正文');
+  assert.equal(relatedQuality.usable, false, `related list should be unusable for detail goal, reasons=${relatedQuality.reasons.join(',')}`);
+  const detailQuality = assessPrimaryCandidateQuality(detailCandidate, '预览详情页标题、作者和正文');
+  assert.equal(detailQuality.usable, true, `detail should be usable, reasons=${detailQuality.reasons.join(',')}`);
+
+  const ranked = applyGoalScoresForTesting([relatedList, detailCandidate], '预览详情页标题、作者和正文');
+  assert.equal(ranked[0].id, 'detail_main', `expected detail first, got ${ranked[0].id} goalScore=${ranked[0].goalScore}`);
+
+  // Without a detail goal, multi-item lists may still rank first; with detail goal, quality gate prefers detail.
+  assert.equal(hasUsablePrimaryCandidateForTesting([relatedList, detailCandidate], '预览详情页标题、作者和正文'), true);
+
+  const context = buildAgentContextForTesting({
+    url: 'https://example.com/blog/post',
+    finalUrl: 'https://example.com/blog/post',
+    title: 'Blog post',
+    capturedAt: '2026-07-13T00:00:00.000Z',
+    candidates: [relatedList, detailCandidate]
+  }, '预览详情页标题、作者和正文');
+  assert.equal(context.recommendedCandidateId, 'detail_main');
+});
+
+test('detail goals keep encyclopedia bodies that mention copyright and reject wiki edit lists', () => {
+  const wikiEditList = {
+    id: 'wiki_edit_list',
+    type: 'search_results',
+    title: 'Section edit links',
+    confidence: 0.91,
+    selector: '.mw-editsection',
+    xpath: '//span[contains(@class,"mw-editsection")]',
+    itemSelector: 'a',
+    itemXPath: '//span[contains(@class,"mw-editsection")]/a',
+    itemCount: 5,
+    fields: [
+      { name: 'title', kind: 'text', selector: 'a', xpath: '//span/a', relativeXPath: '.', samples: ['edit', 'edit', 'edit', 'edit', 'edit'] },
+      {
+        name: 'url',
+        kind: 'href',
+        selector: 'a',
+        xpath: '//span/a',
+        relativeXPath: '.',
+        samples: [
+          'https://en.wikipedia.org/w/index.php?title=Web_scraping&action=edit&section=4',
+          'https://en.wikipedia.org/w/index.php?title=Web_scraping&action=edit&section=5',
+          'https://en.wikipedia.org/w/index.php?title=Web_scraping&action=edit&section=6',
+          'https://en.wikipedia.org/w/index.php?title=Web_scraping&action=edit&section=7',
+          'https://en.wikipedia.org/w/index.php?title=Web_scraping&action=edit&section=8'
+        ]
+      },
+      {
+        name: 'summary',
+        kind: 'text',
+        selector: 'span',
+        xpath: '//span',
+        relativeXPath: '.',
+        samples: ['Text pattern matching[edit]', 'HTTP programming[edit]', 'HTML parsing[edit]', 'Computer vision[edit]', 'Semantic annotation[edit]']
+      }
+    ],
+    sampleRows: [
+      { title: 'edit', url: 'https://en.wikipedia.org/w/index.php?title=Web_scraping&action=edit&section=4', summary: 'Text pattern matching[edit]' },
+      { title: 'edit', url: 'https://en.wikipedia.org/w/index.php?title=Web_scraping&action=edit&section=5', summary: 'HTTP programming[edit]' },
+      { title: 'edit', url: 'https://en.wikipedia.org/w/index.php?title=Web_scraping&action=edit&section=6', summary: 'HTML parsing[edit]' },
+      { title: 'edit', url: 'https://en.wikipedia.org/w/index.php?title=Web_scraping&action=edit&section=7', summary: 'Computer vision[edit]' },
+      { title: 'edit', url: 'https://en.wikipedia.org/w/index.php?title=Web_scraping&action=edit&section=8', summary: 'Semantic annotation[edit]' }
+    ],
+    reasons: ['Repeated section headings']
+  };
+
+  const wikiArticle = {
+    id: 'wiki_detail',
+    type: 'detail',
+    title: 'Wikipedia article',
+    confidence: 0.72,
+    selector: '#mw-content-text',
+    xpath: '//*[@id="mw-content-text"]',
+    itemSelector: '#mw-content-text',
+    itemXPath: '//*[@id="mw-content-text"]',
+    itemCount: 1,
+    fields: [
+      { name: 'title', kind: 'text', selector: '#firstHeading', xpath: '//*[@id="firstHeading"]', relativeXPath: '.', samples: ['Web scraping'] },
+      {
+        name: 'content',
+        kind: 'text',
+        selector: '.mw-parser-output',
+        xpath: '//*[contains(@class,"mw-parser-output")]',
+        relativeXPath: '.',
+        samples: [
+          'Web scraping is data scraping used for extracting data from websites. The term typically refers to automated processes implemented using a bot or web crawler. It is a form of copying in which specific data is gathered and copied from the web, typically into a central local database or spreadsheet, for later retrieval or analysis. Web scraping may be against the terms of use of some websites and can raise copyright concerns when republishing content without permission.'
+        ]
+      }
+    ],
+    sampleRows: [{
+      title: 'Web scraping',
+      content: 'Web scraping is data scraping used for extracting data from websites. The term typically refers to automated processes implemented using a bot or web crawler. It is a form of copying in which specific data is gathered and copied from the web, typically into a central local database or spreadsheet, for later retrieval or analysis. Web scraping may be against the terms of use of some websites and can raise copyright concerns when republishing content without permission.'
+    }],
+    reasons: ['Single detail page with semantic fields']
+  };
+
+  const goal = '预览详情页标题、作者和正文';
+  const kept = filterDetectedBoilerplateCandidates([wikiEditList, wikiArticle]);
+  assert.ok(kept.some((candidate) => candidate.id === 'wiki_detail'), 'encyclopedia detail must survive boilerplate filter');
+
+  const editQuality = assessPrimaryCandidateQuality(wikiEditList, goal);
+  assert.equal(editQuality.usable, false, `wiki edit list should be unusable, reasons=${editQuality.reasons.join(',')}`);
+  assert.ok(
+    editQuality.reasons.some((reason) => /detail goal|wiki section edit|related\/sidebar/i.test(reason)),
+    `expected detail/wiki reject reason, got ${editQuality.reasons.join(',')}`
+  );
+
+  const articleQuality = assessPrimaryCandidateQuality(wikiArticle, goal);
+  assert.equal(articleQuality.usable, true, `wiki article should be usable, reasons=${articleQuality.reasons.join(',')}`);
+
+  const ranked = applyGoalScoresForTesting([wikiEditList, wikiArticle], goal);
+  assert.equal(ranked[0].id, 'wiki_detail', `expected wiki detail first, got ${ranked[0].id}`);
+
+  const context = buildAgentContextForTesting({
+    url: 'https://en.wikipedia.org/wiki/Web_scraping',
+    finalUrl: 'https://en.wikipedia.org/wiki/Web_scraping',
+    title: 'Web scraping - Wikipedia',
+    capturedAt: '2026-07-13T00:00:00.000Z',
+    candidates: [wikiEditList, wikiArticle]
+  }, goal);
+  assert.equal(context.recommendedCandidateId, 'wiki_detail');
 });
 
 test('filterDetectedBoilerplateCandidates removes standalone pagination controls', () => {
