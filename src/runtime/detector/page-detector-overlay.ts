@@ -737,6 +737,22 @@ export async function readManualOverlaySelection(page: Page): Promise<ManualOver
   }).catch(() => undefined);
 }
 
+/** True when the manual overlay host node is still attached to the page DOM. */
+export async function hasManualOverlayHost(page: Page): Promise<boolean> {
+  if (page.isClosed()) return false;
+  return page.evaluate(() => Boolean(document.querySelector('[data-octopus-manual-overlay="true"]')))
+    .catch(() => false);
+}
+
+export function isInjectableBrowserPageUrl(url: string | undefined): boolean {
+  if (!url) return false;
+  const value = url.trim().toLowerCase();
+  if (!value || value === 'about:blank') return false;
+  if (value.startsWith('chrome://') || value.startsWith('chrome-error://') || value.startsWith('chrome-extension://')) return false;
+  if (value.startsWith('devtools://') || value.startsWith('edge://') || value.startsWith('about:')) return false;
+  return value.startsWith('http://') || value.startsWith('https://') || value.startsWith('file://');
+}
+
 export async function clearManualOverlayAction(page: Page): Promise<void> {
   await page.evaluate(() => {
     const w = window as typeof window & { __octopusManualOverlayState?: { action?: ManualOverlayAction; selectedXPath?: string; selectedText?: string } };
@@ -780,6 +796,14 @@ export async function showManualOverlayForTesting(page: Page, options: Parameter
 
 export async function readManualOverlaySelectionForTesting(page: Page): Promise<ManualOverlaySelection | undefined> {
   return readManualOverlaySelection(page);
+}
+
+export async function hasManualOverlayHostForTesting(page: Page): Promise<boolean> {
+  return hasManualOverlayHost(page);
+}
+
+export function isInjectableBrowserPageUrlForTesting(url: string | undefined): boolean {
+  return isInjectableBrowserPageUrl(url);
 }
 
 export function resetManualOverlayHintKeysForTesting(): void {

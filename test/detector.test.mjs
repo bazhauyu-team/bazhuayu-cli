@@ -9,11 +9,11 @@ import { gunzipSync } from 'node:zlib';
 import { buildAgentContextForTesting, buildTaskFromAgentPlan, previewAgentPlanForTesting, defaultDetectedTaskNameForTesting, detectCommand, detectUrlCommand, recommendedApiCandidateForTesting, resolveAgentScreenshotPathForTesting, resolveAvailableDetectedTaskFile, runInlineAgentDetectForTesting, splitRunUrlArgs } from '../dist/commands/detect.js';
 import { EngineHost } from '../dist/runtime/engine-host.js';
 import { setEngineHostFactoryForTesting } from '../dist/commands/run.js';
-import { browserSessionPath, loadBrowserSession, saveBrowserSession } from '../dist/runtime/browser-session.js';
+import { browserSessionPath, buildCookieHeaderFromSession, loadBrowserSession, normalizeCookieValue, saveBrowserSession, sanitizeSessionCookies } from '../dist/runtime/browser-session.js';
 import { detectedTaskToCloudTaskInfo, encodeTaskXml } from '../dist/runtime/task-cloud-save.js';
 import { hasLinuxDisplayEnvironment, requiresVirtualDisplay } from '../dist/runtime/virtual-display.js';
 import * as pageDetectorFacade from '../dist/runtime/detector/page-detector.js';
-import { applyGoalScoresForTesting, assessPrimaryCandidateQuality, augmentAdjacentMetadataFieldsForTesting, dedupeEquivalentCandidates, detectApiListCandidatesForTesting, detectInteractivePaginationOptionsForTesting, detectKnownApiListCandidatesForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, detectSearchResultBlocksForTesting, detectSemanticBusinessCardsForTesting, dismissPageObstructionsForTesting, filterDetectedBoilerplateCandidates, findSearchInputCandidatesForTesting, hasUsablePrimaryCandidateForTesting, inferPageTargetForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, rankCandidatesForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, sanitizeCandidatePaginationByLayoutForTesting, scoreSearchResultPageForTesting, selectDetailUrlFieldForTesting, shouldPromptForLoginInterventionForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/detector/page-detector.js';
+import { applyGoalScoresForTesting, assessPrimaryCandidateQuality, augmentAdjacentMetadataFieldsForTesting, dedupeEquivalentCandidates, detectApiListCandidatesForTesting, detectInteractivePaginationOptionsForTesting, detectKnownApiListCandidatesForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, detectSearchResultBlocksForTesting, detectSemanticBusinessCardsForTesting, dismissPageObstructionsForTesting, filterDetectedBoilerplateCandidates, findSearchInputCandidatesForTesting, hasUsablePrimaryCandidateForTesting, inferPageTargetForTesting, isInjectableBrowserPageUrlForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, rankCandidatesForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, sanitizeCandidatePaginationByLayoutForTesting, scoreSearchResultPageForTesting, selectDetailUrlFieldForTesting, shouldPromptForLoginInterventionForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/detector/page-detector.js';
 import { ExtensionDetectorHost } from '../dist/runtime/detector/page-detector-host.js';
 import { candidateIdsForAnnotatedScreenshotForTesting, candidateIdsForCandidateScreenshotsForTesting } from '../dist/runtime/detector/agent-visual-artifacts.js';
 import { protectedSmartResultToCandidatesForTesting } from '../dist/runtime/detector/protected-smart.js';
@@ -23,6 +23,7 @@ test('page detector facade preserves its public runtime exports', () => {
   const expectedExports = [
     'DetectionLoginRequiredError',
     'applyGoalScoresForTesting',
+    'assessPrimaryCandidateQuality',
     'augmentAdjacentMetadataFieldsForTesting',
     'confirmManualPopupDismissalForTesting',
     'dedupeEquivalentCandidates',
@@ -37,6 +38,10 @@ test('page detector facade preserves its public runtime exports', () => {
     'dismissPageObstructionsForTesting',
     'filterDetectedBoilerplateCandidates',
     'findSearchInputCandidatesForTesting',
+    'hasManualOverlayHostForTesting',
+    'hasUsablePrimaryCandidateForTesting',
+    'inferPageTargetForTesting',
+    'isInjectableBrowserPageUrlForTesting',
     'isPlausiblePaginationOptionForTesting',
     'pageLooksLikeSearchResultForTesting',
     'preferredPaginationForTesting',
@@ -724,6 +729,60 @@ test('saveBrowserSession writes private cookie files and preserves covered hosts
     const loaded = await loadBrowserSession('example.com');
     assert.deepEqual(loaded.hosts, ['example.com', 'passport.example.com']);
     assert.deepEqual(loaded.cookies.map((cookie) => cookie.name), ['sid']);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  }
+});
+
+test('sanitizeSessionCookies strips quoted values and repairs SameSite=None', () => {
+  const cleaned = sanitizeSessionCookies([
+    { name: '_routing_id', value: '"e933135d-acb2-4627-b0bc-ca65401c8611"', domain: 'www.pinterest.com', path: '/', secure: false },
+    { name: 'g_state', value: '{"i_l":0,"i_b":"x"}', domain: 'www.pinterest.com', path: '/' },
+    { name: 'sid', value: 'ok;bad', domain: 'example.com', path: '/' },
+    { name: 'cross', value: '1', domain: '.example.com', path: '/', sameSite: 'None', secure: false },
+    { name: '__Secure-s_a', value: 'token', domain: '.example.com', path: '/', secure: false },
+    { name: 'expired', value: 'old', domain: 'example.com', expires: 1 }
+  ]);
+  assert.equal(normalizeCookieValue('"abc"'), 'abc');
+  assert.equal(cleaned.find((cookie) => cookie.name === '_routing_id')?.value, 'e933135d-acb2-4627-b0bc-ca65401c8611');
+  assert.equal(cleaned.find((cookie) => cookie.name === 'cross')?.secure, true);
+  assert.equal(cleaned.find((cookie) => cookie.name === '__Secure-s_a')?.secure, true);
+  assert.equal(cleaned.some((cookie) => cookie.name === 'expired'), false);
+
+  const built = buildCookieHeaderFromSession({ cookies: cleaned });
+  assert.match(built.header, /_routing_id=e933135d-acb2-4627-b0bc-ca65401c8611/);
+  assert.match(built.header, /g_state=\{"i_l":0,"i_b":"x"\}/);
+  // Semicolons break Cookie header parsing; encode instead of dropping auth cookies.
+  assert.match(built.header, /sid=ok%3Bbad/);
+  // Engine cannot set Secure flag; __Secure- / __Host- must be omitted from globalCookie.
+  assert.doesNotMatch(built.header, /__Secure-s_a=/);
+  assert.equal(built.skipped.some((item) => item.name === '__Secure-s_a' && item.reason === 'secure-prefix-requires-flag'), true);
+});
+
+test('buildCookieHeaderFromSession drops secure-prefix cookies that crash engine setCookies', async () => {
+  const previousHome = process.env.HOME;
+  const home = await mkdtemp(join(tmpdir(), 'detector-secure-cookie-'));
+  process.env.HOME = home;
+  try {
+    await saveBrowserSession({
+      name: 'www.pinterest.com',
+      origin: 'https://www.pinterest.com',
+      cookies: [
+        { name: '_auth', value: '1', domain: '.pinterest.com', path: '/', secure: true },
+        { name: '_pinterest_sess', value: 'sess', domain: '.pinterest.com', path: '/', secure: true },
+        { name: '__Secure-s_a', value: 'token', domain: '.pinterest.com', path: '/', secure: true, sameSite: 'None' },
+        { name: '__Host-id', value: 'host', domain: 'www.pinterest.com', path: '/', secure: true }
+      ]
+    });
+    const loaded = await loadBrowserSession('www.pinterest.com');
+    const built = buildCookieHeaderFromSession(loaded);
+    assert.match(built.header, /_auth=1/);
+    assert.match(built.header, /_pinterest_sess=sess/);
+    assert.doesNotMatch(built.header, /__Secure-s_a=/);
+    assert.doesNotMatch(built.header, /__Host-id=/);
+    assert.equal(built.used, 2);
+    assert.equal(built.skipped.length, 2);
   } finally {
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
@@ -4489,6 +4548,17 @@ test('auto detect does not prompt for manual login intervention just because the
     manual: true,
     interactive: true
   }), true);
+});
+
+test('isInjectableBrowserPageUrlForTesting accepts real pages and rejects browser internals', () => {
+  assert.equal(isInjectableBrowserPageUrlForTesting('https://www.pinterest.com/'), true);
+  assert.equal(isInjectableBrowserPageUrlForTesting('http://example.com/login'), true);
+  assert.equal(isInjectableBrowserPageUrlForTesting('file:///tmp/page.html'), true);
+  assert.equal(isInjectableBrowserPageUrlForTesting('about:blank'), false);
+  assert.equal(isInjectableBrowserPageUrlForTesting('chrome://newtab/'), false);
+  assert.equal(isInjectableBrowserPageUrlForTesting('chrome-error://chromewebdata/'), false);
+  assert.equal(isInjectableBrowserPageUrlForTesting('devtools://devtools/bundled/inspector.html'), false);
+  assert.equal(isInjectableBrowserPageUrlForTesting(undefined), false);
 });
 
 test('dismissPageObstructionsForTesting closes ordinary login popup when requested', async () => {

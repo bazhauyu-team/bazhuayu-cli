@@ -17,7 +17,7 @@ import { runApiListTask } from '../runtime/api-list-runner.js';
 import { LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE, isLocalChromeRuntimeSupported } from '../runtime/platform-support.js';
 import { BillingRuntimeError } from '../runtime/run-services.js';
 import { resolveAuth } from '../runtime/auth.js';
-import { cookieHeaderFromSession, loadBrowserSession } from '../runtime/browser-session.js';
+import { buildCookieHeaderFromSession, loadBrowserSession } from '../runtime/browser-session.js';
 import {
   isRunControlReachable,
   listActiveTaskControlStates,
@@ -468,7 +468,7 @@ async function executeTask(
     appendRunArtifact('logs.jsonl', event);
     appendRunArtifact('events.jsonl', { event: 'log', ...event });
     if (options.jsonl) printRunJsonLine(runtimeConsole, { event: 'log', ...event });
-    else if (!options.json && (options.debugBridge || event.message.startsWith('runtime.'))) {
+    else if (!options.json && shouldPrintRuntimeLog(event, options.debugBridge)) {
       runtimeConsole.stderr(event.message);
     }
   });
@@ -778,15 +778,28 @@ async function applyTaskBrowserSession(
   const sessionName = task.detection?.session?.name;
   if (!sessionName) return;
   const session = await loadBrowserSession(sessionName);
-  const cookieHeader = cookieHeaderFromSession(session);
-  if (!cookieHeader) {
+  const built = buildCookieHeaderFromSession(session);
+  if (!built.header) {
     throw new Error(`任务需要登录会话 ${sessionName}，但本地会话没有可用 cookie`);
   }
-  task.xml = injectGlobalCookie(task.xml, cookieHeader);
+  task.xml = injectGlobalCookie(task.xml, built.header);
   task.xoml = await transformXml(task.xml);
   if (!options.json && !options.jsonl) {
-    runtimeConsole.stderr(`Using browser session: ${session.name} (${session.cookieCount} cookies, cookies-only)`);
+    runtimeConsole.stderr(`Using browser session: ${session.name} (${built.used}/${session.cookieCount} cookies, cookies-only)`);
+    if (built.skipped.length) {
+      const preview = built.skipped.slice(0, 5).map((item) => `${item.name}(${item.reason})`).join(', ');
+      const more = built.skipped.length > 5 ? ` +${built.skipped.length - 5} more` : '';
+      runtimeConsole.stderr(`Skipped unsafe session cookies: ${preview}${more}`);
+    }
   }
+}
+
+function shouldPrintRuntimeLog(event: { level?: string; message: string }, debugBridge?: boolean): boolean {
+  if (debugBridge) return true;
+  if (event.message.startsWith('runtime.')) return true;
+  const level = String(event.level ?? '').toLowerCase();
+  if (level === '1' || level === 'error' || level === 'warn' || level === 'warning') return true;
+  return /(failure|error|invalid cookie|setcookies|timeout|captcha|blocked)/i.test(event.message);
 }
 
 export function injectGlobalCookie(xml: string, cookieHeader: string): string {

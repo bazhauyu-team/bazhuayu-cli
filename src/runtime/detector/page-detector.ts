@@ -31,6 +31,8 @@ import type {
 export {
   showManualOverlayForTesting,
   readManualOverlaySelectionForTesting,
+  hasManualOverlayHostForTesting,
+  isInjectableBrowserPageUrlForTesting,
   resetManualOverlayHintKeysForTesting,
   writeManualOverlayHintOnceForTesting
 } from './page-detector-overlay.js';

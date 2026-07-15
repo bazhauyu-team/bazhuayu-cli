@@ -9,6 +9,8 @@ import type {
 } from './page-detector-shared.js';
 import {
   clearManualOverlayAction,
+  hasManualOverlayHost,
+  isInjectableBrowserPageUrl,
   readManualOverlaySelection,
   removeManualOverlay,
   removeManualOverlaysFromBrowser,
@@ -242,13 +244,20 @@ export async function chooseLoginInterventionInBrowser(
   runtimeConsole: SuppressedRuntimeConsole
 ): Promise<'continue' | 'continue-without-login' | 'cancel'> {
   writeManualOverlayHintOnce(runtimeConsole, host.page, 'login', '\n请在浏览器悬浮框中确认登录/验证状态。\n');
+  writeManualOverlayHintOnce(
+    runtimeConsole,
+    host.page,
+    'login-keyboard',
+    '提示: 登录后页面刷新若悬浮框消失，CLI 会自动重新注入；也可在终端按 c=已登录继续 / n=不需要登录 / q=取消\n'
+  );
   const overlayOptions = {
     title: '登录/验证确认',
     message: [
       message,
       initialAction === 'continue-without-login'
         ? '如果这只是普通登录弹窗，不影响当前页面内容，可以直接继续；本次检测后续将不再因同类弹窗打断。'
-        : '点击继续后会重新选择最合适的页面并检查页面内容。'
+        : '点击继续后会重新选择最合适的页面并检查页面内容。',
+      '登录跳转后若悬浮框暂时消失，请稍等自动恢复；也可直接回终端按 c / n / q。'
     ].join('\n'),
     choices: [
       { title: '已登录/验证，继续', value: 'continue', primary: initialAction === 'continue' },
@@ -257,32 +266,95 @@ export async function chooseLoginInterventionInBrowser(
     ]
   } satisfies Parameters<typeof showManualOverlay>[1];
   const browser = host.browser();
-  const injectedUrls = new Map<Page, string>();
+  /** Tracks last URL where overlay host was confirmed present. */
+  const injectedUrls = new WeakMap<Page, string>();
   const startedAt = Date.now();
-  while (true) {
-    let injectedAny = false;
-    const pages = browser
-      ? (await browser.pages().catch(() => [host.page])).filter((page) => !page.isClosed())
-      : [host.page].filter((page) => !page.isClosed());
-    for (const candidatePage of pages) {
-      const selection = await readManualOverlaySelection(candidatePage).catch(() => undefined);
-      if (selection?.action) {
-        await clearManualOverlayAction(candidatePage).catch(() => undefined);
-        if (candidatePage !== host.page && !candidatePage.isClosed()) await host.usePage(candidatePage).catch(() => undefined);
-        if (selection.action === 'continue' || selection.action === 'continue-without-login') return selection.action;
-        return 'cancel';
-      }
-      const currentUrl = candidatePage.url();
-      if (selection && injectedUrls.get(candidatePage) === currentUrl) continue;
-      await showManualOverlay(candidatePage, overlayOptions)
-        .then(() => {
+  let everInjected = false;
+  let lastMissingHostHintAt = 0;
+  let keyboardAction: 'continue' | 'continue-without-login' | 'cancel' | undefined;
+  const stdin = process.stdin;
+  const canUseKeyboard = Boolean(stdin.isTTY);
+  const wasRaw = canUseKeyboard ? stdin.isRaw : false;
+  const onStdinData = (chunk: Buffer | string) => {
+    const value = String(chunk).toLowerCase();
+    if (value === 'c' || value === '\r' || value === '\n') {
+      keyboardAction = 'continue';
+      return;
+    }
+    if (value === 'n') {
+      keyboardAction = 'continue-without-login';
+      return;
+    }
+    if (value === 'q' || value === '\u0003') {
+      keyboardAction = 'cancel';
+    }
+  };
+  if (canUseKeyboard) {
+    if (stdin.isTTY) stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on('data', onStdinData);
+  }
+  try {
+    while (true) {
+      if (keyboardAction) return keyboardAction;
+
+      let injectedAny = false;
+      let hostPresentAny = false;
+      const pages = browser
+        ? (await browser.pages().catch(() => [host.page])).filter((page) => !page.isClosed())
+        : [host.page].filter((page) => !page.isClosed());
+      for (const candidatePage of pages) {
+        if (candidatePage.isClosed()) continue;
+        const selection = await readManualOverlaySelection(candidatePage).catch(() => undefined);
+        if (selection?.action) {
+          await clearManualOverlayAction(candidatePage).catch(() => undefined);
+          if (candidatePage !== host.page && !candidatePage.isClosed()) await host.usePage(candidatePage).catch(() => undefined);
+          if (selection.action === 'continue' || selection.action === 'continue-without-login') return selection.action;
+          return 'cancel';
+        }
+
+        const currentUrl = candidatePage.url();
+        if (!isInjectableBrowserPageUrl(currentUrl)) continue;
+
+        // Prefer live DOM host presence over URL/window state. Login redirects and
+        // SPA replacements wipe the overlay node even when the URL string is stable.
+        const hostPresent = await hasManualOverlayHost(candidatePage);
+        if (hostPresent) {
+          hostPresentAny = true;
+          injectedUrls.set(candidatePage, currentUrl);
+          everInjected = true;
+          continue;
+        }
+
+        const injected = await showManualOverlay(candidatePage, overlayOptions)
+          .then(async () => hasManualOverlayHost(candidatePage))
+          .catch(() => false);
+        if (injected) {
           injectedUrls.set(candidatePage, currentUrl);
           injectedAny = true;
-        })
-        .catch(() => undefined);
+          hostPresentAny = true;
+          everInjected = true;
+        } else {
+          injectedUrls.delete(candidatePage);
+        }
+      }
+
+      if (!hostPresentAny && everInjected && Date.now() - lastMissingHostHintAt > 4000) {
+        runtimeConsole.writeStderr('\n登录后页面已更新，正在重新注入悬浮框… 也可在终端按 c=已登录继续 / n=不需要登录 / q=取消\n');
+        lastMissingHostHintAt = Date.now();
+      }
+
+      if (!everInjected && !injectedAny && Date.now() - startedAt > 2500) {
+        throw new Error('manual login overlay injection failed');
+      }
+      await delay(150);
     }
-    if (!injectedUrls.size && !injectedAny && Date.now() - startedAt > 1500) throw new Error('manual login overlay injection failed');
-    await delay(150);
+  } finally {
+    if (canUseKeyboard) {
+      stdin.off('data', onStdinData);
+      if (stdin.isTTY) stdin.setRawMode(wasRaw);
+      stdin.pause();
+    }
   }
 }
 
