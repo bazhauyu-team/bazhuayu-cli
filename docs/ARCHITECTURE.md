@@ -6,7 +6,7 @@
 CLI command
   -> TaskDefinitionProvider
   -> EngineHost
-  -> @octopus/engine WorkflowAgent
+  -> @octopus/browser-runtime WorkflowAgent
   -> independent Chrome
   -> ArtifactWriter
 ```
@@ -56,7 +56,7 @@ Current status:
 - `BridgeHub` is implemented without Electron IPC.
 - `EngineHost` launches real `WorkflowAgent`.
 - `--task-file` loads local task definitions.
-- XML-only task files are transformed through `@octopus/engine/transformer`.
+- XML-only task files are transformed through `@octopus/browser-runtime/transformer`.
 - Engine logs and rows are written to local JSONL artifacts.
 
 ## Run artifact layout

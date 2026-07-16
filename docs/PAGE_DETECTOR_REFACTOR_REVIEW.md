@@ -230,7 +230,7 @@ rg -n '\.detectPage\(|\bdetectPage\(' test
 
 #### D. `engine-host` 类型收窄
 
-- 新增 `WorkflowAgentLike` / `WorkflowBrowserLike` / `WorkflowAgentConstructor`
+- 新增 `WorkflowAgentLike` / `WorkflowAgentConstructor`（`WorkflowBrowserLike` 已在 browser-runtime 迁移中移除：Chrome 生命周期由 `WorkflowAgent.close()` 管理）
 - workflow 事件载荷用 `unknown`，并在读取前经过 `asWorkflowMessage`、`asRecord` 或对应 normalize 函数
 - bridge 诊断事件仅用 `Bridge*Event` 接口做**静态参数标注**；没有运行时 payload 校验或 narrowing，字段只用于日志
 - `private workflow: WorkflowAgentLike | null`

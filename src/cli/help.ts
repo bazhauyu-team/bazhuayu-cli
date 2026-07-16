@@ -407,7 +407,7 @@ Task file format:
   }
 
 Design:
-  - Runs embedded @octopus/engine directly.
+  - Runs embedded @octopus/browser-runtime directly.
   - Uses independent Chrome only.
   - Supports local Chrome execution on macOS x64/arm64, Windows x64, and Linux x64.
   - Does not support Linux arm64 local execution because Chrome for Testing has no Linux arm64 browser package.

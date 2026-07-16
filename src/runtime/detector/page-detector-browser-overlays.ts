@@ -1,5 +1,6 @@
 import type { Page } from 'puppeteer-core';
 import type { DetectedCandidate, DetectedFieldDiagnostics, DetectedPagination } from './types.js';
+import { detectDetails } from './page-detector-candidate-strategies.js';
 import { paginationKey } from './page-detector-pagination.js';
 
 export async function installCandidateOverlay(page: Page, candidates: DetectedCandidate[], paginations: DetectedPagination[] = []): Promise<void> {
@@ -659,7 +660,20 @@ export async function readOverlaySelection(page: Page): Promise<string[]> {
 }
 
 export async function installDetailFieldOverlay(page: Page): Promise<void> {
-  await page.evaluate(() => {
+  // Align manual detail suggestions with detectDetails() (same pipeline as auto detail recognition).
+  const detected = await detectDetails(page).catch(() => []);
+  const suggestedFields = (detected[0]?.fields ?? [])
+    .filter((field) => field.xpath && field.samples.some((sample) => String(sample ?? '').trim()))
+    .map((field) => ({
+      suggestedName: field.name,
+      kind: (field.kind === 'href' || field.kind === 'src' ? field.kind : 'text') as 'text' | 'href' | 'src',
+      xpath: field.xpath,
+      selector: field.selector,
+      sample: String(field.samples[0] ?? ''),
+      ...(field.diagnostics ? { diagnostics: field.diagnostics } : {})
+    }));
+
+  await page.evaluate((suggestedItems) => {
     type SelectedField = {
       id: string;
       suggestedName: string;
@@ -674,6 +688,14 @@ export async function installDetailFieldOverlay(page: Page): Promise<void> {
         hasStyleNoise: boolean;
         warnings: string[];
       };
+    };
+    type SuggestedItem = {
+      suggestedName: string;
+      kind: 'text' | 'href' | 'src';
+      xpath: string;
+      selector: string;
+      sample: string;
+      diagnostics?: SelectedField['diagnostics'];
     };
     const w = window as typeof window & {
       __octopusDetailFieldSelections?: string[];
@@ -709,21 +731,13 @@ export async function installDetailFieldOverlay(page: Page): Promise<void> {
       author: '#0f766e',
       content: '#dc2626',
       image: '#d97706',
+      price: '#0891b2',
       link: '#0891b2',
       field: '#4b5563'
     };
 
     function text(element: Element | null): string {
       return ((element as HTMLElement | null)?.innerText || element?.textContent || '').replace(/\s+/g, ' ').trim();
-    }
-
-    function ownText(element: Element): string {
-      return Array.from(element.childNodes)
-        .filter((node) => node.nodeType === Node.TEXT_NODE)
-        .map((node) => node.textContent || '')
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
     }
 
     function visible(element: Element): boolean {
@@ -743,10 +757,7 @@ export async function installDetailFieldOverlay(page: Page): Promise<void> {
         element.getAttribute('aria-label') || '',
         element.getAttribute('title') || '',
         element.getAttribute('rel') || '',
-        element.getAttribute('itemprop') || '',
-        element.getAttribute('data-testid') || '',
-        element.getAttribute('data-test') || '',
-        element.getAttribute('data-qa') || ''
+        element.getAttribute('itemprop') || ''
       ].join(' ');
     }
 
@@ -774,53 +785,129 @@ export async function installDetailFieldOverlay(page: Page): Promise<void> {
       return false;
     }
 
+    function styleTextLike(value: string): boolean {
+      if (!value) return false;
+      const cssTokenCount = (value.match(/--weui-|data_color_scheme|rgba?\(|#[0-9a-f]{3,8}\b|ACTIVE-|BG-|FG-/gi) ?? []).length;
+      return cssTokenCount >= 8 || /--weui-[\s\S]{80,}/i.test(value) || /\.data_color_scheme_dark\{/i.test(value);
+    }
+
+    function isChromeNoiseElement(element: Element): boolean {
+      const html = element as HTMLElement;
+      const attrs = `${html.id || ''} ${typeof html.className === 'string' ? html.className : ''} ${html.getAttribute('role') || ''}`;
+      if (/(?:mw-editsection|editsection|navbox|vertical-navbox|catlinks|toc|toctitle|mw-jump|vector-toc|noprint|mw-indicators|siteNotice|sistersitebox)/i.test(attrs)) return true;
+      if (element.closest('.mw-editsection, .navbox, .catlinks, #toc, .toc, .vector-toc, .mw-jump-link, footer, [role="contentinfo"], nav, [role="navigation"]')) return true;
+      return false;
+    }
+
+    function cleanProseText(value: string): string {
+      return value
+        .replace(/\[\s*edit\s*\]/gi, ' ')
+        .replace(/\bedit\s*$/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    // Keep content scoring aligned with detectDetails() (post detail-page recognition upgrade).
     function contentScore(element: Element): number {
+      const tag = element.tagName.toLowerCase();
+      if (/^(script|style|noscript|nav|footer|header|aside|button|input|select|textarea)$/i.test(tag)) return -Infinity;
+      const idClass = `${(element as HTMLElement).id || ''} ${(element as HTMLElement).className || ''}`;
+      if (/(?:related|recommend|sidebar|comment|footer|nav|menu|toc|table-of-contents)/i.test(idClass) && !/(?:article|content|mw-content|post|entry|markdown-body)/i.test(idClass)) {
+        return -Infinity;
+      }
       if (!visible(element) || boilerplateLike(element)) return -Infinity;
-      const rect = element.getBoundingClientRect();
       const value = text(element);
       if (styleTextLike(value)) return -Infinity;
-      if (value.length < 80) return -Infinity;
-      const paragraphCount = Array.from(element.querySelectorAll('p')).filter((item) => text(item).length >= 20).length;
-      const titleCount = element.querySelectorAll('h1,h2,[class*="title" i],[class*="headline" i]').length;
+      if (value.length < 120 || value.length > 120000) return -Infinity;
+      const rect = element.getBoundingClientRect();
+      const paragraphs = Array.from(element.querySelectorAll('p')).filter((item) => text(item).length >= 20);
       const linkText = Array.from(element.querySelectorAll('a')).map((item) => text(item)).join(' ');
       const linkDensity = linkText.length / Math.max(1, value.length);
-      const centerX = rect.left + rect.width / 2;
-      const centerDistance = Math.abs(centerX - window.innerWidth / 2) / Math.max(1, window.innerWidth);
-      const widthRatio = rect.width / Math.max(1, window.innerWidth);
+      if (linkDensity > 0.72 && paragraphs.length < 3) return -Infinity;
+      const sentenceMarks = (value.match(/[。！？!?；;，,]/g) ?? []).length;
+      const centerPenalty = Math.abs((rect.left + rect.width / 2) - window.innerWidth / 2) / Math.max(1, window.innerWidth);
       let score = 0;
-      score += Math.min(3, value.length / 700);
-      score += Math.min(2, paragraphCount * 0.55);
-      score += Math.min(1.2, titleCount * 0.45);
-      score += Math.max(0, 1 - centerDistance * 2);
-      if (widthRatio >= 0.32 && widthRatio <= 0.78) score += 0.8;
-      if (rect.left < 80 || rect.right > window.innerWidth - 40) score -= 1.2;
-      if (linkDensity > 0.45) score -= 1.4;
-      if (paragraphCount === 0) score -= 0.8;
+      score += Math.min(6, value.length / 500);
+      score += Math.min(5, paragraphs.length * 0.7);
+      score += Math.min(2, sentenceMarks * 0.08);
+      score -= centerPenalty;
+      score -= Math.max(0, linkDensity - 0.25) * 2.2;
+      if (/^(article|main)$/i.test(tag) || /(?:article|content|mw-content|post|entry|markdown-body)/i.test(idClass)) score += 1.4;
+      if (element.querySelector('h1,h2,h3')) score += 0.35;
       return score;
     }
 
-    function mainContentRoot(): Element {
-      const explicit = Array.from(document.querySelectorAll([
+    function contentRoot(base: Element): Element | null {
+      const selectors = [
         'article',
-        '[role="main"]',
         'main',
-        '[class*="article" i]',
-        '[class*="content" i]',
-        '[class*="detail" i]',
-        '[class*="main" i]',
-        '[id*="article" i]',
-        '[id*="content" i]',
-        '[id*="detail" i]'
-      ].join(',')));
-      const textBlocks = Array.from(document.querySelectorAll('section,div'))
-        .filter((element) => text(element).length >= 240 && element.querySelectorAll('p').length >= 1);
-      const candidates = [...explicit, ...textBlocks]
+        '#mw-content-text',
+        '#content',
+        '[role="main"]',
+        '.markdown-body',
+        '.post-content',
+        '.entry-content',
+        '.article-content',
+        'section',
+        'div[class*="article" i]',
+        'div[class*="content" i]',
+        'div[id*="article" i]',
+        'div[id*="content" i]'
+      ];
+      const extra = selectors.flatMap((sel) => Array.from(base.querySelectorAll(sel)));
+      const candidates = [base, ...extra]
         .filter((element, index, array) => array.indexOf(element) === index)
-        .filter(visible)
         .map((element) => ({ element, score: contentScore(element) }))
         .filter((item) => Number.isFinite(item.score))
         .sort((a, b) => b.score - a.score);
-      return candidates[0]?.element || document.querySelector('article') || document.querySelector('main') || document.body;
+      return candidates[0]?.element ?? null;
+    }
+
+    function pickTitle(): Element | null {
+      const preferred = document.querySelector(
+        '#firstHeading, strong[itemprop="name"] a, [itemprop="name"] a, #repository-container-header strong a, h1.gh-header-title, .js-issue-title, article h1, .post-title, .entry-title'
+      );
+      if (preferred && text(preferred).length >= 2) {
+        const value = text(preferred);
+        if (!/search code|repositories, users|sign in|log in|provide feedback|menu|navigation/i.test(value)) {
+          return preferred;
+        }
+      }
+      const candidates = Array.from(document.querySelectorAll('h1, [class*="title" i] h1, #firstHeading, .gh-header-title, .js-issue-title'))
+        .filter((element) => {
+          const value = text(element);
+          if (!value || value.length < 3 || value.length > 220) return false;
+          if (/search code|repositories, users|sign in|log in|provide feedback|menu|navigation/i.test(value)) return false;
+          return true;
+        })
+        .map((element) => {
+          const value = text(element);
+          const rect = element.getBoundingClientRect();
+          let score = Math.min(40, value.length);
+          if (element.tagName.toLowerCase() === 'h1') score += 12;
+          if (element.id === 'firstHeading' || /title|headline|post-title|entry-title|itemprop="name"/i.test(`${element.id} ${(element as HTMLElement).className || ''}`)) score += 10;
+          if (rect.top >= 0 && rect.top < window.innerHeight * 0.7) score += 6;
+          return { element, score };
+        })
+        .sort((a, b) => b.score - a.score);
+      return candidates[0]?.element ?? document.querySelector('h1') ?? null;
+    }
+
+    function pickImage(scope: Element): HTMLImageElement | null {
+      const images = Array.from(scope.querySelectorAll('img')) as HTMLImageElement[];
+      const ranked = images
+        .map((img) => {
+          const src = img.currentSrc || img.src || '';
+          if (!src || /data:image\/svg|sprite|icon|avatar|badge|logo|pixel|1x1|spacer/i.test(src)) return null;
+          if (/badge\.svg|actions\/workflows|shields\.io|gravatar/i.test(src)) return null;
+          const rect = img.getBoundingClientRect();
+          const area = Math.max(0, rect.width) * Math.max(0, rect.height);
+          if (area > 0 && area < 80 * 80) return null;
+          return { img, area: area || 1, top: rect.top };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (b!.area - a!.area) || (a!.top - b!.top));
+      return ranked[0]?.img ?? null;
     }
 
     function xpath(element: Element): string {
@@ -839,7 +926,11 @@ export async function installDetailFieldOverlay(page: Page): Promise<void> {
 
     function selector(element: Element): string {
       const html = element as HTMLElement;
-      if (html.id) return `#${CSS.escape(html.id)}`;
+      try {
+        if (html.id) return `#${CSS.escape(html.id)}`;
+      } catch {
+        if (html.id) return `#${String(html.id).replace(/([^a-zA-Z0-9_-])/g, '\\$1')}`;
+      }
       const cls = typeof html.className === 'string'
         ? html.className.trim().split(/\s+/).filter(Boolean).slice(0, 2).map((part) => `.${CSS.escape(part)}`).join('')
         : '';
@@ -858,7 +949,21 @@ export async function installDetailFieldOverlay(page: Page): Promise<void> {
       return text(element);
     }
 
-    const articleRoot = mainContentRoot();
+    function fieldDiagnostics(element: Element): SelectedField['diagnostics'] {
+      const value = text(element);
+      const paragraphCount = Array.from(element.querySelectorAll('p')).filter((item) => text(item).length >= 20).length;
+      const warnings: string[] = [];
+      if (value.length < 300) warnings.push('content text looks short');
+      if (paragraphCount <= 1) warnings.push('content has too few paragraphs');
+      if (styleTextLike(value)) warnings.push('text contains CSS/style noise');
+      return {
+        matchCount: 1,
+        textLength: value.length,
+        paragraphCount,
+        hasStyleNoise: styleTextLike(value),
+        warnings
+      };
+    }
 
     function suggestedName(element: Element): string {
       const tag = element.tagName.toLowerCase();
@@ -882,206 +987,47 @@ export async function installDetailFieldOverlay(page: Page): Promise<void> {
       return 'field';
     }
 
-    function selectedXPath(element: Element, name: string): string {
-      return xpath(element);
+    function resolveXPath(path: string): Element | null {
+      if (!path) return null;
+      try {
+        const normalized = path.includes('[*]') ? path.replace(/\[\*\]/g, '') : path;
+        const result = document.evaluate(normalized, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        return result.singleNodeValue instanceof Element ? result.singleNodeValue : null;
+      } catch {
+        return null;
+      }
     }
 
-    function inMainArticle(element: Element): boolean {
-      if (!articleRoot.contains(element) && element !== articleRoot) return false;
-      if (boilerplateLike(element)) return false;
-      const rect = element.getBoundingClientRect();
-      const rootRect = articleRoot.getBoundingClientRect();
-      if (rect.right < rootRect.left - 2 || rect.left > rootRect.right + 2) return false;
-      if (rect.width < 32 && rect.height > 120) return false;
-      return true;
+    function makeFieldFromSuggested(element: Element, item: SuggestedItem): SelectedField {
+      return {
+        id: item.xpath || xpath(element),
+        suggestedName: item.suggestedName || suggestedName(element),
+        kind: item.kind || fieldKind(element),
+        xpath: item.xpath || xpath(element),
+        selector: item.selector || selector(element),
+        sample: item.sample || sampleValue(element, item.kind || fieldKind(element)),
+        ...(item.diagnostics
+          ? { diagnostics: item.diagnostics }
+          : (item.suggestedName === 'content' ? { diagnostics: fieldDiagnostics(element) } : {}))
+      };
     }
 
     function makeField(element: Element): SelectedField {
-      const initialName = suggestedName(element);
-      const normalizedElement = initialName === 'content' ? normalizeContentSelection(element) : element;
-      const name = initialName === 'content' ? 'content' : suggestedName(normalizedElement);
-      const kind = initialName === 'content' ? 'text' : fieldKind(normalizedElement);
-      const itemXpath = selectedXPath(normalizedElement, name);
+      const name = suggestedName(element);
+      const kind = fieldKind(element);
+      const itemXpath = xpath(element);
       return {
         id: itemXpath,
         suggestedName: name,
         kind,
         xpath: itemXpath,
-        selector: selector(normalizedElement),
-        sample: sampleValue(normalizedElement, kind),
-        ...(name === 'content' ? { diagnostics: fieldDiagnostics(normalizedElement) } : {})
+        selector: selector(element),
+        sample: sampleValue(element, kind),
+        ...(name === 'content' ? { diagnostics: fieldDiagnostics(element) } : {})
       };
     }
 
-    function firstBest(elements: Element[], accept: (element: Element) => boolean, compare?: (a: Element, b: Element) => number): Element | undefined {
-      const items = elements.filter(visible).filter(inMainArticle).filter(accept);
-      if (compare) items.sort(compare);
-      return items[0];
-    }
-
-    function metadataBottomFor(scoped: Element[]): number {
-      const title = firstBest(scoped, (element) => {
-        const value = text(element);
-        return suggestedName(element) === 'title' && value.length >= 4 && value.length <= 160;
-      });
-      const time = firstBest(scoped, (element) => suggestedName(element) === 'time' && text(element).length <= 80);
-      const author = firstBest(scoped, (element) => suggestedName(element) === 'author' && text(element).length <= 80);
-      return Math.max(
-        title?.getBoundingClientRect().bottom ?? 0,
-        time?.getBoundingClientRect().bottom ?? 0,
-        author?.getBoundingClientRect().bottom ?? 0
-      );
-    }
-
-    function contentCandidateScore(element: Element, metadataBottom = 0): number {
-      const tag = element.tagName.toLowerCase();
-      if (/^(h1|h2|h3|time|img|a|span|em|i|strong|b|button)$/i.test(tag)) return -Infinity;
-      const value = text(element);
-      if (value.length < 80 || value.length > 12000) return -Infinity;
-      const rect = element.getBoundingClientRect();
-      if (metadataBottom && rect.top < metadataBottom - 24) return -Infinity;
-      const own = ownText(element);
-      const paragraphs = Array.from(element.querySelectorAll('p')).filter((item) => text(item).length >= 20);
-      const textChildren = Array.from(element.children).filter((item) => {
-        const childTag = item.tagName.toLowerCase();
-        return !/^(script|style|noscript|img|svg|button)$/i.test(childTag) && text(item).length >= 20;
-      });
-      const linkText = Array.from(element.querySelectorAll('a')).map((item) => text(item)).join(' ');
-      const linkDensity = linkText.length / Math.max(1, value.length);
-      if (linkDensity > 0.35) return -Infinity;
-      const sentenceMarks = (value.match(/[。！？!?；;，,]/g) ?? []).length;
-      const centerPenalty = Math.abs((rect.left + rect.width / 2) - window.innerWidth / 2) / Math.max(1, window.innerWidth);
-      let score = 0;
-      score += Math.min(4, value.length / 350);
-      score += Math.min(3, paragraphs.length * 0.9);
-      score += Math.min(2, textChildren.length * 0.35);
-      score += Math.min(2, sentenceMarks * 0.18);
-      if (own.length >= 80) score += 1.1;
-      if (rect.width >= articleRoot.getBoundingClientRect().width * 0.45) score += 0.6;
-      score -= centerPenalty;
-      score -= Math.max(0, element.querySelectorAll('img').length - 1) * 0.3;
-      if (element === articleRoot) score -= 1.5;
-      return score;
-    }
-
-    function candidateElements(): Element[] {
-      const scoped = [articleRoot, ...Array.from(articleRoot.querySelectorAll('*'))].filter((element): element is Element => element instanceof Element);
-      const title = firstBest(scoped, (element) => {
-        const value = text(element);
-        return suggestedName(element) === 'title' && value.length >= 4 && value.length <= 160;
-      }, (a, b) => {
-        const tagWeight = (element: Element) => /^(h1|h2)$/i.test(element.tagName) ? 0 : 1;
-        return tagWeight(a) - tagWeight(b) || a.getBoundingClientRect().top - b.getBoundingClientRect().top;
-      });
-      const time = firstBest(scoped, (element) => suggestedName(element) === 'time' && text(element).length <= 80);
-      const author = firstBest(scoped, (element) => {
-        const value = text(element);
-        return suggestedName(element) === 'author' && value.length >= 2 && value.length <= 80;
-      });
-      const metadataBottom = metadataBottomFor(scoped);
-      const contentContainers = scoped
-        .filter(visible)
-        .filter(inMainArticle)
-        .map((element) => ({ element, score: contentCandidateScore(element, metadataBottom) }))
-        .filter((item) => Number.isFinite(item.score))
-        .sort((a, b) => {
-          const aRect = a.element.getBoundingClientRect();
-          const bRect = b.element.getBoundingClientRect();
-          return b.score - a.score || aRect.top - bRect.top;
-        });
-      const content = contentContainers[0]?.element ? expandContentContainer(contentContainers[0].element, metadataBottom) : undefined;
-      const images = Array.from(articleRoot.querySelectorAll('img'))
-        .filter(visible)
-        .filter(inMainArticle)
-        .filter((element) => {
-          const rect = element.getBoundingClientRect();
-          const source = (element as HTMLImageElement).currentSrc || (element as HTMLImageElement).src || '';
-          return Boolean(source) && rect.width >= 80 && rect.height >= 60;
-        })
-        .sort((a, b) => {
-          const aRect = a.getBoundingClientRect();
-          const bRect = b.getBoundingClientRect();
-          return (bRect.width * bRect.height) - (aRect.width * aRect.height);
-        })
-        .slice(0, 3);
-      return [title, time, author, content, ...images]
-        .filter((element): element is Element => Boolean(element))
-        .filter((element, index, array) => array.indexOf(element) === index);
-    }
-
-    function expandContentContainer(element: Element, metadataBottom: number): Element {
-      let current = element;
-      while (current.parentElement && current.parentElement !== articleRoot && articleRoot.contains(current.parentElement)) {
-        const parent = current.parentElement;
-        if (!visible(parent) || boilerplateLike(parent)) break;
-        const currentText = text(current);
-        const parentText = text(parent);
-        if (styleTextLike(parentText)) break;
-        if (parentText.length < Math.max(120, currentText.length * 1.08)) break;
-        if (parentText.length > 20000) break;
-        const parentRect = parent.getBoundingClientRect();
-        const currentRect = current.getBoundingClientRect();
-        if (metadataBottom && parentRect.top < metadataBottom - 32) break;
-        const linkText = Array.from(parent.querySelectorAll('a')).map((item) => text(item)).join(' ');
-        if (linkText.length / Math.max(1, parentText.length) > 0.35) break;
-        if (parent.querySelector('h1,h2,h3')) break;
-        if (parentRect.width < currentRect.width * 0.85) break;
-        current = parent;
-      }
-      return current;
-    }
-
-    function styleTextLike(value: string): boolean {
-      if (!value) return false;
-      const cssTokenCount = (value.match(/--weui-|data_color_scheme|rgba?\(|#[0-9a-f]{3,8}\b|ACTIVE-|BG-|FG-/gi) ?? []).length;
-      return cssTokenCount >= 8 || /--weui-[\s\S]{80,}/i.test(value) || /\.data_color_scheme_dark\{/i.test(value);
-    }
-
-    function articleMetadataBottom(): number {
-      const scoped = [articleRoot, ...Array.from(articleRoot.querySelectorAll('*'))].filter((element): element is Element => element instanceof Element);
-      return metadataBottomFor(scoped);
-    }
-
-    function normalizeContentSelection(element: Element): Element {
-      const metadataBottom = articleMetadataBottom();
-      const candidates: Element[] = [];
-      let current: Element | null = element;
-      while (current && articleRoot.contains(current)) {
-        candidates.push(current);
-        if (current === articleRoot) break;
-        current = current.parentElement;
-      }
-      const ranked = candidates
-        .filter(visible)
-        .filter(inMainArticle)
-        .map((candidate) => ({ element: candidate, score: contentCandidateScore(candidate, metadataBottom) }))
-        .filter((item) => Number.isFinite(item.score))
-        .sort((a, b) => {
-          const aParagraphs = a.element.querySelectorAll('p').length;
-          const bParagraphs = b.element.querySelectorAll('p').length;
-          return b.score - a.score || bParagraphs - aParagraphs;
-        });
-      return ranked[0]?.element ? expandContentContainer(ranked[0].element, metadataBottom) : element;
-    }
-
-    function fieldDiagnostics(element: Element): SelectedField['diagnostics'] {
-      const value = text(element);
-      const paragraphCount = Array.from(element.querySelectorAll('p')).filter((item) => text(item).length >= 20).length;
-      const warnings: string[] = [];
-      if (value.length < 300) warnings.push('content text looks short');
-      if (paragraphCount <= 1) warnings.push('content has too few paragraphs');
-      if (styleTextLike(value)) warnings.push('text contains CSS/style noise');
-      return {
-        matchCount: 1,
-        textLength: value.length,
-        paragraphCount,
-        hasStyleNoise: styleTextLike(value),
-        warnings
-      };
-    }
-
-    function draw(element: Element): void {
-      const field = makeField(element);
+    function drawField(element: Element, field: SelectedField): void {
       const html = element as HTMLElement;
       if (byElement.has(element)) return;
       byElement.set(element, field);
@@ -1115,15 +1061,71 @@ export async function installDetailFieldOverlay(page: Page): Promise<void> {
       labelEntries.push({ element, label });
     }
 
+    function draw(element: Element): void {
+      drawField(element, makeField(element));
+    }
+
     function positionLabels(): void {
       labelEntries.forEach(({ element, label }) => {
         const rect = element.getBoundingClientRect();
-        const offscreen = rect.bottom < 0 || rect.top > window.innerHeight || rect.right < 0 || rect.left > window.innerWidth;
-        label.style.display = offscreen ? 'none' : '';
-        label.style.left = `${Math.max(0, Math.min(window.innerWidth - 60, rect.left))}px`;
-        label.style.top = `${Math.max(0, Math.min(window.innerHeight - 20, rect.top - 22))}px`;
+        label.style.left = `${Math.max(0, rect.left)}px`;
+        label.style.top = `${Math.max(0, rect.top - 22)}px`;
       });
     }
+
+    function fallbackCandidateElements(): Element[] {
+      // Mirror detectDetails preferred root / bodyRoot / field picks when precomputed suggestions miss.
+      const preferredRoot = document.querySelector('#mw-content-text .mw-parser-output')
+        || document.querySelector('#mw-content-text')
+        || document.querySelector('#readme .markdown-body, #readme, [data-testid="readme"] .markdown-body, article .markdown-body, .markdown-body')
+        || document.querySelector('article')
+        || document.querySelector('main, [role="main"], #content')
+        || document.body;
+      const preferredText = text(preferredRoot);
+      const preferredParagraphs = Array.from(preferredRoot.querySelectorAll('p'))
+        .filter((item) => !isChromeNoiseElement(item) && cleanProseText(text(item)).length >= 40);
+      const bodyRoot = (preferredText.length >= 280 && preferredParagraphs.length >= 1)
+        ? preferredRoot
+        : (contentRoot(preferredRoot) || preferredRoot);
+      const title = pickTitle()
+        || document.querySelector('#firstHeading')
+        || document.querySelector('strong[itemprop="name"] a, [itemprop="name"] a')
+        || preferredRoot.querySelector('h1,h2');
+      const time = preferredRoot.querySelector('time,[datetime],[class*="date" i],[class*="time" i]');
+      const author = preferredRoot.querySelector('[class*="author" i],[rel="author"], .byline, [itemprop="author"]');
+      const image = pickImage(bodyRoot) || pickImage(preferredRoot);
+      const contentOk = cleanProseText(text(bodyRoot)).length >= 80;
+      return [title, time, author, contentOk ? bodyRoot : null, image]
+        .filter((element): element is Element => Boolean(element))
+        .filter((element, index, array) => array.indexOf(element) === index)
+        .filter(visible);
+    }
+
+    // Primary: draw fields from detectDetails() so manual matches auto detail recognition.
+    for (const item of suggestedItems as SuggestedItem[]) {
+      const element = resolveXPath(item.xpath);
+      if (!element || !visible(element)) continue;
+      drawField(element, makeFieldFromSuggested(element, item));
+    }
+
+    // Fallback / fill-in: if detectDetails returned nothing usable, or content/title missing, use aligned DOM picks.
+    if (!highlighted.length) {
+      fallbackCandidateElements().forEach(draw);
+    } else {
+      const names = new Set(Array.from(highlighted).map((el) => byElement.get(el)?.suggestedName).filter(Boolean));
+      if (!names.has('content') || !names.has('title')) {
+        for (const element of fallbackCandidateElements()) {
+          const name = suggestedName(element);
+          if (names.has(name)) continue;
+          if (name === 'content' || name === 'title' || name === 'time' || name === 'author' || name === 'image') {
+            draw(element);
+            names.add(name);
+          }
+        }
+      }
+    }
+
+    positionLabels();
 
     function sync(): void {
       highlighted.forEach((element) => {
@@ -1138,19 +1140,30 @@ export async function installDetailFieldOverlay(page: Page): Promise<void> {
       w.__octopusDetailFieldObjects = Array.from(selected.values());
     }
 
-    candidateElements().forEach(draw);
-    positionLabels();
-
     function handleClick(event: MouseEvent): void {
       const path = event.composedPath();
       if (path.some((item) => item instanceof HTMLElement && item.getAttribute('data-octopus-manual-overlay') === 'true')) return;
-      const target = path.find((item): item is Element => item instanceof Element && byElement.has(item));
-      if (!target) return;
+      let target = path.find((item): item is Element => item instanceof Element && byElement.has(item));
+      let field = target ? byElement.get(target) : undefined;
+      // Freeform pick: allow clicking non-suggested in-page elements during manual confirm.
+      if (!field) {
+        const free = path.find((item): item is Element =>
+          item instanceof Element
+          && item !== document.documentElement
+          && item !== document.body
+          && visible(item)
+          && !boilerplateLike(item)
+          && !(item instanceof HTMLElement && item.id === 'octopus-detail-field-overlay-root')
+        );
+        if (!free) return;
+        if (!byElement.has(free)) draw(free);
+        target = free;
+        field = byElement.get(free);
+      }
+      if (!target || !field) return;
       event.preventDefault();
       event.stopPropagation();
       event.stopImmediatePropagation();
-      const field = byElement.get(target);
-      if (!field) return;
       if (selected.has(field.id)) selected.delete(field.id);
       else selected.set(field.id, field);
       sync();
@@ -1187,7 +1200,7 @@ export async function installDetailFieldOverlay(page: Page): Promise<void> {
       delete w.__octopusDetailFieldClearSelection;
       delete w.__octopusDetailFieldCleanup;
     };
-  });
+  }, suggestedFields);
 }
 
 export async function readDetailFieldSelection(page: Page): Promise<string[]> {

@@ -16,7 +16,7 @@ import { hasLinuxDisplayEnvironment, startVirtualDisplayIfNeeded } from '../runt
 import { EXIT_OK, EXIT_RUNTIME_FAILED } from '../types.js';
 
 const require = createRequire(import.meta.url);
-const EngineModule = require('@octopus/engine');
+const EngineModule = require('@octopus/browser-runtime');
 const resolveChrome = EngineModule.resolveChrome as (options?: { onStatus?: (status: ChromeResolveStatus) => void }) => Promise<{ executablePath: string }>;
 const DOCTOR_API_TIMEOUT_MS = 5000;
 
@@ -45,13 +45,13 @@ export async function doctorCommand(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const chromePath = valueAfter(args, '--chrome-path');
   const checks: DoctorCheck[] = [];
-  const engineDist = dirname(require.resolve('@octopus/engine'));
-  const extensionPath = join(engineDist, 'extension', 'manifest.json');
-  const ublockPath = join(engineDist, 'extensions', 'ublock-origin-lite', 'uBOLite.chromium.tar.xz');
+  const runtimeRoot = dirname(require.resolve('@octopus/browser-runtime'));
+  const extensionPath = join(runtimeRoot, 'extension', 'manifest.json');
+  const ublockPath = join(runtimeRoot, 'extensions', 'ublock-origin-lite', 'uBOLite.chromium.tar.xz');
 
   checks.push(
     okCheck('node', process.version, { required: '>=20' }),
-    okCheck('engine', require.resolve('@octopus/engine')),
+    okCheck('browser-runtime', require.resolve('@octopus/browser-runtime')),
     checkFile('runtime-extension', extensionPath),
     checkFile('adblock-extension-archive', ublockPath),
     protectModuleCheck()

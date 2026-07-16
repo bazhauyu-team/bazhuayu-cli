@@ -23,7 +23,7 @@ import { API_KEY_ENV, resolveAuth } from './auth.js';
 import { extractFieldNamesWithDownloadOutputs } from './download-config.js';
 
 const require = createRequire(import.meta.url);
-const { transformer } = require('@octopus/engine/transformer') as {
+const { transformer } = require('@octopus/browser-runtime/transformer') as {
   transformer: (source: string, callback: (content: string) => void) => void;
 };
 

@@ -4,7 +4,8 @@ import path from 'node:path';
 const root = process.cwd();
 const packageJsonPath = path.join(root, 'package.json');
 const backupRoot = path.join(root, '.package.prepack-backup');
-const engineRoot = path.join(root, 'node_modules', '@octopus', 'engine');
+const browserRuntimeRoot = path.join(root, 'node_modules', '@octopus', 'browser-runtime');
+const workflowCoreRoot = path.join(root, 'node_modules', '@octopus', 'workflow-core');
 const bpmnRoot = path.join(root, 'node_modules', '@octopus', 'bpmn');
 const protectRoot = path.join(root, 'node_modules', '@octopus', 'octopus-protect');
 const protectSource = process.env.OCTOPUS_PROTECT_SOURCE_DIR || '';
@@ -90,8 +91,8 @@ function preparePackageManifest() {
 
 function stripNestedDependencies() {
   for (const packageJson of [
-    path.join(engineRoot, 'package.json'),
-    path.join(engineRoot, 'dist', 'package.json'),
+    path.join(browserRuntimeRoot, 'package.json'),
+    path.join(workflowCoreRoot, 'package.json'),
     path.join(bpmnRoot, 'package.json'),
     path.join(protectRoot, 'package.json')
   ]) {
@@ -103,15 +104,18 @@ function stripNestedDependencies() {
   }
 
   for (const dir of [
-    path.join(engineRoot, 'dist', 'node_modules'),
-    path.join(engineRoot, 'node_modules')
+    path.join(browserRuntimeRoot, 'node_modules'),
+    path.join(workflowCoreRoot, 'node_modules'),
+    path.join(bpmnRoot, 'node_modules')
   ]) {
+    if (!fs.existsSync(dir)) continue;
     backupRemovedDir(dir);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
-ensureInstalled(engineRoot, '@octopus/engine');
+ensureInstalled(browserRuntimeRoot, '@octopus/browser-runtime');
+ensureInstalled(workflowCoreRoot, '@octopus/workflow-core');
 ensureInstalled(bpmnRoot, '@octopus/bpmn');
 copyProtectPackage();
 preparePackageManifest();

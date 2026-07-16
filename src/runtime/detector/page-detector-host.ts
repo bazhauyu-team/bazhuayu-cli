@@ -17,20 +17,12 @@ import { defaultUserAgent, delay, safeHost } from './page-detector-utils.js';
 
 const require = createRequire(import.meta.url);
 const puppeteer = require('rebrowser-puppeteer-core') as typeof import('puppeteer-core');
-const EngineModule = require('@octopus/engine') as {
+const EngineModule = require('@octopus/browser-runtime') as {
   resolveChrome: (options?: { onStatus?: (status: ChromeResolveStatus) => void }) => Promise<{ executablePath: string }>;
 };
 
-const DETECTOR_PARKING_URL = [
-  'data:text/html,',
-  encodeURIComponent([
-    '<!doctype html>',
-    '<html><head><title>Octopus Detector</title></head>',
-    '<body style="margin:0">',
-    '<div style="height:200000px"></div>',
-    '</body></html>'
-  ].join(''))
-].join('');
+/** Bootstrap page used only to inject sessionId/wsUrl for browser-runtime extension registration. */
+const DETECTOR_BOOTSTRAP_ORIGIN = 'https://example.com/';
 
 export class ExtensionDetectorHost {
   private constructor(
@@ -56,8 +48,16 @@ export class ExtensionDetectorHost {
       const chromePath = options.chromePath ?? (await EngineModule.resolveChrome({ onStatus: options.onChromeStatus })).executablePath;
       runtimeExtensionPath = await prepareDetectorRuntimeExtension(runId, extensionBridge);
       browser = await launchDetectorBrowser(chromePath, runtimeExtensionPath);
+      // browser-runtime extension reads sessionId/wsUrl from the page URL, not runtime-config.json.
+      // Open a bootstrap page first so the extension can register before target navigation.
+      const page = await openDetectorBootstrapPage(
+        browser,
+        extensionBridge.runtimeConfig,
+        Math.min(options.timeoutMs, 30_000),
+        hooks.onTargetPageReady
+      );
       await bridgeHub.waitForSessionConnected(runId, Math.min(options.timeoutMs, 30_000));
-      const page = await openDetectorTargetPage(browser, options.url, options.timeoutMs, hooks.onTargetPageReady);
+      await page.goto(options.url, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs });
       const tabId = await waitForTabId(extensionBridge, page, options.timeoutMs);
       await readyCheck(extensionBridge, tabId, Math.min(options.timeoutMs, 15_000)).catch(() => undefined);
       return new ExtensionDetectorHost(browser, runtimeExtensionPath, bridgeHub, extensionBridge, page, tabId, virtualDisplay);
@@ -126,12 +126,20 @@ export async function startVirtualDisplayForDetection(options: DetectOptions): P
   return startVirtualDisplayIfNeeded();
 }
 
+export function buildDetectorBootstrapUrl(runtimeConfig: { sessionId: string; wsUrl: string }, origin = DETECTOR_BOOTSTRAP_ORIGIN): string {
+  const url = new URL(origin);
+  url.searchParams.set('sessionId', runtimeConfig.sessionId);
+  url.searchParams.set('wsUrl', runtimeConfig.wsUrl);
+  return url.toString();
+}
+
 export async function prepareDetectorRuntimeExtension(runId: string, extensionBridge: DetectorExtensionBridge): Promise<string> {
-  const engineDist = dirname(require.resolve('@octopus/engine'));
-  const templatePath = join(engineDist, 'extension');
-  const runtimePath = join(tmpdir(), 'octopus-engine-extension', `${runId}-${Date.now()}`);
+  const runtimeRoot = dirname(require.resolve('@octopus/browser-runtime'));
+  const templatePath = join(runtimeRoot, 'extension');
+  const runtimePath = join(tmpdir(), 'octopus-browser-runtime-extension', `${runId}-${Date.now()}`);
   await mkdir(dirname(runtimePath), { recursive: true });
   await cp(templatePath, runtimePath, { recursive: true });
+  // Kept for diagnostics; browser-runtime extension registers via page URL query params.
   await writeFile(join(runtimePath, 'runtime-config.json'), `${JSON.stringify(extensionBridge.runtimeConfig, null, 2)}\n`, 'utf8');
   return runtimePath;
 }
@@ -163,6 +171,9 @@ export async function launchDetectorBrowser(chromePath: string, runtimeExtension
       '--js-flags=--expose-gc',
       '--disk-cache-size=524288000',
       '--aggressive-cache-discard',
+      // Avoid macOS Keychain prompts for Chrome for Testing automation profiles.
+      '--password-store=basic',
+      '--use-mock-keychain',
       `--user-agent=${defaultUserAgent()}`,
       `--load-extension=${runtimeExtensionPath}`,
       `--disable-extensions-except=${runtimeExtensionPath}`,
@@ -204,10 +215,17 @@ export async function waitForDetectorPage(browser: Browser, url: string, timeout
   return pages[0] ?? await browser.newPage();
 }
 
-export async function openDetectorTargetPage(browser: Browser, url: string, timeoutMs: number, onPageReady?: (page: Page) => void): Promise<Page> {
-  const page = await waitForDetectorPage(browser, DETECTOR_PARKING_URL, Math.min(timeoutMs, 5000));
+export async function openDetectorBootstrapPage(
+  browser: Browser,
+  runtimeConfig: { sessionId: string; wsUrl: string },
+  timeoutMs: number,
+  onPageReady?: (page: Page) => void
+): Promise<Page> {
+  const pages = await browser.pages();
+  const page = pages[0] ?? await browser.newPage();
   onPageReady?.(page);
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+  const bootstrapUrl = buildDetectorBootstrapUrl(runtimeConfig);
+  await page.goto(bootstrapUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
   return page;
 }
 

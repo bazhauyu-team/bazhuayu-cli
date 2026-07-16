@@ -31,7 +31,7 @@ import { maybePrintRuntimeSecurityNotice } from './security-notice.js';
 import { startVirtualDisplayIfNeeded, type VirtualDisplayHandle } from './virtual-display.js';
 
 const require = createRequire(import.meta.url);
-const defaultEngineModule = require('@octopus/engine');
+const defaultEngineModule = require('@octopus/browser-runtime');
 
 /** Minimal surface we actually call on the proprietary WorkflowAgent instance. */
 export interface WorkflowAgentLike {
@@ -44,12 +44,6 @@ export interface WorkflowAgentLike {
   close(): void;
   capthcaToken(payload: Record<string, unknown>): void;
   sendProxy(payload: unknown): void;
-  browser?: WorkflowBrowserLike | null;
-}
-
-export interface WorkflowBrowserLike {
-  isConnected?(): boolean;
-  close(): Promise<void> | void;
 }
 
 export type WorkflowAgentConstructor = new (options: Record<string, unknown>) => WorkflowAgentLike;
@@ -208,6 +202,8 @@ export class EngineHost extends EventEmitter {
       message: `runtime.chrome ${chromePath}`
     });
 
+    // browser-runtime loads the extension bridge from the first page URL query
+    // (sessionId + wsUrl). WorkflowAgent appends those params to localPageUrl.
     const workflow = new WorkflowAgent({
       taskId: runId,
       taskName: runtimeTaskName,
@@ -220,6 +216,7 @@ export class EngineHost extends EventEmitter {
       userAgent: task.userAgent ?? defaultUserAgent(),
       brokerSettings: mergePlain(defaultBrokerSettings(), task.brokerSettings),
       downloadFolderPath: options.outputDir,
+      localPageUrl: 'https://example.com/',
       extensionBridge
     });
 
@@ -351,18 +348,8 @@ export class EngineHost extends EventEmitter {
   }
 
   async close(): Promise<void> {
-    const workflow = this.workflow;
-    const browser = workflow?.browser;
-    let browserClosed = false;
-    if (browser?.isConnected?.()) {
-      await Promise.resolve(browser.close())
-        .then(() => {
-          browserClosed = true;
-        })
-        .catch(() => undefined);
-    }
-    if (browserClosed && workflow) workflow.browser = null;
-    workflow?.close();
+    // browser-runtime owns ChromeProcess lifecycle inside WorkflowAgent.close().
+    this.workflow?.close();
     this.bridgeHub?.close();
     await this.virtualDisplay?.close();
     this.workflow = null;

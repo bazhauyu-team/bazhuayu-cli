@@ -1,13 +1,13 @@
 import { EventEmitter } from 'node:events';
 import { WebSocket, WebSocketServer } from 'ws';
-import { SessionExtensionBridge } from '@octopus/engine';
+import { SessionExtensionBridge } from '@octopus/browser-runtime';
 import type {
   Command,
   CommandResponse,
   ExtensionEvent,
   ExtensionRegistrationMessage,
   ExtensionRuntimeConfig
-} from '@octopus/engine';
+} from '@octopus/browser-runtime';
 
 interface HubSessionEntry {
   bridge: SessionExtensionBridge;
