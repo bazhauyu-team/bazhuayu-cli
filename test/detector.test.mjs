@@ -13,10 +13,12 @@ import { browserSessionPath, buildCookieHeaderFromSession, loadBrowserSession, n
 import { detectedTaskToCloudTaskInfo, encodeTaskXml } from '../dist/runtime/task-cloud-save.js';
 import { hasLinuxDisplayEnvironment, requiresVirtualDisplay } from '../dist/runtime/virtual-display.js';
 import * as pageDetectorFacade from '../dist/runtime/detector/page-detector.js';
-import { applyGoalScoresForTesting, assessPrimaryCandidateQuality, augmentAdjacentMetadataFieldsForTesting, dedupeEquivalentCandidates, detectApiListCandidatesForTesting, detectInteractivePaginationOptionsForTesting, detectKnownApiListCandidatesForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, detectSearchResultBlocksForTesting, detectSemanticBusinessCardsForTesting, dismissPageObstructionsForTesting, filterDetectedBoilerplateCandidates, findSearchInputCandidatesForTesting, hasUsablePrimaryCandidateForTesting, inferPageTargetForTesting, isInjectableBrowserPageUrlForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, rankCandidatesForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, sanitizeCandidatePaginationByLayoutForTesting, scoreSearchResultPageForTesting, selectDetailUrlFieldForTesting, shouldPromptForLoginInterventionForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/detector/page-detector.js';
+import { applyGoalScoresForTesting, assessPrimaryCandidateQuality, augmentAdjacentMetadataFieldsForTesting, dedupeEquivalentCandidates, detectApiListCandidatesForTesting, detectInteractivePaginationOptionsForTesting, detectKnownApiListCandidatesForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, detectSearchResultBlocksForTesting, detectSemanticBusinessCardsForTesting, detectSemanticFeedCandidatesForTesting, dismissPageObstructionsForTesting, filterDetectedBoilerplateCandidates, findSearchInputCandidatesForTesting, hasUsablePrimaryCandidateForTesting, inferPageTargetForTesting, isInjectableBrowserPageUrlForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, rankCandidatesForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, sanitizeCandidatePaginationByLayoutForTesting, scoreSearchResultPageForTesting, selectDetailUrlFieldForTesting, shouldPromptForLoginInterventionForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/detector/page-detector.js';
 import { ExtensionDetectorHost } from '../dist/runtime/detector/page-detector-host.js';
 import { candidateIdsForAnnotatedScreenshotForTesting, candidateIdsForCandidateScreenshotsForTesting } from '../dist/runtime/detector/agent-visual-artifacts.js';
 import { protectedSmartResultToCandidatesForTesting } from '../dist/runtime/detector/protected-smart.js';
+import { autoScroll, captureScrollProbeSnapshot, scrollProbeStable, summarizeScrollProbe } from '../dist/runtime/detector/page-detector-scroll.js';
+import { manualScrollPaginationOption } from '../dist/runtime/detector/page-detector-pagination-ui.js';
 import { buildTaskFromCandidate } from '../dist/runtime/detector/xml.js';
 
 test('page detector facade preserves its public runtime exports', () => {
@@ -35,6 +37,7 @@ test('page detector facade preserves its public runtime exports', () => {
     'detectPaginationForCandidatesForTesting',
     'detectSearchResultBlocksForTesting',
     'detectSemanticBusinessCardsForTesting',
+    'detectSemanticFeedCandidatesForTesting',
     'dismissPageObstructionsForTesting',
     'filterDetectedBoilerplateCandidates',
     'findSearchInputCandidatesForTesting',
@@ -2606,6 +2609,105 @@ test('semantic business detector prefers GoYellow-style business cards over near
   assert.equal(ranked[0].id, 'semantic_business_1');
 });
 
+test('semantic feed detector keeps story records and excludes nested Reels modules', async () => {
+  const page = fakeSearchResultBlockPage({
+    elements: [{
+      tag: 'main',
+      attrs: { role: 'main' },
+      rect: { left: 120, top: 80, right: 980, bottom: 1800 },
+      children: [{
+        tag: 'div',
+        attrs: { role: 'feed' },
+        rect: { left: 180, top: 100, right: 880, bottom: 1750 },
+        children: [
+          semanticFeedStory(1, 'FeedUnit_0', 'Alpha Publisher', 'Alpha post body with enough meaningful text for feed extraction.'),
+          {
+            tag: 'div',
+            text: 'Reels clips presented as a horizontal media module',
+            attrs: { 'data-pagelet': 'FeedUnit_1' },
+            rect: { left: 200, top: 620, right: 860, bottom: 880 },
+            children: [{
+              tag: 'div',
+              attrs: { role: 'article', ariaLabel: 'Reels' },
+              rect: { left: 210, top: 630, right: 850, bottom: 870 },
+              children: [{ tag: 'a', text: 'Reel one', attrs: { href: 'https://example.test/reel/1' }, rect: { left: 230, top: 650, right: 430, bottom: 760 } }]
+            }]
+          },
+          semanticFeedStory(2, 'FeedUnit_{n}', 'Beta Publisher', 'Beta post body with enough meaningful text for feed extraction.')
+        ]
+      }]
+    }]
+  });
+
+  const candidates = await detectSemanticFeedCandidatesForTesting(page);
+
+  assert.equal(candidates.length, 1);
+  const candidate = candidates[0];
+  assert.equal(candidate.type, 'search_results');
+  assert.equal(candidate.xpath, '//*[@role="feed"]');
+  assert.equal(candidate.itemCount, 2);
+  assert.match(candidate.itemXPath, /FeedUnit_/);
+  assert.match(candidate.itemXPath, /not\(ancestor::/);
+  assert.match(candidate.itemXPath, /story_message/);
+  assert.deepEqual(candidate.fields.map((field) => field.name), ['author', 'author_url', 'content', 'post_url', 'date', 'image']);
+  assert.deepEqual(candidate.fields.find((field) => field.name === 'author')?.samples, ['Alpha Publisher', 'Beta Publisher']);
+  assert.deepEqual(candidate.fields.find((field) => field.name === 'post_url')?.samples, [
+    'https://example.test/posts/1',
+    'https://example.test/posts/2'
+  ]);
+  assert.doesNotMatch(JSON.stringify(candidate.sampleRows), /Reel one/);
+
+  const task = buildTaskFromCandidate({
+    url: 'https://example.test/',
+    taskId: 'semantic_feed_task',
+    taskName: 'Semantic feed task',
+    candidate: {
+      id: 'semantic_feed_1',
+      title: 'Semantic feed records',
+      ...candidate,
+      pagination: {
+        type: 'scroll',
+        xpath: '',
+        text: 'Scroll page',
+        confidence: 0.9,
+        isAjax: true,
+        scope: 'near_list',
+        reasons: ['Virtual feed growth detected']
+      }
+    }
+  });
+  assert.match(task.xml, /starts-with\(@data-pagelet,&amp;quot;FeedUnit_&amp;quot;\)/);
+  assert.match(task.xml, /RelativeXpath&gt;\/descendant-or-self::\*\[@data-ad-rendering-role=&amp;quot;story_message&amp;quot;\]\[1\]&lt;\/RelativeXpath/);
+  assert.match(task.xml, /Caption="Loop scroll page"/);
+});
+
+test('semantic feed detector keeps the document index when hidden feeds precede the visible feed', async () => {
+  const page = fakeSearchResultBlockPage({
+    elements: [
+      {
+        tag: 'div',
+        attrs: { role: 'feed' },
+        rect: { left: 0, top: 0, right: 0, bottom: 0 },
+        children: []
+      },
+      {
+        tag: 'div',
+        attrs: { role: 'feed' },
+        rect: { left: 180, top: 80, right: 880, bottom: 1700 },
+        children: [
+          semanticFeedStory(1, 'FeedUnit_0', 'Alpha Publisher', 'Alpha visible feed content with enough text for detection.'),
+          semanticFeedStory(2, 'FeedUnit_{n}', 'Beta Publisher', 'Beta visible feed content with enough text for detection.')
+        ]
+      }
+    ]
+  });
+
+  const [candidate] = await detectSemanticFeedCandidatesForTesting(page);
+
+  assert.equal(candidate.xpath, '(//*[@role="feed"])[2]');
+  assert.match(candidate.itemXPath, /^\(\/\/\*\[@role="feed"\]\)\[2\]/);
+});
+
 test('semantic business detector skips broad result containers that wrap business cards', async () => {
   const page = fakeSearchResultBlockPage({
     elements: [
@@ -2869,7 +2971,7 @@ test('detectPaginationForCandidates uses scroll only when the scroll probe sees 
 
   assert.equal(withPagination.pagination.type, 'scroll');
   assert.equal(withPagination.pagination.xpath, '');
-  assert.match(withPagination.pagination.reasons.join(' '), /list-like item count grew/);
+  assert.match(withPagination.pagination.reasons.join(' '), /list-like records grew/);
 });
 
 test('detectPaginationForCandidates does not attach global scroll to sidebar or ad widgets', async () => {
@@ -3107,6 +3209,354 @@ test('detectPaginationForCandidates removes protected scroll when the probe reac
   });
 
   assert.equal(withPagination.pagination, undefined);
+});
+
+test('detectPaginationForCandidates keeps scoped Smart scroll when virtualized records change', async () => {
+  const candidate = {
+    id: 'protected_smart_1',
+    type: 'search_results',
+    title: 'Main feed posts',
+    confidence: 0.9,
+    selector: 'main',
+    xpath: '//main',
+    itemSelector: 'main article',
+    itemXPath: '//main//article',
+    itemCount: 5,
+    fields: [
+      { name: '标题', kind: 'text', selector: 'span', xpath: '//main//article//span[1]', relativeXPath: './/span[1]', samples: ['Post one'] },
+      { name: '链接', kind: 'href', selector: 'a', xpath: '//main//article//a[1]', relativeXPath: './/a[1]', samples: ['https://example.com/posts/1'] }
+    ],
+    sampleRows: [{ 标题: 'Post one', 链接: 'https://example.com/posts/1' }],
+    reasons: ['protected SmartProxy candidate'],
+    pagination: {
+      type: 'scroll',
+      xpath: '',
+      text: 'Scroll page',
+      confidence: 0.86,
+      isAjax: true,
+      scope: 'near_list',
+      reasons: ['Detected by protected SmartProxy pagination']
+    }
+  };
+  const page = fakePaginationPage({
+    bodyHeight: 5400,
+    viewportHeight: 900,
+    itemXPath: candidate.itemXPath,
+    rows: Array.from({ length: candidate.itemCount }, (_, index) => ({
+      tag: 'article',
+      text: `Post ${index + 1} caption and metadata`,
+      rect: { left: 240, top: 120 + index * 760, right: 840, bottom: 780 + index * 760 },
+      children: []
+    }))
+  });
+
+  const [externalGrowthOnly] = await detectPaginationForCandidatesForTesting(page, [candidate], {
+    snapshots: [],
+    sawActiveLoadMore: false,
+    sawGrowth: true,
+    maxArticleLikeCount: 5,
+    maxContentHeight: 6200,
+    maxPageHeight: 5400,
+    grewArticleLikeCount: 0,
+    grewContentHeight: 2100,
+    grewPageHeight: 1800,
+    reachedBottom: true
+  });
+
+  assert.equal(externalGrowthOnly.pagination, undefined);
+
+  const [withPagination] = await detectPaginationForCandidatesForTesting(
+    page,
+    [candidate],
+    virtualizedFeedScrollProbe()
+  );
+
+  assert.equal(withPagination.pagination?.type, 'scroll');
+  assert.equal(withPagination.pagination?.scope, 'near_list');
+});
+
+test('detectPaginationForCandidates infers virtualized scroll for a small main feed', async () => {
+  const candidate = {
+    id: 'search_results_1',
+    type: 'search_results',
+    title: 'Main feed posts',
+    confidence: 0.9,
+    selector: 'main',
+    xpath: '//main',
+    itemSelector: 'main article',
+    itemXPath: '//main//article',
+    itemCount: 5,
+    fields: [
+      { name: '标题', kind: 'text', selector: 'span', xpath: '//main//article//span[1]', relativeXPath: './/span[1]', samples: ['Post one'] },
+      { name: '链接', kind: 'href', selector: 'a', xpath: '//main//article//a[1]', relativeXPath: './/a[1]', samples: ['https://example.com/posts/1'] }
+    ],
+    sampleRows: [{ 标题: 'Post one', 链接: 'https://example.com/posts/1' }],
+    reasons: ['test']
+  };
+  const page = fakePaginationPage({
+    bodyHeight: 6200,
+    viewportHeight: 900,
+    itemXPath: candidate.itemXPath,
+    rows: Array.from({ length: candidate.itemCount }, (_, index) => ({
+      tag: 'article',
+      text: `Post ${index + 1} caption and metadata`,
+      rect: { left: 240, top: 120 + index * 760, right: 840, bottom: 780 + index * 760 },
+      children: []
+    }))
+  });
+
+  const scrollProbe = virtualizedFeedScrollProbe();
+  const [withPagination] = await detectPaginationForCandidatesForTesting(page, [candidate], scrollProbe);
+  const [tooSmall] = await detectPaginationForCandidatesForTesting(
+    page,
+    [{ ...candidate, itemCount: 3 }],
+    scrollProbe
+  );
+
+  assert.equal(withPagination.pagination?.type, 'scroll');
+  assert.equal(withPagination.pagination?.scope, 'global');
+  assert.match(withPagination.pagination?.reasons.join(' ') ?? '', /discovered 3 additional/);
+  assert.equal(tooSmall.pagination, undefined);
+});
+
+function virtualizedFeedScrollProbe() {
+  const base = {
+    viewportHeight: 900,
+    activeLoadMoreCount: 0,
+    activeLoadMoreTexts: [],
+    activeLoadMoreXPaths: [],
+    hasActiveLoadMore: false
+  };
+  return summarizeScrollProbe([
+    {
+      ...base,
+      scrollY: 0,
+      pageHeight: 3800,
+      contentHeight: 4400,
+      articleLikeCount: 5,
+      articleLikeKeys: ['post-a', 'post-b', 'post-c', 'post-d', 'post-e'],
+      atBottom: false
+    },
+    {
+      ...base,
+      scrollY: 4500,
+      pageHeight: 6200,
+      contentHeight: 7000,
+      articleLikeCount: 5,
+      articleLikeKeys: ['post-d', 'post-e', 'post-f', 'post-g', 'post-h'],
+      atBottom: true
+    }
+  ]);
+}
+
+test('scrollProbeStable waits for virtualized records that change at the page bottom', () => {
+  const base = {
+    scrollY: 4500,
+    viewportHeight: 900,
+    pageHeight: 5400,
+    contentHeight: 6200,
+    articleLikeCount: 5,
+    activeLoadMoreCount: 0,
+    activeLoadMoreTexts: [],
+    activeLoadMoreXPaths: [],
+    hasActiveLoadMore: false,
+    atBottom: true
+  };
+  assert.equal(scrollProbeStable(
+    { ...base, articleLikeKeys: ['post-a', 'post-b', 'post-c', 'post-d', 'post-e'] },
+    { ...base, articleLikeKeys: ['post-d', 'post-e', 'post-f', 'post-g', 'post-h'] }
+  ), false);
+  assert.equal(scrollProbeStable(
+    { ...base, articleLikeKeys: ['post-a'], hasLoadingIndicator: true },
+    { ...base, articleLikeKeys: ['post-a'], hasLoadingIndicator: true }
+  ), false);
+});
+
+test('scroll probe counts semantic feed units and ignores an in-post expand action', async () => {
+  const first = semanticFeedStory(1, 'FeedUnit_0', 'Alpha Publisher', 'Alpha feed content with enough text to identify this record.');
+  first.children[0].children.push({
+    tag: 'div',
+    text: '展开',
+    attrs: { role: 'button' },
+    rect: { left: 760, top: 520, right: 820, bottom: 550 }
+  });
+  first.children[0].children.push({
+    tag: 'div',
+    text: 'Nested recommendation should not count as another feed record.',
+    attrs: { 'data-pagelet': 'FeedUnit_nested' },
+    rect: { left: 250, top: 560, right: 810, bottom: 610 }
+  });
+  const page = fakeSearchResultBlockPage({
+    elements: [{
+      tag: 'div',
+      attrs: { role: 'feed' },
+      rect: { left: 180, top: 80, right: 880, bottom: 2200 },
+      children: [
+        first,
+        semanticFeedStory(2, 'FeedUnit_1', 'Beta Publisher', 'Beta feed content with enough text to identify this record.'),
+        semanticFeedStory(3, 'FeedUnit_{n}', 'Gamma Publisher', 'Gamma feed content with enough text to identify this record.')
+      ]
+    }]
+  });
+
+  const snapshot = await captureScrollProbeSnapshot(page);
+
+  assert.equal(snapshot.articleLikeCount, 3);
+  assert.equal(snapshot.articleLikeKeys?.length, 3);
+  assert.equal(snapshot.activeLoadMoreCount, 0);
+  assert.deepEqual(snapshot.activeLoadMoreTexts, []);
+});
+
+test('autoScroll stops after the first fast probe discovers new records', async () => {
+  const snapshot = (keys, overrides = {}) => ({
+    scrollY: 0,
+    viewportHeight: 900,
+    pageHeight: 4200,
+    contentHeight: 5000,
+    articleLikeCount: keys.length,
+    articleLikeKeys: keys,
+    hasLoadingIndicator: false,
+    activeLoadMoreCount: 0,
+    activeLoadMoreTexts: [],
+    activeLoadMoreXPaths: [],
+    hasActiveLoadMore: false,
+    atBottom: false,
+    ...overrides
+  });
+  const captures = [
+    snapshot(['post-a', 'post-b', 'post-c', 'post-d']),
+    snapshot(
+      ['post-a', 'post-b', 'post-c', 'post-d', 'post-e', 'post-f'],
+      { scrollY: 3600, pageHeight: 5400, contentHeight: 6200, atBottom: true }
+    )
+  ];
+  let captureIndex = 0;
+  let probeScrolls = 0;
+  let topResets = 0;
+  const page = {
+    async evaluate(pageFunction) {
+      const source = pageFunction.toString();
+      if (source.includes('const bottom =')) {
+        probeScrolls += 1;
+        return true;
+      }
+      if (source.includes('window.scrollTo({ top: 0')) {
+        topResets += 1;
+        return undefined;
+      }
+      const current = captures[Math.min(captureIndex, captures.length - 1)];
+      captureIndex += 1;
+      return current;
+    }
+  };
+
+  const summary = await autoScroll(page, 10);
+
+  assert.equal(probeScrolls, 1);
+  assert.equal(topResets, 1);
+  assert.equal(summary.grewArticleLikeCount, 2);
+  assert.equal(summary.snapshots.length, 2);
+});
+
+test('autoScroll caps repeated loading probes and preserves position when disabled', async () => {
+  const snapshot = (pageHeight, overrides = {}) => ({
+    scrollY: pageHeight - 900,
+    viewportHeight: 900,
+    pageHeight,
+    contentHeight: 5000,
+    articleLikeCount: 4,
+    articleLikeKeys: ['post-a', 'post-b', 'post-c', 'post-d'],
+    hasLoadingIndicator: true,
+    activeLoadMoreCount: 0,
+    activeLoadMoreTexts: [],
+    activeLoadMoreXPaths: [],
+    hasActiveLoadMore: false,
+    atBottom: true,
+    ...overrides
+  });
+  const captures = [
+    snapshot(4100, { scrollY: 0, hasLoadingIndicator: false, atBottom: false }),
+    snapshot(4200),
+    snapshot(4300),
+    snapshot(4300),
+    snapshot(4400)
+  ];
+  let captureIndex = 0;
+  let probeScrolls = 0;
+  let topResets = 0;
+  const page = {
+    async evaluate(pageFunction) {
+      const source = pageFunction.toString();
+      if (source.includes('const bottom =')) {
+        probeScrolls += 1;
+        return true;
+      }
+      if (source.includes('window.scrollTo({ top: 0')) {
+        topResets += 1;
+        return undefined;
+      }
+      const current = captures[Math.min(captureIndex, captures.length - 1)];
+      captureIndex += 1;
+      return current;
+    }
+  };
+
+  await autoScroll(page, 10);
+  assert.equal(probeScrolls, 2);
+  assert.equal(topResets, 1);
+
+  probeScrolls = 0;
+  topResets = 0;
+  await autoScroll(page, 0);
+  assert.equal(probeScrolls, 0);
+  assert.equal(topResets, 0);
+});
+
+test('manual pagination offers scroll for a selected record list even when layout scoring is wrong', () => {
+  const option = manualScrollPaginationOption([{
+    id: 'protected_smart_1',
+    type: 'search_results',
+    title: 'Selected feed',
+    confidence: 0.93,
+    selector: '',
+    xpath: '//main[1]',
+    itemXPath: '//main[1]//article',
+    itemCount: 4,
+    fields: [
+      { name: '标题', kind: 'text', selector: '', xpath: '//main[1]//article//span', samples: ['Post'] },
+      { name: '链接', kind: 'href', selector: '', xpath: '//main[1]//article//a', samples: ['https://example.com/posts/1'] },
+      { name: '图片', kind: 'src', selector: '', xpath: '//main[1]//article//img', samples: ['https://cdn.example.com/1.jpg'] }
+    ],
+    sampleRows: [{ 标题: 'Post', 链接: 'https://example.com/posts/1' }],
+    reasons: ['test'],
+    layout: {
+      role: 'ad',
+      score: 0.61,
+      mainScore: 0.61,
+      sidebarPenalty: 0,
+      boilerplatePenalty: 0,
+      visualCoverage: 0.5,
+      textDensity: 0.5,
+      linkDensity: 0.29,
+      centerDistance: 0.1,
+      reasons: []
+    }
+  }]);
+
+  assert.equal(option?.type, 'scroll');
+  assert.equal(option?.xpath, '');
+  assert.equal(manualScrollPaginationOption([{
+    id: 'detail_1',
+    type: 'detail',
+    title: 'Detail',
+    confidence: 0.9,
+    selector: 'article',
+    xpath: '//article',
+    itemCount: 1,
+    fields: [],
+    sampleRows: [],
+    reasons: ['test']
+  }]), undefined);
 });
 
 test('detectPaginationForCandidates keeps reliable external numeric next pagination', async () => {
@@ -4915,6 +5365,140 @@ test('buildTaskFromCandidate normalizes invalid element names in runtime XPath',
   assert.doesNotMatch(task.xml, /\/htmllang=&amp;quot;ja&amp;quot;/);
   assert.match(task.xml, /\/\*\[name\(\)=&amp;apos;htmllang=&amp;quot;ja&amp;quot;&amp;apos;\]/);
   assert.match(task.xml, /ExtractHref/);
+});
+
+test('protected Smart normalizer hardens volatile SPA mount_0_0 item XPath at candidate time', () => {
+  // Root cause path: SmartProxy returns session-only mount roots. Customers get
+  // Loop.Error on re-run unless we harden at candidate normalize — not by patching task files.
+  const brittleItem =
+    '//div[@id="mount_0_0_KO"]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[2]/section[1]/main[1]/div[1]/div[1]/div[1]/div[2]/div[1]/div[1]/DIV[1]/article[position()!="3"]';
+  const [candidate] = protectedSmartResultToCandidatesForTesting({
+    List: [{
+      type: 3,
+      sort: 1,
+      page: {
+        PagingType: 2,
+        XPath: '',
+        Text: 'Scroll page',
+        IsAjax: true
+      },
+      element: {
+        xpath: brittleItem,
+        fullColRate: 1,
+        data: [
+          ['hello', 'world'],
+          ['https://cdn.example.com/a.jpg', 'https://cdn.example.com/b.jpg'],
+          ['https://www.instagram.com/p/abc/', 'https://www.instagram.com/p/def/']
+        ],
+        scheme: [
+          {
+            Name: '标题',
+            RelativeXPath: '/descendant-or-self::div[@class="html-div xdj266r x14z9mp xat24cr x1lziwak xexx8yu xyri2b x18d9i69 x1c1uobl x9f619 xjbqb8w"]/SPAN[1]',
+            AbsXPath: `${brittleItem}/descendant-or-self::span[1]`,
+            Attribute: 'text'
+          },
+          {
+            Name: '图片',
+            RelativeXPath: '/descendant-or-self::IMG[contains(@class,"xpdipgo x972fbf x10w94by x1qhh985 x14e42zd xk390pu x5yr21d")]',
+            AbsXPath: `${brittleItem}//img[1]`,
+            Attribute: 'src'
+          },
+          {
+            Name: '链接',
+            RelativeXPath: '/descendant-or-self::A[contains(@class,"x1i10hfl xjbqb8w x1ejq31n x18oe1m7")]',
+            AbsXPath: `${brittleItem}//a[1]`,
+            Attribute: 'href'
+          }
+        ]
+      }
+    }]
+  }, 1);
+
+  assert.ok(candidate);
+  assert.equal(candidate.xpath, '//main[1]');
+  assert.equal(candidate.itemXPath, '//main[1]//article[position()!="3"]');
+  assert.doesNotMatch(candidate.xpath, /mount_0_0_KO/);
+  assert.doesNotMatch(candidate.itemXPath, /mount_0_0/);
+  assert.equal(candidate.pagination?.type, 'scroll');
+  assert.equal(candidate.pagination?.xpath, '');
+  assert.equal(candidate.pagination?.scope, 'near_list');
+  // Class-soup relative paths for img/a should be simplified at normalize time.
+  const imageField = candidate.fields.find((field) => field.kind === 'src');
+  const linkField = candidate.fields.find((field) => field.kind === 'href');
+  assert.ok(imageField);
+  assert.ok(linkField);
+  assert.match(imageField.relativeXPath, /img/i);
+  assert.doesNotMatch(imageField.relativeXPath, /xpdipgo/);
+  assert.match(linkField.relativeXPath, /a/i);
+  assert.doesNotMatch(linkField.relativeXPath, /x1i10hfl/);
+});
+
+test('buildTaskFromCandidate hardens volatile SPA mount_0_0 item XPath to short article selector', () => {
+  // Defense-in-depth: even if a raw brittle candidate reaches task generation, XML must not embed mount ids.
+  const brittleItem =
+    '//div[@id="mount_0_0_KO"]/div[1]/div[1]/div[2]/div[1]/div[1]/div[1]/div[1]/div[2]/section[1]/main[1]/div[1]/div[1]/div[1]/div[2]/div[1]/div[1]/DIV[1]/article[position()!="3"]';
+  const task = buildTaskFromCandidate({
+    url: 'https://www.instagram.com/',
+    taskId: 'detected_ig_mount',
+    taskName: 'IG Feed',
+    candidate: {
+      id: 'protected_smart_1',
+      type: 'search_results',
+      title: 'IG posts',
+      confidence: 0.9,
+      selector: '',
+      xpath: brittleItem,
+      itemXPath: brittleItem,
+      itemCount: 5,
+      fields: [
+        {
+          name: '标题',
+          kind: 'text',
+          selector: 'span',
+          xpath: `${brittleItem}/descendant-or-self::span[1]`,
+          relativeXPath: '/descendant-or-self::div[@class="html-div xdj266r x14z9mp xat24cr x1lziwak xexx8yu xyri2b x18d9i69 x1c1uobl x9f619 xjbqb8w"]/SPAN[1]',
+          samples: ['hello']
+        },
+        {
+          name: '图片',
+          kind: 'src',
+          selector: 'img',
+          xpath: `${brittleItem}//img[1]`,
+          relativeXPath: '/descendant-or-self::IMG[contains(@class,"xpdipgo x972fbf x10w94by x1qhh985 x14e42zd xk390pu x5yr21d")]',
+          samples: ['https://cdn.example.com/a.jpg']
+        },
+        {
+          name: '链接',
+          kind: 'href',
+          selector: 'a',
+          xpath: `${brittleItem}//a[1]`,
+          relativeXPath: '/descendant-or-self::A[contains(@class,"x1i10hfl xjbqb8w x1ejq31n x18oe1m7")]',
+          samples: ['https://www.instagram.com/p/abc/']
+        }
+      ],
+      sampleRows: [{ 标题: 'hello', 图片: 'https://cdn.example.com/a.jpg', 链接: 'https://www.instagram.com/p/abc/' }],
+      reasons: ['test'],
+      pagination: {
+        type: 'scroll',
+        xpath: '',
+        text: 'Scroll page',
+        confidence: 0.86,
+        isAjax: true,
+        scope: 'near_list',
+        reasons: ['Detected by protected SmartProxy pagination']
+      }
+    }
+  });
+
+  // Loop item must not keep the session-only mount id.
+  assert.doesNotMatch(task.xml, /mount_0_0_KO/);
+  assert.match(task.xml, /&lt;AbsXpath&gt;\/\/main\[1\]\/\/article\[position\(\)!=&amp;quot;3&amp;quot;\]&lt;\/AbsXpath&gt;/);
+  assert.match(task.xml, /&lt;AbsXpath&gt;\/\/main\[1\]&lt;\/AbsXpath&gt;/);
+  assert.equal(task.detection.paginationType, 'scroll');
+  assert.match(task.xml, /Caption="Loop scroll page"/);
+  // Image/link relative paths should drop huge class soups.
+  assert.match(task.xml, /descendant-or-self::img/i);
+  assert.match(task.xml, /descendant-or-self::a|::a/i);
 });
 
 test('buildTaskFromCandidate preserves sibling-axis relative extraction fields', () => {
@@ -7523,7 +8107,9 @@ function matchesSimpleSelector(element, selector) {
   const scopeMatch = selector.replace(/^:scope\s*>\s*/, '').replace(/^:scope\s*/, '');
   if (scopeMatch.includes('>')) return matchesSimpleSelector(element, scopeMatch.split('>').at(-1).trim());
   const withoutAttributeSelectors = scopeMatch.replace(/\[[^\]]+\]/g, '');
-  if (withoutAttributeSelectors.trim().includes(' ')) return matchesSimpleSelector(element, scopeMatch.split(/\s+/).at(-1));
+  if (withoutAttributeSelectors.trim().includes(' ') || /\]\s+\[/.test(scopeMatch)) {
+    return matchesSimpleSelector(element, scopeMatch.split(/\s+/).at(-1));
+  }
   const tagMatch = scopeMatch.match(/^[a-zA-Z][\w-]*/)?.[0];
   if (tagMatch && element.localName !== tagMatch.toLowerCase()) return false;
   for (const className of scopeMatch.matchAll(/\.([\w-]+)/g)) {
@@ -7535,9 +8121,12 @@ function matchesSimpleSelector(element, selector) {
   for (const match of scopeMatch.matchAll(/\[([^=\]\*]+)\*="([^"]+)"(?:\s+i)?\]/g)) {
     if (!String(element.getAttribute(match[1]) || '').toLowerCase().includes(match[2].toLowerCase())) return false;
   }
+  for (const match of scopeMatch.matchAll(/\[([^=\]\^]+)\^="([^"]+)"(?:\s+i)?\]/g)) {
+    if (!String(element.getAttribute(match[1]) || '').toLowerCase().startsWith(match[2].toLowerCase())) return false;
+  }
   for (const match of scopeMatch.matchAll(/\[([^=\]]+)="([^"]+)"\]/g)) {
     const attr = match[1];
-    if (attr.endsWith('*')) continue;
+    if (/[*^$]$/.test(attr)) continue;
     if (String(element.getAttribute(attr) || '') !== match[2]) return false;
   }
   for (const match of scopeMatch.matchAll(/\[([^=\]\*]+)\]/g)) {
@@ -7768,6 +8357,50 @@ function detectOptionsForSearchScoring(url, keyword) {
   };
 }
 
+function semanticFeedStory(index, pagelet, author, content) {
+  const top = 120 + (index - 1) * 760;
+  return {
+    tag: 'div',
+    attrs: { 'data-pagelet': pagelet },
+    rect: { left: 200, top, right: 860, bottom: top + 620 },
+    children: [{
+      tag: 'div',
+      attrs: { role: 'article', 'data-virtualized': 'false' },
+      rect: { left: 210, top: top + 10, right: 850, bottom: top + 610 },
+      children: [
+        {
+          tag: 'div',
+          attrs: { 'data-ad-rendering-role': 'profile_name' },
+          rect: { left: 230, top: top + 30, right: 520, bottom: top + 70 },
+          children: [{
+            tag: 'a',
+            text: author,
+            attrs: { href: `https://example.test/publishers/${index}`, ariaLabel: author },
+            rect: { left: 240, top: top + 35, right: 500, bottom: top + 65 }
+          }]
+        },
+        {
+          tag: 'a',
+          text: `${index}小时`,
+          attrs: { href: `https://example.test/posts/${index}`, ariaLabel: `${index}小时` },
+          rect: { left: 230, top: top + 75, right: 300, bottom: top + 100 }
+        },
+        {
+          tag: 'div',
+          text: content,
+          attrs: { 'data-ad-rendering-role': 'story_message', 'data-ad-preview': 'message' },
+          rect: { left: 230, top: top + 115, right: 820, bottom: top + 230 }
+        },
+        {
+          tag: 'img',
+          attrs: { src: `https://example.test/images/${index}.jpg`, 'data-imgperflogname': 'feedImage' },
+          rect: { left: 230, top: top + 250, right: 820, bottom: top + 560 }
+        }
+      ]
+    }]
+  };
+}
+
 function searchResultLikeElements({ className, itemTextPrefix }) {
   return [
     {
@@ -7876,6 +8509,7 @@ function fakeSearchResultBlockPage({ elements }) {
       const previousElement = globalThis.Element;
       const previousHTMLElement = globalThis.HTMLElement;
       const previousHTMLAnchorElement = globalThis.HTMLAnchorElement;
+      const previousHTMLInputElement = globalThis.HTMLInputElement;
       const previousShadowRoot = globalThis.ShadowRoot;
       const previousXPathResult = globalThis.XPathResult;
       const previousCSS = globalThis.CSS;
@@ -7990,6 +8624,10 @@ function fakeSearchResultBlockPage({ elements }) {
         children: []
       });
       html.append(body);
+      html.scrollHeight = 1400;
+      html.clientHeight = 900;
+      html.scrollTop = 0;
+      body.scrollHeight = 1400;
       const all = () => flattenElements([html]);
       const document = {
         body,
@@ -8001,6 +8639,8 @@ function fakeSearchResultBlockPage({ elements }) {
       const window = {
         innerWidth: 1200,
         innerHeight: 900,
+        scrollX: 0,
+        scrollY: 0,
         getComputedStyle() {
           return { display: 'block', visibility: 'visible', opacity: '1' };
         }
@@ -8011,6 +8651,7 @@ function fakeSearchResultBlockPage({ elements }) {
       globalThis.Element = FakeElement;
       globalThis.HTMLElement = FakeElement;
       globalThis.HTMLAnchorElement = FakeElement;
+      globalThis.HTMLInputElement = class {};
       globalThis.ShadowRoot = FakeShadowRoot;
       globalThis.XPathResult = { ORDERED_NODE_SNAPSHOT_TYPE: 7, FIRST_ORDERED_NODE_TYPE: 9 };
       globalThis.CSS = { escape: (value) => String(value).replace(/"/g, '\\"') };
@@ -8023,6 +8664,7 @@ function fakeSearchResultBlockPage({ elements }) {
         globalThis.Element = previousElement;
         globalThis.HTMLElement = previousHTMLElement;
         globalThis.HTMLAnchorElement = previousHTMLAnchorElement;
+        globalThis.HTMLInputElement = previousHTMLInputElement;
         globalThis.ShadowRoot = previousShadowRoot;
         globalThis.XPathResult = previousXPathResult;
         globalThis.CSS = previousCSS;

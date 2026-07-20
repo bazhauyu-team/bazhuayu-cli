@@ -90,7 +90,20 @@ export async function applyLayoutScores(page: Page, candidates: DetectedCandidat
         // generic layout classes like "align-right", "title-left", "float-right".
         if (element.closest('aside,[role="complementary"],[class*="sidebar" i],[class*="-side" i],[class*="side-" i]')) return 'sidebar';
         if (/\bsidebar\b|\bside-bar\b/i.test((element as HTMLElement).className || '')) return 'sidebar';
-        if (element.closest('[class*="ad" i],[id*="ad" i],[class*="banner" i],[id*="banner" i],[class*="sponsor" i]')) return 'ad';
+        if (element.closest([
+          '[role="advertisement"]',
+          '[data-ad]',
+          '[data-ad-slot]',
+          '[class~="ad" i]',
+          '[class~="ads" i]',
+          '[id="ad" i]',
+          '[id^="ad-" i]',
+          '[id$="-ad" i]',
+          '[class*="banner" i]',
+          '[id*="banner" i]',
+          '[class*="sponsor" i]',
+          '[id*="sponsor" i]'
+        ].join(','))) return 'ad';
       }
       if (/(header|footer|nav|menu|category|sidebar|aside|advert|banner|sponsor)/i.test(attrs)) {
         if (/header/i.test(attrs)) return 'header';
@@ -115,6 +128,21 @@ export async function applyLayoutScores(page: Page, candidates: DetectedCandidat
       if (!rect) continue;
       const value = elements.slice(0, 30).map(text).join(' ');
       const attrs = elements.slice(0, 10).map(attrText).join(' ');
+      const semanticFeedRecords = elements.filter((element) => {
+        const pagelet = element.getAttribute('data-pagelet') || '';
+        if (pagelet.startsWith('FeedUnit_') && element.closest('[role="feed"]')) return true;
+        if (element.getAttribute('role') !== 'article' || !element.closest('[role="feed"]')) return false;
+        return !element.parentElement?.closest('[role="article"]');
+      });
+      const semanticFeedList = elements.length >= 2
+        && semanticFeedRecords.length >= Math.max(2, Math.ceil(elements.length * 0.6));
+      const containingFeedRecords = elements
+        .map((element) => element.closest('[data-pagelet^="FeedUnit_"]'))
+        .filter((element): element is Element => Boolean(element));
+      const nestedInsideSingleFeedRecord = elements.length >= 2
+        && containingFeedRecords.length === elements.length
+        && new Set(containingFeedRecords).size === 1
+        && semanticFeedRecords.length === 0;
       const areaRatio = clamp(rect.area / Math.max(1, viewportWidth * viewportHeight));
       const widthRatio = clamp(rect.width / viewportWidth);
       const heightRatio = clamp(rect.height / viewportHeight);
@@ -147,6 +175,8 @@ export async function applyLayoutScores(page: Page, candidates: DetectedCandidat
       // topRatio is clamped to [0,1] so the original "< 1.8" was always true.
       // Reward only when the element starts in the upper portion of the viewport.
       if (documentTopRatio < 0.72 && topRatio < 0.8) mainScore += 0.06;
+      if (semanticFeedList) mainScore += 0.2;
+      if (nestedInsideSingleFeedRecord) mainScore -= 0.14;
       // Single-entity bodies: tall centered columns with long prose are main content even with wiki links.
       if (isDetailCandidate && value.length >= 400 && widthRatio >= 0.35 && centerDistance < 0.4) {
         mainScore += 0.16;
@@ -180,7 +210,12 @@ export async function applyLayoutScores(page: Page, candidates: DetectedCandidat
           /(?:mw-content|mw-parser|markdown-body|article|post-content|entry-content|main-content)/i.test(attrs)
           || (value.length >= 500 && widthRatio >= 0.4 && centerDistance < 0.42 && documentTopRatio < 0.75)
         );
-      if (explicitRole && !(looksLikeMainShell && (explicitRole === 'nav' || explicitRole === 'header' || explicitRole === 'footer'))) {
+      if (semanticFeedList) {
+        role = 'main';
+        mainScore = Math.max(mainScore, 0.82);
+        sidebarPenalty *= 0.3;
+        boilerplatePenalty *= 0.4;
+      } else if (explicitRole && !(looksLikeMainShell && (explicitRole === 'nav' || explicitRole === 'header' || explicitRole === 'footer'))) {
         role = explicitRole;
       } else if (looksLikeMainShell) {
         role = 'main';
@@ -213,6 +248,8 @@ export async function applyLayoutScores(page: Page, candidates: DetectedCandidat
 
       const reasons: string[] = [];
       if (role === 'main') reasons.push('centered rich repeated content');
+      if (semanticFeedList) reasons.push('semantic feed records');
+      if (nestedInsideSingleFeedRecord) reasons.push('nested module within one feed record');
       if (role === 'sidebar') reasons.push('side-column layout');
       if (role === 'nav') reasons.push('navigation-like layout');
       if (role === 'ad') reasons.push('advertising/banner-like layout');

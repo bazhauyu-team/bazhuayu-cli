@@ -1,5 +1,6 @@
 import type { BrowserSessionReference } from '../browser-session.js';
 import type { DetectedCandidate, DetectedField, DetectedPaginationType, DetectedPopupDismissal, DetectedSearchPlan } from './types.js';
+import { hardenDetectedCandidate } from './xpath-hardening.js';
 
 export interface GeneratedDetectedTask {
   taskId: string;
@@ -28,7 +29,9 @@ export function buildTaskFromCandidate(options: {
   session?: BrowserSessionReference;
   searchPlan?: DetectedSearchPlan;
 }): GeneratedDetectedTask {
-  const candidate = normalizeCandidateItemXPath(options.candidate);
+  // Defense-in-depth: candidates should already be hardened at Smart/DOM normalize time,
+  // but task generation always re-hardens before writing loop/extract XPath into XML.
+  const candidate = hardenDetectedCandidate(options.candidate);
   const fields = candidate.fields.filter((field) => field.kind === 'text' || field.kind === 'href' || field.kind === 'src');
   const detailPlan = detailRuntimePlan(candidate);
   const detectionDetailPlan = candidate.detailPlan
@@ -78,52 +81,6 @@ function workflowSettingForCandidate(candidate: DetectedCandidate): { workflowSe
       continuousJudgeCount: 3
     }
   };
-}
-
-function normalizeCandidateItemXPath(candidate: DetectedCandidate): DetectedCandidate {
-  if (candidate.type === 'detail' || candidate.type === 'form') return candidate;
-  const itemXPath = candidate.itemXPath || candidate.xpath;
-  if (normalizeXPath(itemXPath) !== normalizeXPath(candidate.xpath)) return candidate;
-  const inferred = inferItemXPathFromFields(candidate);
-  if (!inferred || normalizeXPath(inferred) === normalizeXPath(candidate.xpath)) return candidate;
-  return {
-    ...candidate,
-    itemXPath: inferred,
-    fields: candidate.fields.map((field) => ({
-      ...field,
-      relativeXPath: field.relativeXPath || relativeXPathFromBase(inferred, field.xpath)
-    }))
-  };
-}
-
-function inferItemXPathFromFields(candidate: DetectedCandidate): string | undefined {
-  const fieldPaths = candidate.fields
-    .map((field) => field.xpath)
-    .filter((xpath) => xpath && xpath.startsWith(candidate.xpath));
-  for (const fieldPath of fieldPaths) {
-    const match = fieldPath.match(/^(.*?\/(?:article|li|tr|section|div)(?:\[\d+\])?)(?:\/|\/\/).+$/i);
-    if (!match) continue;
-    const base = match[1];
-    if (normalizeXPath(base) !== normalizeXPath(candidate.xpath)) return stripLastIndex(base);
-  }
-  return undefined;
-}
-
-function relativeXPathFromBase(baseXPath: string, fieldXPath: string): string {
-  if (!fieldXPath.startsWith(baseXPath)) return relativeXPathFromItem(fieldXPath);
-  const suffix = fieldXPath.slice(baseXPath.length);
-  if (!suffix) return '.';
-  // Note: suffix starting with '//' (descendant-or-self) is treated the same as other paths.
-  // Both result in '.${suffix}' which produces valid relative XPath like './/...'
-  return `.${suffix}`;
-}
-
-function normalizeXPath(xpath: string): string {
-  return xpath.replace(/\[\d+\]/g, '').replace(/\/+$/, '');
-}
-
-function stripLastIndex(xpath: string): string {
-  return xpath.replace(/\[\d+\]$/, '');
 }
 
 function rootAttrs(): string {

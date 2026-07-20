@@ -4,6 +4,7 @@ import { printEnvelope } from '../cli/output.js';
 import { API_BASE_URL_ENV } from '../runtime/api-client.js';
 import { ACCESS_TOKEN_ENV, API_KEY_ENV } from '../runtime/auth.js';
 import { LINUX_ARM64_UNSUPPORTED_CODE, localChromePlatformNote, supportedLocalChromePlatforms, unsupportedLocalChromePlatforms } from '../runtime/platform-support.js';
+import { isUserBrowserPlatformSupported, userBrowserPlatformNote } from '../runtime/user-browser.js';
 import { EXIT_OK } from '../types.js';
 
 export async function capabilitiesCommand(version: string, json: boolean): Promise<number> {
@@ -24,7 +25,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
       loginVerifiesKeyBeforeSaving: true,
       loginSupportsOAuthBrowserFlow: true,
       setupCommandsWithoutAuth: ['auth login', 'auth status', 'auth info', 'auth logout', 'env status', 'env prod', 'env online'],
-      diagnosticCommandsWithoutAuth: ['--help', '--version', 'capabilities', 'doctor'],
+      diagnosticCommandsWithoutAuth: ['--help', '--version', 'capabilities', 'doctor', 'browser'],
       env: API_KEY_ENV,
       accessTokenEnv: ACCESS_TOKEN_ENV,
       file: join(homedir(), '.octopus', 'credentials.json')
@@ -39,6 +40,35 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
     browserRuntime: {
       browser: 'Chrome for Testing',
       localExecutionRequiresBrowser: true,
+      defaultSelection: {
+        order: ['--browser flag', 'OCTOPUS_BROWSER env', 'octopus browser use (config)', 'independent'],
+        configFile: join(homedir(), '.octopus', 'config.json'),
+        setCommand: 'octopus browser use independent|user',
+        env: ['OCTOPUS_BROWSER', 'OCTOPUS_BROWSER_ID', 'OCTOPUS_BROWSER_PROFILE']
+      },
+      modes: {
+        independent: {
+          default: true,
+          description: 'Temporary Chrome for Testing profile with unpacked runtime extension'
+        },
+        user: {
+          default: false,
+          description: 'System Chrome/Edge user profile with permanently installed Octopus extension. Reuses a running browser and opens a new session window; only install requires closing the browser.',
+          supported: isUserBrowserPlatformSupported(),
+          platforms: ['darwin', 'win32'],
+          unsupportedNote: userBrowserPlatformNote(),
+          setupCommands: [
+            'octopus browser use user',
+            'octopus browser status',
+            'octopus browser install',
+            'octopus browser profiles'
+          ],
+          runFlags: ['--browser user', '--browser-id chrome|edge', '--profile <name>', '--force-close-browser (optional)'],
+          detectFlags: ['--browser user', '--browser-id chrome|edge', '--profile <name>', '--force-close-browser (optional)'],
+          requiresBrowserClosed: ['browser install'],
+          affectedCommands: ['run', 'detect', 'detect --agent --run-sample']
+        }
+      },
       supportedPlatforms: supportedLocalChromePlatforms(),
       unsupportedPlatforms: unsupportedLocalChromePlatforms(),
       linuxArm64: {
@@ -158,6 +188,12 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           'DETECT_CANDIDATE_UNSUPPORTED',
           LINUX_ARM64_UNSUPPORTED_CODE,
           'CHROME_LAUNCH_FAILED',
+          'EXTENSION_NOT_READY',
+          'BROWSER_RUNNING',
+          'PROFILE_RUNNING',
+          'BROWSER_NOT_INSTALLED',
+          'UNSUPPORTED_PLATFORM',
+          'USER_BROWSER_HEADLESS_UNSUPPORTED',
           'RUN_NOT_FOUND',
           'LOCAL_LOT_NOT_FOUND',
           'UNSUPPORTED_EXPORT_FORMAT'
@@ -334,6 +370,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
     },
     commands: [
       { command: 'doctor', risk: 'low', json: true, authRequired: false },
+      { command: 'browser use/status/install/close/profiles', risk: 'medium', json: true, authRequired: false },
       { command: 'auth login/status/info/logout', risk: 'medium', json: true, authRequired: false },
       { command: 'env prod/online/status', risk: 'medium', json: true, hidden: true, authRequired: false },
       { command: 'task list', risk: 'low', json: true, authRequired: true },

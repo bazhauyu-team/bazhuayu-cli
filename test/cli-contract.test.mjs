@@ -3645,6 +3645,8 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
       taskFile,
       '--output',
       output,
+      '--browser',
+      'independent',
       '--jsonl',
       '--timeout-ms',
       '2000'

@@ -5,8 +5,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Browser, Page } from 'puppeteer-core';
 import { BridgeHub } from '../bridge-hub.js';
+import {
+  startBootstrapPageServer,
+  type BootstrapPageServer
+} from '../bootstrap-page.js';
 import type { ChromeResolveStatus } from '../chrome-progress.js';
+import {
+  prepareUserBrowserForRun,
+  type UserBrowserLaunchPlan
+} from '../user-browser.js';
 import { hasLinuxDisplayEnvironment, startVirtualDisplayIfNeeded, type VirtualDisplayHandle } from '../virtual-display.js';
+import { createExtensionBackedBrowser, createExtensionBackedPage } from './extension-backed-page.js';
 import type { DetectOptions } from './types.js';
 import type {
   DetectorExtensionBridge,
@@ -19,68 +28,98 @@ const require = createRequire(import.meta.url);
 const puppeteer = require('rebrowser-puppeteer-core') as typeof import('puppeteer-core');
 const EngineModule = require('@octopus/browser-runtime') as {
   resolveChrome: (options?: { onStatus?: (status: ChromeResolveStatus) => void }) => Promise<{ executablePath: string }>;
+  ChromeProcess: new () => ChromeProcessLike;
 };
 
-/** Bootstrap page used only to inject sessionId/wsUrl for browser-runtime extension registration. */
-const DETECTOR_BOOTSTRAP_ORIGIN = 'https://example.com/';
+interface ChromeProcessLike {
+  launch(options: {
+    executablePath: string;
+    userDataDir?: string;
+    profileDirectory?: string;
+    startupUrls?: string[];
+    headless?: boolean;
+    debuggerPort?: number;
+    localBrowserMode?: boolean;
+  }): Promise<ChildProcess>;
+  process?: ChildProcess;
+  canCloseLaunchedProcess(): boolean;
+  close(): void;
+}
+
+interface DetectorHostModeState {
+  mode: 'independent' | 'user';
+  chromeProcess?: ChromeProcessLike;
+  sessionWindowId?: number;
+  connectedBrowser?: Browser;
+  /** When true, page/browser are extension-backed shims (no puppeteer CDP). */
+  extensionBacked?: boolean;
+  /** Shared mutable tab id for extension-backed pages (host + page closures). */
+  tabRef?: { tabId: number };
+  /** Local friendly splash page used for extension session registration. */
+  bootstrapPage?: BootstrapPageServer;
+}
 
 export class ExtensionDetectorHost {
-  private constructor(
+  // Constructor is module-private by convention; use ExtensionDetectorHost.start().
+  // Kept non-private so same-file factory helpers can construct instances under TS private rules.
+  constructor(
     private readonly browserInstance: Browser,
     private readonly runtimeExtensionPath: string | undefined,
     private readonly bridgeHub: BridgeHub,
     private readonly extensionBridge: DetectorExtensionBridge,
     public page: Page,
     private tabId: number,
-    private readonly virtualDisplay: VirtualDisplayHandle
-  ) {}
+    private readonly virtualDisplay: VirtualDisplayHandle,
+    private readonly modeState: DetectorHostModeState
+  ) {
+    if (modeState.tabRef) modeState.tabRef.tabId = tabId;
+  }
 
   static async start(options: DetectOptions, hooks: ExtensionDetectorHostStartHooks = {}): Promise<ExtensionDetectorHost> {
     assertDetectDisplayAvailable(options);
-    const virtualDisplay = await startVirtualDisplayForDetection(options);
-    const runId = `detect_${Date.now()}_${Math.random().toString(16).slice(2)}`;
-    const bridgeHub = new BridgeHub();
-    const extensionBridge = await bridgeHub.createSessionBridge(runId) as DetectorExtensionBridge;
-    let browser: Browser | undefined;
-    let runtimeExtensionPath: string | undefined;
-
-    try {
-      const chromePath = options.chromePath ?? (await EngineModule.resolveChrome({ onStatus: options.onChromeStatus })).executablePath;
-      runtimeExtensionPath = await prepareDetectorRuntimeExtension(runId, extensionBridge);
-      browser = await launchDetectorBrowser(chromePath, runtimeExtensionPath);
-      // browser-runtime extension reads sessionId/wsUrl from the page URL, not runtime-config.json.
-      // Open a bootstrap page first so the extension can register before target navigation.
-      const page = await openDetectorBootstrapPage(
-        browser,
-        extensionBridge.runtimeConfig,
-        Math.min(options.timeoutMs, 30_000),
-        hooks.onTargetPageReady
-      );
-      await bridgeHub.waitForSessionConnected(runId, Math.min(options.timeoutMs, 30_000));
-      await page.goto(options.url, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs });
-      const tabId = await waitForTabId(extensionBridge, page, options.timeoutMs);
-      await readyCheck(extensionBridge, tabId, Math.min(options.timeoutMs, 15_000)).catch(() => undefined);
-      return new ExtensionDetectorHost(browser, runtimeExtensionPath, bridgeHub, extensionBridge, page, tabId, virtualDisplay);
-    } catch (error) {
-      await browser?.close().catch(() => undefined);
-      if (runtimeExtensionPath) await rm(runtimeExtensionPath, { recursive: true, force: true }).catch(() => undefined);
-      bridgeHub.close();
-      await virtualDisplay.close();
-      throw error;
+    const browserMode = options.browserMode ?? 'independent';
+    if (browserMode === 'user') {
+      return startUserBrowserDetectorHost(options, hooks);
     }
+    return startIndependentDetectorHost(options, hooks);
+  }
+
+  private setTabId(tabId: number): void {
+    this.tabId = tabId;
+    if (this.modeState.tabRef) this.modeState.tabRef.tabId = tabId;
   }
 
   async refreshTabId(): Promise<number> {
-    this.tabId = await waitForTabId(this.extensionBridge, this.page, 10_000);
-    return this.tabId;
+    const tabId = await waitForTabId(this.extensionBridge, this.page, 10_000);
+    this.setTabId(tabId);
+    return tabId;
   }
 
   async usePage(page: Page): Promise<void> {
     this.page = page;
     await this.refreshTabId();
+    const windowId = this.extensionBridge.getTabWindowId?.(this.tabId)
+      ?? this.extensionBridge.getBootstrapWindowId?.();
+    if (typeof windowId === 'number') {
+      this.modeState.sessionWindowId = windowId;
+    }
   }
 
   browser(): Browser | undefined {
+    if (this.modeState.mode !== 'user') return this.browserInstance;
+    if (this.modeState.extensionBacked) {
+      const tabRef = this.modeState.tabRef ?? { tabId: this.tabId };
+      this.modeState.tabRef = tabRef;
+      return createExtensionBackedBrowser(
+        this.extensionBridge,
+        () => tabRef.tabId,
+        (tabId) => {
+          this.setTabId(tabId);
+        },
+        30_000,
+        this.page
+      );
+    }
     return this.browserInstance;
   }
 
@@ -96,6 +135,14 @@ export class ExtensionDetectorHost {
   }
 
   async close(): Promise<void> {
+    if (this.modeState.mode === 'user') {
+      await closeUserBrowserDetectorHost(this.extensionBridge, this.tabId, this.modeState);
+      this.bridgeHub.close();
+      await this.modeState.bootstrapPage?.close().catch(() => undefined);
+      await this.virtualDisplay.close();
+      return;
+    }
+
     const browserProcess = this.browserInstance.process?.() as ChildProcess | null | undefined;
     silenceBrowserProcess(browserProcess);
     try {
@@ -106,18 +153,212 @@ export class ExtensionDetectorHost {
     await waitForBrowserProcessExit(browserProcess, 1500);
     this.bridgeHub.close();
     if (this.runtimeExtensionPath) await rm(this.runtimeExtensionPath, { recursive: true, force: true }).catch(() => undefined);
+    await this.modeState.bootstrapPage?.close().catch(() => undefined);
     await this.virtualDisplay.close();
   }
 }
 
+async function startIndependentDetectorHost(
+  options: DetectOptions,
+  hooks: ExtensionDetectorHostStartHooks
+): Promise<ExtensionDetectorHost> {
+  const virtualDisplay = await startVirtualDisplayForDetection(options);
+  const runId = `detect_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const bridgeHub = new BridgeHub();
+  const extensionBridge = await bridgeHub.createSessionBridge(runId) as DetectorExtensionBridge;
+  let browser: Browser | undefined;
+  let runtimeExtensionPath: string | undefined;
+  let bootstrapPage: BootstrapPageServer | undefined;
+
+  try {
+    const chromePath = options.chromePath ?? (await EngineModule.resolveChrome({ onStatus: options.onChromeStatus })).executablePath;
+    runtimeExtensionPath = await prepareDetectorRuntimeExtension(runId, extensionBridge);
+    bootstrapPage = await startBootstrapPageServer({ mode: 'detect', label: options.url });
+    browser = await launchDetectorBrowser(chromePath, runtimeExtensionPath);
+    // browser-runtime extension reads sessionId/wsUrl from the page URL, not runtime-config.json.
+    // Open a friendly local bootstrap page first so the extension can register before target navigation.
+    const page = await openDetectorBootstrapPage(
+      browser,
+      extensionBridge.runtimeConfig,
+      Math.min(options.timeoutMs, 30_000),
+      hooks.onTargetPageReady,
+      bootstrapPage.origin
+    );
+    await bridgeHub.waitForSessionConnected(runId, Math.min(options.timeoutMs, 30_000));
+    await page.goto(options.url, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs });
+    const tabId = await waitForTabId(extensionBridge, page, options.timeoutMs);
+    await readyCheck(extensionBridge, tabId, Math.min(options.timeoutMs, 15_000)).catch(() => undefined);
+    return new ExtensionDetectorHost(
+      browser,
+      runtimeExtensionPath,
+      bridgeHub,
+      extensionBridge,
+      page,
+      tabId,
+      virtualDisplay,
+      { mode: 'independent', bootstrapPage }
+    );
+  } catch (error) {
+    await browser?.close().catch(() => undefined);
+    if (runtimeExtensionPath) await rm(runtimeExtensionPath, { recursive: true, force: true }).catch(() => undefined);
+    await bootstrapPage?.close().catch(() => undefined);
+    bridgeHub.close();
+    await virtualDisplay.close();
+    throw error;
+  }
+}
+
+async function startUserBrowserDetectorHost(
+  options: DetectOptions,
+  hooks: ExtensionDetectorHostStartHooks
+): Promise<ExtensionDetectorHost> {
+  // User browser mode reuses the real desktop profile + permanently installed extension.
+  // Matches browser-runtime localBrowserMode: open a new session window; do NOT require
+  // closing an already-running Chrome, and do NOT depend on --remote-debugging-port.
+  const virtualDisplay: VirtualDisplayHandle = {
+    enabled: false,
+    async close() {}
+  };
+  const runId = `detect_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  const bridgeHub = new BridgeHub();
+  const extensionBridge = await bridgeHub.createSessionBridge(runId) as DetectorExtensionBridge;
+  let chromeProcess: ChromeProcessLike | undefined;
+  let bootstrapPage: BootstrapPageServer | undefined;
+  const tabRef = { tabId: -1 };
+
+  try {
+    const launchPlan = await prepareUserBrowserForRun({
+      browserId: options.browserId,
+      profileName: options.browserProfile,
+      chromePath: options.chromePath,
+      forceClose: options.forceCloseBrowser
+    });
+    options.onChromeStatus?.({ state: 'resolved', progress: 100 });
+
+    bootstrapPage = await startBootstrapPageServer({ mode: 'detect', label: options.url });
+    const bootstrapUrl = buildDetectorBootstrapUrl(extensionBridge.runtimeConfig, bootstrapPage.origin);
+    chromeProcess = new EngineModule.ChromeProcess();
+    await chromeProcess.launch({
+      executablePath: launchPlan.chromePath,
+      userDataDir: launchPlan.userDataDirectory,
+      profileDirectory: launchPlan.profileName,
+      startupUrls: [bootstrapUrl],
+      headless: false,
+      localBrowserMode: true
+    });
+
+    await bridgeHub.waitForSessionConnected(runId, Math.min(options.timeoutMs, 45_000));
+    tabRef.tabId = await waitForUserBrowserTabId(extensionBridge, Math.min(options.timeoutMs, 30_000));
+    const page = createExtensionBackedPage(
+      extensionBridge,
+      () => tabRef.tabId,
+      (nextTabId) => {
+        tabRef.tabId = nextTabId;
+      }
+    );
+    hooks.onTargetPageReady?.(page);
+    await page.goto(options.url, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs });
+    // After navigation the same tab should still be registered; refresh if URL mapping changed.
+    tabRef.tabId = await waitForTabId(extensionBridge, page, Math.min(options.timeoutMs, 15_000)).catch(() => tabRef.tabId);
+    await readyCheck(extensionBridge, tabRef.tabId, Math.min(options.timeoutMs, 15_000)).catch(() => undefined);
+    const sessionWindowId = extensionBridge.getTabWindowId?.(tabRef.tabId)
+      ?? extensionBridge.getBootstrapWindowId?.();
+    const browser = createExtensionBackedBrowser(
+      extensionBridge,
+      () => tabRef.tabId,
+      (nextTabId) => {
+        tabRef.tabId = nextTabId;
+      },
+      30_000,
+      page
+    );
+
+    return new ExtensionDetectorHost(
+      browser,
+      undefined,
+      bridgeHub,
+      extensionBridge,
+      page,
+      tabRef.tabId,
+      virtualDisplay,
+      {
+        mode: 'user',
+        chromeProcess,
+        sessionWindowId: typeof sessionWindowId === 'number' ? sessionWindowId : undefined,
+        extensionBacked: true,
+        tabRef,
+        bootstrapPage
+      }
+    );
+  } catch (error) {
+    // Only kill a process we actually own (Chrome was not already running).
+    if (chromeProcess?.canCloseLaunchedProcess()) {
+      chromeProcess.close();
+    }
+    await bootstrapPage?.close().catch(() => undefined);
+    bridgeHub.close();
+    await virtualDisplay.close();
+    throw error;
+  }
+}
+
+async function closeUserBrowserDetectorHost(
+  extensionBridge: DetectorExtensionBridge,
+  tabId: number,
+  modeState: DetectorHostModeState
+): Promise<void> {
+  let sessionWindowClosed = false;
+  try {
+    const response = await extensionBridge.sendActionCommand({
+      action: 'close-session-window',
+      tabId,
+      timeoutMs: 5_000,
+      payload: {}
+    });
+    sessionWindowClosed = Boolean(response.success);
+  } catch {
+    // best-effort; may fall back to process close below
+  }
+
+  // Prefer leaving the user browser running after closing only the session window.
+  // canCloseLaunchedProcess is typically false when Chrome was already running (handoff).
+  if (!sessionWindowClosed && modeState.chromeProcess?.canCloseLaunchedProcess()) {
+    modeState.chromeProcess.close();
+  }
+}
+
+async function waitForUserBrowserTabId(
+  extensionBridge: DetectorExtensionBridge,
+  timeoutMs: number
+): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const bootstrapTabId = extensionBridge.getBootstrapTabId?.();
+    if (typeof bootstrapTabId === 'number') return bootstrapTabId;
+    const anyTabId = extensionBridge.getAnyTabId?.();
+    if (typeof anyTabId === 'number') return anyTabId;
+    await delay(200);
+  }
+  throw new Error(
+    'User browser extension did not register a session tab. '
+    + 'Confirm the Octopus extension is enabled in Chrome (chrome://extensions/), then retry.'
+  );
+}
+
 export function assertDetectDisplayAvailable(options: DetectOptions): void {
+  if (options.browserMode === 'user') {
+    if (process.platform === 'linux') {
+      throw new Error('User browser detect mode is not supported on Linux. Use the default independent Chrome mode instead.');
+    }
+    return;
+  }
   if (process.platform !== 'linux' || (!options.manual && !options.interactive)) return;
   if (hasLinuxDisplayEnvironment()) return;
   throw new Error('Linux 手动检测需要可见浏览器环境，但当前没有 X server 或 WAYLAND_DISPLAY。请在桌面会话中运行，或用 xvfb-run/VNC 提供可见显示；非手动检测会自动使用 Xvfb。');
 }
 
 export async function startVirtualDisplayForDetection(options: DetectOptions): Promise<VirtualDisplayHandle> {
-  if (options.manual || options.interactive) {
+  if (options.browserMode === 'user' || options.manual || options.interactive) {
     return {
       enabled: false,
       async close() {}
@@ -126,7 +367,10 @@ export async function startVirtualDisplayForDetection(options: DetectOptions): P
   return startVirtualDisplayIfNeeded();
 }
 
-export function buildDetectorBootstrapUrl(runtimeConfig: { sessionId: string; wsUrl: string }, origin = DETECTOR_BOOTSTRAP_ORIGIN): string {
+export function buildDetectorBootstrapUrl(
+  runtimeConfig: { sessionId: string; wsUrl: string },
+  origin: string
+): string {
   const url = new URL(origin);
   url.searchParams.set('sessionId', runtimeConfig.sessionId);
   url.searchParams.set('wsUrl', runtimeConfig.wsUrl);
@@ -219,12 +463,16 @@ export async function openDetectorBootstrapPage(
   browser: Browser,
   runtimeConfig: { sessionId: string; wsUrl: string },
   timeoutMs: number,
-  onPageReady?: (page: Page) => void
+  onPageReady?: (page: Page) => void,
+  origin?: string
 ): Promise<Page> {
   const pages = await browser.pages();
   const page = pages[0] ?? await browser.newPage();
   onPageReady?.(page);
-  const bootstrapUrl = buildDetectorBootstrapUrl(runtimeConfig);
+  if (!origin) {
+    throw new Error('Detector bootstrap origin is required');
+  }
+  const bootstrapUrl = buildDetectorBootstrapUrl(runtimeConfig, origin);
   await page.goto(bootstrapUrl, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
   return page;
 }
@@ -237,6 +485,10 @@ export async function waitForTabId(extensionBridge: DetectorExtensionBridge, pag
       const tabId = extensionBridge.resolveTabId(url);
       if (tabId !== undefined) return tabId;
     }
+    const bootstrapTabId = extensionBridge.getBootstrapTabId?.();
+    if (typeof bootstrapTabId === 'number') return bootstrapTabId;
+    const anyTabId = extensionBridge.getAnyTabId?.();
+    if (typeof anyTabId === 'number') return anyTabId;
     await delay(200);
   }
   throw new Error(`extension tab was not registered for ${page.url()}`);
@@ -252,3 +504,6 @@ export async function readyCheck(extensionBridge: DetectorExtensionBridge, tabId
   });
   if (!response.success) throw new Error(response.error);
 }
+
+// Keep type-only export surface stable for callers that may want launch plan diagnostics later.
+export type { UserBrowserLaunchPlan };

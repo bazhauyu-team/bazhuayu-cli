@@ -19,6 +19,7 @@ import { detectPaginationForCandidates, sanitizeCandidatePaginationByLayout } fr
 import {
   detectTables,
   detectRepeatedCards,
+  detectSemanticFeedCandidates,
   detectSearchResultBlocks,
   detectSemanticBusinessCards,
   detectInteractiveElementGroups,
@@ -31,6 +32,7 @@ import {
 export {
   detectDetails,
   contentCleanupOperations,
+  detectSemanticFeedCandidatesForTesting,
   detectSearchResultBlocksForTesting,
   detectSemanticBusinessCardsForTesting
 } from './page-detector-candidate-strategies.js';
@@ -64,6 +66,7 @@ export async function detectCandidates(page: Page, options: DetectOptions, scrol
       protectedSmart.length
       && smartUsable
       && !mustRunDetailFallback
+      && !options.interactive
     );
     const fallback = skipFallback
       ? []
@@ -153,6 +156,7 @@ export async function detectRawCandidates(
   const includeDetail = options.includeDetail !== false;
   const candidates: RawCandidate[] = [];
   candidates.push(...await detectTables(page));
+  candidates.push(...await detectSemanticFeedCandidates(page));
   candidates.push(...await detectRepeatedCards(page));
   candidates.push(...await detectSearchResultBlocks(page));
   candidates.push(...await detectSemanticBusinessCards(page));
@@ -200,7 +204,13 @@ export async function detectFallbackListCandidates(
     confidence: Number(Math.max(0.1, candidate.confidence - 0.06).toFixed(2)),
     reasons: [...candidate.reasons, 'Fallback detector candidate']
   }));
-  const refined = await refineCandidateFields(page, detected);
+  const semanticFeedIds = new Set(detected
+    .filter((candidate) => candidate.reasons.some((reason) => /semantic feed container/i.test(reason)))
+    .map((candidate) => candidate.id));
+  const refinable = detected.filter((candidate) => !semanticFeedIds.has(candidate.id));
+  const refinedNonFeed = refinable.length ? await refineCandidateFields(page, refinable) : [];
+  const refinedById = new Map(refinedNonFeed.map((candidate) => [candidate.id, candidate]));
+  const refined = detected.map((candidate) => refinedById.get(candidate.id) ?? candidate);
   return rankCandidates(refined).slice(0, limit);
 }
 

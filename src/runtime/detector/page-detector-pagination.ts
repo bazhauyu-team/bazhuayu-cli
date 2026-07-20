@@ -1599,7 +1599,7 @@ export function scrollProbePaginationForCandidates(candidates: DetectedCandidate
     if (candidate.type === 'detail' || candidate.type === 'form') continue;
     if (!candidateEligibleForGlobalScrollPagination(candidate)) continue;
     const listLike = candidate.type === 'repeated_card' || candidate.type === 'search_results' || candidate.type === 'link_collection';
-    const enoughItems = candidate.itemCount >= 8 || scrollProbe.maxArticleLikeCount >= 8;
+    const enoughItems = candidate.itemCount >= 4 || scrollProbe.maxArticleLikeCount >= 8;
     if (!listLike || !enoughItems) continue;
     if (scrollProbeHasReliableActiveLoadMore(scrollProbe)) {
       const text = scrollProbe.bestActiveLoadMoreText || 'Load more';
@@ -1643,8 +1643,8 @@ export function scrollProbePaginationForCandidates(candidates: DetectedCandidate
       isAjax: true,
       scope: 'global',
       reasons: [
-        'list-like item count grew during detection scroll probe',
-        `scroll probe added ${grewArticleLikeCount} list-like items`,
+        'list-like records grew during detection scroll probe',
+        `scroll probe discovered ${grewArticleLikeCount} additional list-like items`,
         ...(grewContentHeight ? [`scroll probe increased content text by ${grewContentHeight} chars`] : []),
         ...(grewPageHeight ? [`scroll probe increased page height by ${grewPageHeight}px`] : [])
       ]
@@ -1654,14 +1654,16 @@ export function scrollProbePaginationForCandidates(candidates: DetectedCandidate
 }
 
 export function candidateEligibleForGlobalScrollPagination(candidate: DetectedCandidate): boolean {
-  if (candidate.itemCount < 8) return false;
+  const hasRecordSignal = candidateHasRecordSignal(candidate);
+  const minimumItems = hasRecordSignal && candidate.confidence >= 0.72 ? 4 : 8;
+  if (candidate.itemCount < minimumItems) return false;
   const role = candidate.layout?.role;
   if (role && role !== 'main' && role !== 'unknown') return false;
   if (candidate.layout) {
     if (candidate.layout.sidebarPenalty >= 0.28 || candidate.layout.boilerplatePenalty >= 0.34) return false;
     if (candidate.layout.visualCoverage < 0.12 && candidate.itemCount < 20) return false;
   }
-  return candidateHasRecordSignal(candidate) || candidate.itemCount >= 20;
+  return hasRecordSignal || candidate.itemCount >= 20;
 }
 
 export function candidateHasRecordSignal(candidate: DetectedCandidate): boolean {

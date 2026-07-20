@@ -1,0 +1,266 @@
+import type { DetectedCandidate, DetectedField } from './types.js';
+
+/**
+ * Harden list candidates so generated tasks remain re-runnable.
+ * Primary targets:
+ * - SPA session roots like //div[@id="mount_0_0_XX"]/...
+ * - extremely deep positional absolute paths
+ * - class-soup relative field paths for img/a/time
+ */
+export function hardenDetectedCandidate(candidate: DetectedCandidate): DetectedCandidate {
+  if (candidate.type === 'detail' || candidate.type === 'form') {
+    return hardenCandidateFieldsOnly(candidate);
+  }
+
+  const originalItemXPath = candidate.itemXPath || candidate.xpath;
+  let itemXPath = originalItemXPath;
+  let fields = candidate.fields;
+  let xpath = candidate.xpath;
+  const itemXPathWasCandidateRoot = normalizeXPath(originalItemXPath) === normalizeXPath(candidate.xpath);
+
+  const hardenedOriginal = hardenRuntimeItemXPath(originalItemXPath, fields);
+  if (hardenedOriginal && hardenedOriginal !== originalItemXPath) {
+    itemXPath = hardenedOriginal;
+    if (itemXPathWasCandidateRoot) {
+      xpath = stableContainerXPathFromItemXPath(itemXPath) ?? itemXPath;
+    }
+    fields = fields.map((field) => ({
+      ...field,
+      relativeXPath: field.relativeXPath || relativeXPathFromBase(originalItemXPath, field.xpath)
+    }));
+  } else if (normalizeXPath(itemXPath) === normalizeXPath(candidate.xpath)) {
+    const inferred = inferItemXPathFromFields(candidate);
+    if (inferred && normalizeXPath(inferred) !== normalizeXPath(candidate.xpath)) {
+      itemXPath = inferred;
+      fields = fields.map((field) => ({
+        ...field,
+        relativeXPath: field.relativeXPath || relativeXPathFromBase(inferred, field.xpath)
+      }));
+      const hardenedInferred = hardenRuntimeItemXPath(itemXPath, fields);
+      if (hardenedInferred && hardenedInferred !== itemXPath) {
+        itemXPath = hardenedInferred;
+      }
+    }
+  }
+
+  // Keep container xpath aligned when it was the brittle mount path too.
+  if (isBrittleAbsoluteXPath(xpath)) {
+    const hardenedContainer = hardenRuntimeItemXPath(xpath, fields);
+    if (hardenedContainer) xpath = hardenedContainer;
+    else {
+      const stripped = stripVolatileMountIds(xpath);
+      if (stripped !== xpath) xpath = stripped;
+    }
+  }
+
+  fields = fields.map((field) => hardenRuntimeField(field, itemXPath));
+
+  if (
+    itemXPath === originalItemXPath
+    && xpath === candidate.xpath
+    && fields === candidate.fields
+  ) {
+    return candidate;
+  }
+
+  return {
+    ...candidate,
+    xpath,
+    itemXPath,
+    fields
+  };
+}
+
+function hardenCandidateFieldsOnly(candidate: DetectedCandidate): DetectedCandidate {
+  const itemXPath = candidate.itemXPath || candidate.xpath;
+  const fields = candidate.fields.map((field) => hardenRuntimeField(field, itemXPath));
+  if (fields.every((field, index) => field === candidate.fields[index])) return candidate;
+  return { ...candidate, fields };
+}
+
+function inferItemXPathFromFields(candidate: DetectedCandidate): string | undefined {
+  const fieldPaths = candidate.fields
+    .map((field) => field.xpath)
+    .filter((xpath) => xpath && xpath.startsWith(candidate.xpath));
+  for (const tag of ['article', 'li', 'tr', 'section', 'div'] as const) {
+    for (const fieldPath of fieldPaths) {
+      const match = fieldPath.match(new RegExp(
+        `^(.*?\\/${tag}(?:\\[[^\\]]+\\])?)(?:\\/|\\/\\/).+$`,
+        'i'
+      ));
+      if (!match) continue;
+      const base = match[1];
+      if (normalizeXPath(base) === normalizeXPath(candidate.xpath)) continue;
+      return stripLastIndex(base);
+    }
+  }
+  return undefined;
+}
+
+export function hardenRuntimeItemXPath(itemXPath: string, fields: DetectedField[] = []): string | undefined {
+  const trimmed = itemXPath.trim();
+  if (!trimmed) return undefined;
+  if (!isBrittleAbsoluteXPath(trimmed)) return undefined;
+
+  const trailingItemMatch = trimmed.match(/\/((article|li|tr)(?:\[[^\]]+\])?)$/i);
+  if (trailingItemMatch) {
+    const trailingItem = trailingItemMatch[1];
+    const containerXPath = stableSemanticContainerXPath(trimmed, trailingItemMatch[2]);
+    if (containerXPath) return `${containerXPath}//${trailingItem}`;
+    const withoutMount = stripVolatileMountIds(trimmed);
+    return withoutMount !== trimmed ? withoutMount : `//${trailingItem}`;
+  }
+
+  for (const field of fields) {
+    const fieldItem = field.xpath?.match(/^(\/\/(?:article|li|tr)(?:\[[^\]]+\])?)/i)?.[1];
+    if (fieldItem) return fieldItem;
+  }
+
+  const fromMain = trimmed.match(/(\/\/(?:main|section)(?:\[[^\]]+\])?(?:\/.+))$/i)?.[1];
+  if (fromMain && fromMain.length < trimmed.length * 0.85) return fromMain;
+
+  const withoutMount = stripVolatileMountIds(trimmed);
+  if (withoutMount && withoutMount !== trimmed) return withoutMount;
+
+  return undefined;
+}
+
+export function hardenRuntimeField(field: DetectedField, itemXPath: string): DetectedField {
+  let next = field;
+  const relative = (field.relativeXPath || '').trim();
+  if (relative && isBrittleClassSoupRelativeXPath(relative)) {
+    const simplified = simplifyRelativeFieldXPath(field);
+    if (simplified && simplified !== relative) {
+      next = { ...next, relativeXPath: simplified };
+    }
+  }
+
+  if (field.xpath && isBrittleAbsoluteXPath(field.xpath)) {
+    const rel = (next.relativeXPath || relativeXPathFromItem(field.xpath) || '').trim();
+    if (rel && itemXPath) {
+      const composed = composeItemRelativeXPath(itemXPath, rel);
+      if (composed) next = { ...next, xpath: composed };
+    } else {
+      const withoutMount = stripVolatileMountIds(field.xpath);
+      if (withoutMount && withoutMount !== field.xpath) next = { ...next, xpath: withoutMount };
+    }
+  }
+
+  return next;
+}
+
+function composeItemRelativeXPath(itemXPath: string, relativeXPath: string): string | undefined {
+  const item = itemXPath.trim();
+  const rel = relativeXPath.trim();
+  if (!item || !rel || rel === '.') return item || undefined;
+  if (rel.startsWith('/descendant-or-self::')) return `${item}${rel}`;
+  if (rel.startsWith('.//')) return `${item}//${rel.slice(3)}`;
+  if (rel.startsWith('./')) return `${item}/${rel.slice(2)}`;
+  if (rel.startsWith('//')) return `${item}${rel}`;
+  if (rel.startsWith('/')) return `${item}${rel}`;
+  return `${item}//${rel}`;
+}
+
+function simplifyRelativeFieldXPath(field: DetectedField): string | undefined {
+  const relative = (field.relativeXPath || '').trim();
+  if (!relative) return undefined;
+
+  if (field.kind === 'src') {
+    if (/img/i.test(relative)) {
+      return relative
+        .replace(/IMG\[contains\(@class,["'][^"']+["']\)\]/gi, 'img')
+        .replace(/img\[contains\(@class,["'][^"']+["']\)\]/gi, 'img');
+    }
+    return '/descendant-or-self::img';
+  }
+  if (field.kind === 'href') {
+    if (/\/\/A\[1\]|\/A\[1\]|::a(\[|$)|\/a(\[|$)/i.test(relative)) {
+      return relative
+        .replace(/A\[contains\(@class,["'][^"']+["']\)\]/gi, 'a')
+        .replace(/a\[contains\(@class,["'][^"']+["']\)\]/gi, 'a');
+    }
+    return '/descendant-or-self::a[1]';
+  }
+  if (field.kind === 'text') {
+    if (/time/i.test(relative) || /时间|date|time/i.test(field.name)) {
+      return '/descendant-or-self::time[1]';
+    }
+    const stripped = relative
+      .replace(/\[@class=["'][^"']{80,}["']\]/g, '')
+      .replace(/\[contains\(@class,["'][^"']{60,}["']\)\]/g, '');
+    if (stripped !== relative && stripped.length >= 3) return stripped;
+  }
+  return undefined;
+}
+
+function stableSemanticContainerXPath(xpath: string, itemTag: string): string | undefined {
+  if (!hasVolatileMountRoot(xpath)) return undefined;
+  const preferredTags = itemTag.toLowerCase() === 'tr'
+    ? ['table', 'main']
+    : itemTag.toLowerCase() === 'li'
+      ? ['main', 'section', 'ul', 'ol']
+      : ['main', 'section'];
+  for (const tag of preferredTags) {
+    const match = xpath.match(new RegExp(`/${tag}(\\[[^\\]]+\\])?(?=/|$)`, 'i'));
+    if (match) return `//${tag}${match[1] ?? ''}`;
+  }
+  return undefined;
+}
+
+function stableContainerXPathFromItemXPath(itemXPath: string): string | undefined {
+  return itemXPath.match(/^(\/\/(?:main|section|table|ul|ol)(?:\[[^\]]+\])?)(?=\/)/i)?.[1];
+}
+
+export function isBrittleAbsoluteXPath(xpath: string): boolean {
+  if (!xpath) return false;
+  if (hasVolatileMountRoot(xpath)) return true;
+  const depth = (xpath.match(/\//g) || []).length;
+  if (depth >= 12 && /\[\d+\]/.test(xpath)) return true;
+  return false;
+}
+
+function hasVolatileMountRoot(xpath: string): boolean {
+  return /@id=["']mount_0_0_[^"']+["']/i.test(xpath)
+    || /@id=["'][^"']*(?:react-root|mount)[^"']*["']/i.test(xpath);
+}
+
+export function isBrittleClassSoupRelativeXPath(xpath: string): boolean {
+  if (!xpath) return false;
+  if (/@class=["'][^"']{80,}["']/.test(xpath)) return true;
+  if (/contains\(@class,["'][^"']{60,}["']\)/.test(xpath)) return true;
+  if (/x[a-z0-9]{5,}/i.test(xpath) && (xpath.match(/x[a-z0-9]{5,}/gi) || []).length >= 4) return true;
+  return false;
+}
+
+export function stripVolatileMountIds(xpath: string): string {
+  return xpath
+    .replace(/\/\/div\[@id=["']mount_0_0_[^"']+["']\]/gi, '//div')
+    .replace(/\/div\[@id=["']mount_0_0_[^"']+["']\]/gi, '/div')
+    .replace(/\/\/(?:div|main)\[@id=["'](?:react-root|app|root)["']\]/gi, (value) => (
+      value.startsWith('//main') ? '//main' : '//div'
+    ));
+}
+
+function relativeXPathFromBase(baseXPath: string, fieldXPath: string): string {
+  if (!fieldXPath.startsWith(baseXPath)) return relativeXPathFromItem(fieldXPath);
+  const suffix = fieldXPath.slice(baseXPath.length);
+  if (!suffix) return '.';
+  return `.${suffix}`;
+}
+
+function relativeXPathFromItem(xpath: string): string {
+  const trimmed = xpath.trim();
+  if (!trimmed) return '';
+  const lastSlash = trimmed.lastIndexOf('/');
+  if (lastSlash === -1) return '';
+  const tail = trimmed.slice(lastSlash + 1);
+  return tail ? `/${tail}` : '';
+}
+
+function normalizeXPath(xpath: string): string {
+  return xpath.replace(/\[\d+\]/g, '').replace(/\/+$/, '');
+}
+
+function stripLastIndex(xpath: string): string {
+  return xpath.replace(/\[\d+\]$/, '');
+}

@@ -66,6 +66,9 @@ export interface ApiListField {
   valuePrefix?: string;
 }
 
+export type BrowserMode = 'independent' | 'user';
+export type UserBrowserId = 'chrome' | 'edge';
+
 export interface RunOptions {
   taskId: string;
   taskFile?: string;
@@ -74,6 +77,18 @@ export interface RunOptions {
   json: boolean;
   jsonl: boolean;
   chromePath?: string;
+  /**
+   * Browser launch mode:
+   * - independent: temporary Chrome for Testing profile + unpacked extension (default)
+   * - user: system Chrome/Edge user profile + permanently installed Octopus extension
+   */
+  browserMode: BrowserMode;
+  /** Target browser for user mode. Defaults to chrome. */
+  browserId: UserBrowserId;
+  /** Chromium profile directory name, e.g. Default / Profile 1. */
+  browserProfile?: string;
+  /** Close a running user browser before install/launch when true. */
+  forceCloseBrowser: boolean;
   disableImage: boolean;
   disableAD: boolean;
   runTimeoutMs: number;

@@ -11,6 +11,11 @@ import { DetectionLoginRequiredError, detectPage } from '../../runtime/detector/
 import type { PageDetectionResult } from '../../runtime/detector/types.js';
 import { buildTaskFromCandidate } from '../../runtime/detector/xml.js';
 import { LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE, isLocalChromeRuntimeSupported } from '../../runtime/platform-support.js';
+import { readCliConfig } from '../../runtime/config.js';
+import {
+  resolveBrowserLaunchOptions,
+  UserBrowserError
+} from '../../runtime/user-browser.js';
 import { EXIT_OK, EXIT_OPERATION_FAILED, EXIT_RUNTIME_FAILED } from '../../types.js';
 import {
   defaultDetectedTaskName,
@@ -44,6 +49,9 @@ export async function detectCommand(args: string[]): Promise<number> {
   }
   const url = firstPositionalArg(args, [
     '--chrome-path',
+    '--browser',
+    '--browser-id',
+    '--profile',
     '--wait-ms',
     '--scrolls',
     '--timeout-ms',
@@ -134,7 +142,11 @@ export async function detectCommand(args: string[]): Promise<number> {
     return handleDirectDetectResult({ args, result, json, quiet, timings });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const code = error instanceof DetectionLoginRequiredError ? 'LOGIN_SESSION_REQUIRED' : 'DETECT_FAILED';
+    const code = error instanceof UserBrowserError
+      ? error.code
+      : error instanceof DetectionLoginRequiredError
+        ? 'LOGIN_SESSION_REQUIRED'
+        : 'DETECT_FAILED';
     if (json) printEnvelope(false, undefined, code, message);
     else console.error(`检测失败: ${message}`);
     return EXIT_RUNTIME_FAILED;
@@ -142,10 +154,18 @@ export async function detectCommand(args: string[]): Promise<number> {
 }
 
 async function runPageDetection(args: string[], url: string, json: boolean, quiet: boolean): Promise<PageDetectionResult> {
+  const config = await readCliConfig();
+  const browser = resolveBrowserLaunchOptions({
+    browserFlag: valueAfter(args, '--browser'),
+    browserIdFlag: valueAfter(args, '--browser-id'),
+    profileFlag: valueAfter(args, '--profile'),
+    preference: config.browser
+  });
+  const forceCloseBrowser = hasFlag(args, '--force-close-browser') || hasFlag(args, '--force-close');
   const agentScreenshotPath = resolveAgentScreenshotPath(args, url);
   const originalStderrWrite = process.stderr.write.bind(process.stderr);
   const chromeProgress = createChromeProgressReporter({
-    enabled: !json && !quiet && !valueAfter(args, '--chrome-path'),
+    enabled: !json && !quiet && !valueAfter(args, '--chrome-path') && browser.browserMode !== 'user',
     write: (message) => originalStderrWrite(message)
   });
   return detectPage({
@@ -154,6 +174,10 @@ async function runPageDetection(args: string[], url: string, json: boolean, quie
     submit: valueAfter(args, '--submit'),
     goal: valueAfter(args, '--goal'),
     chromePath: valueAfter(args, '--chrome-path'),
+    browserMode: browser.browserMode,
+    browserId: browser.browserId,
+    browserProfile: browser.browserProfile,
+    forceCloseBrowser,
     manual: hasFlag(args, '--manual'),
     interactive: hasFlag(args, '--interactive') || hasFlag(args, '--manual'),
     waitMs: parsePositiveInt(valueAfter(args, '--wait-ms'), 1500),

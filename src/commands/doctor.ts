@@ -12,6 +12,12 @@ import { resolveAuth, type AuthCredential } from '../runtime/auth.js';
 import { createChromeProgressReporter, type ChromeResolveStatus } from '../runtime/chrome-progress.js';
 import { defaultRunsDir } from '../runtime/local-runs.js';
 import { LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE, isLinuxArm64Runtime } from '../runtime/platform-support.js';
+import {
+  inspectUserBrowser,
+  isUserBrowserPlatformSupported,
+  summarizeInspection,
+  userBrowserPlatformNote
+} from '../runtime/user-browser.js';
 import { hasLinuxDisplayEnvironment, startVirtualDisplayIfNeeded } from '../runtime/virtual-display.js';
 import { EXIT_OK, EXIT_RUNTIME_FAILED } from '../types.js';
 
@@ -83,15 +89,19 @@ export async function doctorCommand(args: string[]): Promise<number> {
   checks.push(await authCheck(valueAfter(args, '--api-base-url')));
   checks.push(await runDirectoryCheck(valueAfter(args, '--output') ?? defaultRunsDir()));
 
+  const userBrowserCheck = checkUserBrowserReadiness();
+  checks.push(userBrowserCheck.check);
+
   const data = {
     ok: checks.every((check) => check.severity !== 'error'),
     checks,
     summary: doctorSummary(checks),
     browser,
+    userBrowser: userBrowserCheck.summary,
     runtime: {
-      supported: ['chrome'],
+      supported: ['chrome', 'user-chrome', 'user-edge'],
       unsupported: ['kernel', 'legacy-workflow'],
-      browserMode: 'independent Chrome only',
+      browserMode: 'configurable: independent Chrome (default) or user Chrome/Edge via octopus browser use',
       electronClient: 'not required'
     }
   };
@@ -112,6 +122,79 @@ export async function doctorCommand(args: string[]): Promise<number> {
   if (json) printEnvelope(true, data);
   else printDoctorHuman(data);
   return EXIT_OK;
+}
+
+function checkUserBrowserReadiness(): { check: DoctorCheck; summary: Record<string, unknown> } {
+  if (!isUserBrowserPlatformSupported()) {
+    return {
+      check: {
+        name: 'user-browser-extension',
+        ok: true,
+        severity: 'warning',
+        message: userBrowserPlatformNote(),
+        details: {
+          supported: false,
+          platform: process.platform
+        }
+      },
+      summary: {
+        supported: false,
+        platform: process.platform,
+        note: userBrowserPlatformNote()
+      }
+    };
+  }
+
+  try {
+    const inspection = inspectUserBrowser({ browserId: 'chrome' });
+    const ready = inspection.browser.installed
+      && !inspection.extensionStatus.needsInstallOrUpdate
+      && Boolean(inspection.browser.path);
+    const severity: DoctorSeverity = ready
+      ? 'ok'
+      : inspection.browser.installed
+        ? 'warning'
+        : 'warning';
+    const message = !inspection.browser.installed
+      ? `${inspection.browser.name} was not found for user-browser mode.`
+      : inspection.extensionStatus.needsInstallOrUpdate
+        ? inspection.launch.requiresClose
+          ? `Octopus extension needs install/update in ${inspection.browser.name}. Close it first, then: octopus browser install`
+          : `Octopus extension needs install/update in ${inspection.browser.name}. Run: octopus browser install`
+        : inspection.launch.requiresClose
+          ? `User browser mode ready (${inspection.browser.name} is running; run/detect will open a new session window).`
+          : `User browser mode ready (${inspection.browser.name}, profile=${inspection.defaultProfileName ?? 'Default'}).`;
+
+    const summary = summarizeInspection(inspection);
+    return {
+      check: {
+        name: 'user-browser-extension',
+        ok: true,
+        severity,
+        message,
+        details: { ...summary }
+      },
+      summary: {
+        supported: true,
+        ready,
+        ...summary
+      }
+    };
+  } catch (error) {
+    return {
+      check: {
+        name: 'user-browser-extension',
+        ok: true,
+        severity: 'warning',
+        message: error instanceof Error ? error.message : String(error)
+      },
+      summary: {
+        supported: true,
+        ready: false,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    };
+  }
 }
 
 async function checkBrowserReadiness(chromePath: string | undefined, json: boolean): Promise<BrowserReadiness> {

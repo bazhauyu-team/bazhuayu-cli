@@ -454,6 +454,216 @@ export async function detectRepeatedCards(page: Page): Promise<RawCandidate[]> {
     .filter((candidate): candidate is RawCandidate => Boolean(candidate));
 }
 
+export async function detectSemanticFeedCandidates(page: Page): Promise<RawCandidate[]> {
+  type FeedRow = {
+    author: string;
+    author_url: string;
+    content: string;
+    post_url: string;
+    date: string;
+    image: string;
+  };
+  type FeedGroup = {
+    mode: 'story' | 'article';
+    parentSelector: string;
+    parentXPath: string;
+    itemSelector: string;
+    itemXPath: string;
+    itemCount: number;
+    rows: FeedRow[];
+  };
+
+  const groups = await page.evaluate(() => {
+    type BrowserFeedRow = {
+      author: string;
+      author_url: string;
+      content: string;
+      post_url: string;
+      date: string;
+      image: string;
+    };
+    type BrowserFeedGroup = {
+      mode: 'story' | 'article';
+      parentSelector: string;
+      parentXPath: string;
+      itemSelector: string;
+      itemXPath: string;
+      itemCount: number;
+      rows: BrowserFeedRow[];
+    };
+
+    function text(element: Element | null): string {
+      return ((element as HTMLElement | null)?.innerText || element?.textContent || '').replace(/\s+/g, ' ').trim();
+    }
+    function visible(element: Element): boolean {
+      const rect = element.getBoundingClientRect();
+      const style = window.getComputedStyle(element as HTMLElement);
+      return rect.width > 40 && rect.height > 20 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+    }
+    function topLevelWithin(scope: Element, elements: Element[]): Element[] {
+      const set = new Set(elements);
+      return elements.filter((element) => {
+        let ancestor = element.parentElement;
+        while (ancestor && ancestor !== scope) {
+          if (set.has(ancestor)) return false;
+          ancestor = ancestor.parentElement;
+        }
+        return true;
+      });
+    }
+    function meaningfulLink(element: Element | null): HTMLAnchorElement | null {
+      if (!element) return null;
+      const own = element instanceof HTMLAnchorElement ? element : null;
+      if (own?.href) return own;
+      return Array.from(element.querySelectorAll('a')).find((link) => Boolean((link as HTMLAnchorElement).href)) as HTMLAnchorElement | undefined || null;
+    }
+    function timestampLink(record: Element, authorLink: HTMLAnchorElement | null): HTMLAnchorElement | null {
+      const links = Array.from(record.querySelectorAll('a')) as HTMLAnchorElement[];
+      const scored = links
+        .filter((link) => Boolean(link.href) && link !== authorLink && Boolean((link.getAttribute('aria-label') || '').trim()))
+        .map((link) => {
+          const label = (link.getAttribute('aria-label') || '').trim();
+          const value = text(link);
+          const href = link.href || link.getAttribute('href') || '';
+          let score = 0;
+          if (/\/(?:posts?|permalink|videos?|reels?)\/|[?&](?:story_fbid|fbid)=/i.test(href)) score += 7;
+          if (/\b(?:ago|just now|today|yesterday)|\d+\s*(?:秒|分钟|分|小时|天|周|月|年|sec|secs|seconds?|min|mins|minutes?|hr|hrs|hours?|days?|weeks?|months?|years?)\b/i.test(`${label} ${value}`)) score += 6;
+          if (label && label.length <= 32 && /\d/.test(label)) score += 2;
+          if (link.closest('[data-ad-rendering-role="profile_name"],[data-ad-rendering-role="story_message"]')) score -= 5;
+          if (/\/photo\//i.test(href)) score += 1;
+          return { link, score };
+        })
+        .sort((a, b) => b.score - a.score);
+      return scored[0]?.score >= 2 ? scored[0].link : null;
+    }
+    function rowFor(record: Element, mode: 'story' | 'article'): BrowserFeedRow {
+      const profile = record.querySelector('[data-ad-rendering-role="profile_name"]');
+      const story = record.querySelector('[data-ad-rendering-role="story_message"]');
+      const heading = profile || record.querySelector('h1,h2,h3,h4,[role="heading"]');
+      const authorLink = meaningfulLink(heading);
+      const postLink = timestampLink(record, authorLink);
+      const genericContent = Array.from(record.querySelectorAll('p,div,span'))
+        .map((element) => ({ element, value: text(element) }))
+        .find((item) => item.value.length >= 32 && item.value.length <= 2400)?.value || '';
+      const preferredImage = record.querySelector('img[data-imgperflogname="feedImage"]') as HTMLImageElement | null;
+      const fallbackImage = Array.from(record.querySelectorAll('img'))
+        .find((image) => image.getAttribute('role') !== 'presentation') as HTMLImageElement | undefined;
+      const image = preferredImage || fallbackImage || null;
+      return {
+        author: text(profile || authorLink || heading).slice(0, 240),
+        author_url: authorLink?.href || authorLink?.getAttribute('href') || '',
+        content: text(story).slice(0, 4000) || (mode === 'article' ? genericContent.slice(0, 4000) : ''),
+        post_url: postLink?.href || postLink?.getAttribute('href') || '',
+        date: text(postLink).slice(0, 120),
+        image: image?.currentSrc || image?.src || image?.getAttribute('src') || ''
+      };
+    }
+
+    const allFeeds = Array.from(document.querySelectorAll('[role="feed"]'));
+    const feeds = allFeeds.filter(visible);
+    const output: BrowserFeedGroup[] = [];
+    for (const feed of feeds) {
+      const descendants = Array.from(feed.querySelectorAll('*'));
+      const feedUnits = topLevelWithin(feed, descendants.filter((element) => (
+        (element.getAttribute('data-pagelet') || '').startsWith('FeedUnit_')
+      )));
+      const storyUnits = feedUnits.filter((record) => {
+        const hasStorySemantics = Boolean(record.querySelector('[data-ad-rendering-role="profile_name"],[data-ad-rendering-role="story_message"]'));
+        return visible(record) && hasStorySemantics && text(record).length >= 24;
+      });
+      const topArticles = topLevelWithin(feed, descendants.filter((element) => element.getAttribute('role') === 'article'))
+        .filter((record) => visible(record) && text(record).length >= 24 && Boolean(record.querySelector('a,img')));
+      const mode: 'story' | 'article' = storyUnits.length >= 2 ? 'story' : 'article';
+      const records = mode === 'story' ? storyUnits : topArticles;
+      if (records.length < 2) continue;
+      const feedIndex = allFeeds.indexOf(feed);
+      const parentXPath = allFeeds.length === 1 ? '//*[@role="feed"]' : `(//*[@role="feed"])[${feedIndex + 1}]`;
+      const itemXPath = mode === 'story'
+        ? `${parentXPath}//*[starts-with(@data-pagelet,"FeedUnit_")][not(ancestor::*[starts-with(@data-pagelet,"FeedUnit_")])][.//*[@data-ad-rendering-role="profile_name"] or .//*[@data-ad-rendering-role="story_message"]]`
+        : `${parentXPath}//*[@role="article"][not(ancestor::*[@role="article"])]`;
+      output.push({
+        mode,
+        parentSelector: '[role="feed"]',
+        parentXPath,
+        itemSelector: mode === 'story'
+          ? '[role="feed"] [data-pagelet^="FeedUnit_"]'
+          : '[role="feed"] [role="article"]',
+        itemXPath,
+        itemCount: records.length,
+        rows: records.slice(0, 8).map((record) => rowFor(record, mode))
+      });
+    }
+    return output;
+  }) as FeedGroup[];
+
+  return groups.flatMap((group) => {
+    const fields: DetectedField[] = [];
+    const minRepeatedSamples = Math.min(2, group.rows.length);
+    const addField = (
+      name: keyof FeedRow,
+      kind: DetectedField['kind'],
+      relativeXPath: string,
+      minimumSamples = minRepeatedSamples
+    ) => {
+      const samples = group.rows.map((row) => row[name]).filter(Boolean);
+      if (samples.length < minimumSamples) return;
+      fields.push({
+        name,
+        kind,
+        selector: group.itemSelector,
+        xpath: appendRelativeXPath(group.itemXPath, relativeXPath),
+        relativeSelector: '',
+        relativeXPath,
+        samples: samples.slice(0, 3),
+        ...(kind === 'text' ? { operations: [{ type: 'trim' as const, params: ['0'] }] } : {})
+      });
+    };
+
+    if (group.mode === 'story') {
+      addField('author', 'text', './/*[@data-ad-rendering-role="profile_name"][1]');
+      addField('author_url', 'href', './/*[@data-ad-rendering-role="profile_name"][1]//a[1]');
+      addField('content', 'text', './/*[@data-ad-rendering-role="story_message"][1]');
+      addField('post_url', 'href', './/a[@aria-label and @href and not(ancestor::*[@data-ad-rendering-role="profile_name"])][1]');
+      addField('date', 'text', './/a[@aria-label and @href and not(ancestor::*[@data-ad-rendering-role="profile_name"])][1]');
+      addField('image', 'src', './/img[@data-imgperflogname="feedImage"][1]', 1);
+    } else {
+      addField('author', 'text', './/a[1]');
+      addField('author_url', 'href', './/a[1]');
+      addField('content', 'text', '.');
+      addField('post_url', 'href', './/a[2]');
+      addField('date', 'text', './/time[1]');
+      addField('image', 'src', './/img[1]', 1);
+    }
+    if (fields.length < 2) return [];
+    const sampleRows = group.rows.slice(0, 3).map((row) => Object.fromEntries(
+      fields.map((field) => [field.name, row[field.name as keyof FeedRow] || ''])
+    ));
+    return [{
+      type: fields.some((field) => field.kind === 'href') ? 'search_results' as const : 'repeated_card' as const,
+      selector: group.parentSelector,
+      xpath: group.parentXPath,
+      itemSelector: group.itemSelector,
+      itemXPath: group.itemXPath,
+      itemCount: group.itemCount,
+      fields,
+      sampleRows,
+      reasons: [
+        'Semantic feed container with repeated story records',
+        `${group.itemCount} top-level feed records found`,
+        ...(group.mode === 'story' ? ['Feed records selected by author/content semantics'] : [])
+      ],
+      confidence: Math.max(0.9, scoreCandidate({
+        itemCount: group.itemCount,
+        fieldCount: fields.length,
+        semantic: 3,
+        penalty: 0
+      }))
+    } satisfies RawCandidate];
+  });
+}
+
+export const detectSemanticFeedCandidatesForTesting = detectSemanticFeedCandidates;
+
 export async function detectSearchResultBlocks(page: Page): Promise<RawCandidate[]> {
   const groups = await page.evaluate(() => {
     type ResultRow = {

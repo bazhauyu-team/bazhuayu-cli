@@ -89,6 +89,10 @@ export async function runInlineAgentDetect(options: {
           rows: sampleRows,
           outputDir: valueAfter(options.args, '--run-output'),
           chromePath: valueAfter(options.args, '--chrome-path'),
+          browserMode: valueAfter(options.args, '--browser'),
+          browserId: valueAfter(options.args, '--browser-id'),
+          browserProfile: valueAfter(options.args, '--profile'),
+          forceCloseBrowser: hasFlag(options.args, '--force-close-browser') || hasFlag(options.args, '--force-close'),
           headless: hasFlag(options.args, '--headless')
         })
       : undefined;
@@ -246,6 +250,10 @@ async function runSampleTask(options: {
   rows: number;
   outputDir?: string;
   chromePath?: string;
+  browserMode?: string;
+  browserId?: string;
+  browserProfile?: string;
+  forceCloseBrowser?: boolean;
   headless: boolean;
 }): Promise<{
   requestedRows: number;
@@ -262,6 +270,10 @@ async function runSampleTask(options: {
     String(options.rows),
     ...(options.outputDir ? ['--output', options.outputDir] : []),
     ...(options.chromePath ? ['--chrome-path', options.chromePath] : []),
+    ...(options.browserMode ? ['--browser', options.browserMode] : []),
+    ...(options.browserId ? ['--browser-id', options.browserId] : []),
+    ...(options.browserProfile ? ['--profile', options.browserProfile] : []),
+    ...(options.forceCloseBrowser ? ['--force-close-browser'] : []),
     ...(options.headless ? ['--headless'] : []),
     '--json'
   ];

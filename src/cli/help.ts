@@ -169,8 +169,40 @@ Notes:
 Schedule types:
   1=date/once, 2=weekly, 3=monthly, 4=interval-minute, 5=every-hour, 6=daily.
 `,
+    browser: `Usage:
+  octopus browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]
+  octopus browser use status [--json]
+  octopus browser status [--browser-id chrome|edge] [--profile <name>] [--json]
+  octopus browser install [--browser-id chrome|edge] [--force-close] [--json]
+  octopus browser close [--browser-id chrome|edge] [--profile <name>] [--json]
+  octopus browser profiles [--browser-id chrome|edge] [--json]
+
+Purpose:
+  Choose the default browser for run/detect, and manage the permanently installed
+  Octopus extension used by user-browser mode.
+
+Browser modes:
+  independent  Chrome for Testing (temporary profile + unpacked extension). Built-in default.
+  user         System Chrome/Edge + permanently installed extension (Windows/macOS).
+
+Examples:
+  octopus browser use user                 # default run/detect to user browser
+  octopus browser use user --profile "Profile 1"
+  octopus browser use independent          # switch back to Chrome for Testing
+  octopus browser use status               # show saved default
+
+Notes:
+  Saved default lives in ~/.octopus/config.json and applies to both run and detect.
+  Override once with: octopus run|detect ... --browser independent|user
+  Env override: OCTOPUS_BROWSER=user|independent (optional OCTOPUS_BROWSER_ID / OCTOPUS_BROWSER_PROFILE)
+  User browser mode reuses your real Chrome/Edge profile (cookies/login state).
+  Installing the extension requires the browser to be fully closed.
+  Use --force-close to let the CLI close a running browser before install.
+  Supported platforms for user mode: Windows and macOS. Linux uses independent Chrome.
+  After install, reopen the browser once and confirm the extension is enabled.
+`,
     run: `Usage:
-  octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
+  octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
 
 Agent notes:
   Requires configured credentials even when --task-file points to a local JSON, XML, or OTD file.
@@ -181,6 +213,12 @@ Agent notes:
   run only starts local collection. Use data export <taskId> --lot-id <lotId> for files.
   Local Chrome execution supports macOS x64/arm64, Windows x64, and Linux x64.
   Linux arm64 is not supported because Chrome for Testing has no Linux arm64 browser package.
+  Browser selection (priority): --browser flag > OCTOPUS_BROWSER env > octopus browser use > independent.
+  Set default once: octopus browser use user|independent
+  --browser independent launches a temporary Chrome for Testing profile.
+  --browser user reuses system Chrome/Edge with the permanently installed extension.
+  User browser mode first needs: octopus browser install
+  User browser mode does not support --headless.
 `,
     detect: `Usage:
   octopus detect <url> --prepare-agent --json [--goal <text>] [--output context.json]
@@ -189,6 +227,7 @@ Agent notes:
   octopus detect <url> --agent --agent-command <cmd> [--goal <text>] [--output task.json] [--run-sample <n>]
   octopus detect <url> --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
   octopus detect <url> --manual [--goal <text>] [--llm-rank] [--no-dismiss-popups]
+  octopus detect <url> --browser independent|user [--browser-id chrome|edge] [--profile <name>] [--force-close-browser] --auto|--manual|--agent ...
 
 Purpose:
   Open the Octopus extension browser, inspect the page, and list candidate data regions
@@ -202,6 +241,15 @@ Notes:
   --manual opens a guided flow for login,
   popup handling, choosing the highlighted data region, optional session save,
   and task-file generation.
+  Browser selection matches run: --browser flag > OCTOPUS_BROWSER env >
+  octopus browser use default > independent.
+  Set default once: octopus browser use user|independent
+  --browser independent launches temporary Chrome for Testing.
+  --browser user reuses system Chrome/Edge + permanently installed extension
+  (Windows/macOS). Setup first with: octopus browser install
+  User-browser detect/run does not require closing an already-open Chrome;
+  it opens a dedicated session window and closes only that window when finished.
+  Only browser install needs the browser closed (or --force-close).
   On Linux servers without DISPLAY/WAYLAND_DISPLAY, non-manual detection
   automatically uses Xvfb when installed. Manual detection needs a visible
   desktop/VNC display because the user must interact with the browser overlay.
@@ -338,7 +386,8 @@ Purpose:
 Purpose:
   Check the full local CLI environment: Node.js, bundled engine files, protected
   native module, Chrome resolution and launch, Linux display/Xvfb readiness,
-  authentication/API reachability, and local run directory write access.
+  authentication/API reachability, local run directory write access, and
+  optional user-browser extension readiness on Windows/macOS.
 `
   };
 
@@ -353,6 +402,8 @@ Standalone Octoparse engine CLI.
 Usage:
   octopus capabilities [--json]
   octopus doctor [--chrome-path <path>] [--output <runsDir>] [--api-base-url <url>] [--json]
+  octopus browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]
+  octopus browser status|install|close|profiles [--browser-id chrome|edge] [--json]
   octopus auth login <apiKey> [--api-base-url <url>] [--json]
   octopus auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
   octopus auth status [--json]
@@ -376,7 +427,8 @@ Usage:
   octopus detect URL --agent --agent-command <cmd> [--output task.json] [--run-sample <n>]
   octopus detect URL --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
   octopus detect URL --manual [--goal <text>] [--llm-rank] [--no-dismiss-popups]
-  octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
+  octopus detect URL --browser user [--profile <name>] --auto|--manual|--agent ...
+  octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
   octopus cloud start <taskId> [--json]
   octopus cloud stop <taskId> [--json]
   octopus cloud status <taskId> [--json]
@@ -408,7 +460,8 @@ Task file format:
 
 Design:
   - Runs embedded @octopus/browser-runtime directly.
-  - Uses independent Chrome only.
+  - Default local mode uses independent Chrome for Testing (override with octopus browser use user).
+  - Optional --browser user reuses system Chrome/Edge + permanently installed extension (Windows/macOS).
   - Supports local Chrome execution on macOS x64/arm64, Windows x64, and Linux x64.
   - Does not support Linux arm64 local execution because Chrome for Testing has no Linux arm64 browser package.
   - Does not require the Electron client.
@@ -417,7 +470,7 @@ Design:
 
 Authentication:
   OAuth or API key credentials are required for all functional commands, including local --task-file and .otd runs.
-  Only setup/diagnostic commands can run without it: --help, --version, capabilities, doctor, auth, env.
+  Only setup/diagnostic commands can run without it: --help, --version, capabilities, doctor, browser, auth, env.
   API key page:                   ${API_KEYS_URL}
   octopus auth login --oauth   open browser OAuth login and store tokens
   octopus auth login <key>     verify and store a copied API key directly
@@ -432,6 +485,11 @@ Run diagnostics:
   --timeout-ms <ms>            overall foreground run timeout, default 600000
   --extension-timeout-ms <ms>  runtime extension registration timeout, default 15000
   --max-rows <n>               stop local collection after saving n rows
+  --browser independent|user   browser launch mode (default: saved preference or independent)
+  --browser-id chrome|edge     target browser for --browser user
+  --profile <name>             Chromium profile directory for --browser user
+  --force-close-browser        optional: force-close user browser before user-mode launch (not required; default reuses running browser)
+  octopus browser use ...      set default browser for run/detect (saved in ~/.octopus/config.json)
   --debug-bridge              include extension bridge command/response logs
 
 Agent contract:

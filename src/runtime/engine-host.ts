@@ -28,6 +28,14 @@ import {
 import { formatChromeResolveStatus, type ChromeResolveStatus } from './chrome-progress.js';
 import { safeTaskName } from './naming.js';
 import { maybePrintRuntimeSecurityNotice } from './security-notice.js';
+import {
+  startBootstrapPageServer,
+  type BootstrapPageServer
+} from './bootstrap-page.js';
+import {
+  prepareUserBrowserForRun,
+  type UserBrowserLaunchPlan
+} from './user-browser.js';
 import { startVirtualDisplayIfNeeded, type VirtualDisplayHandle } from './virtual-display.js';
 
 const require = createRequire(import.meta.url);
@@ -36,7 +44,13 @@ const defaultEngineModule = require('@octopus/browser-runtime');
 /** Minimal surface we actually call on the proprietary WorkflowAgent instance. */
 export interface WorkflowAgentLike {
   on(event: string, listener: (...args: unknown[]) => void): unknown;
-  start(options: { headless?: boolean; path?: string }): Promise<void> | void;
+  start(options: {
+    headless?: boolean;
+    path?: string;
+    localBrowserMode?: boolean;
+    localBrowserUserDataDirectory?: string;
+    localBrowserProfileName?: string;
+  }): Promise<void> | void;
   stop(): void;
   stopTask(): void;
   pauseTask(): void;
@@ -162,6 +176,7 @@ export class EngineHost extends EventEmitter {
   private workflow: WorkflowAgentLike | null = null;
   private bridgeHub: BridgeHubLike | null = null;
   private virtualDisplay: VirtualDisplayHandle | null = null;
+  private bootstrapPage: BootstrapPageServer | null = null;
 
   constructor(
     private readonly engineModule: EngineModuleLike = defaultEngineModule,
@@ -184,26 +199,57 @@ export class EngineHost extends EventEmitter {
     this.emit('run.started', { runId, lotId, taskId: task.taskId, taskName: runtimeTaskName });
 
     this.bridgeHub = this.bridgeHubFactory();
-    this.virtualDisplay = await startVirtualDisplayIfNeeded();
+    // User browser mode needs a real desktop session and the user's Chrome/Edge profile.
+    // Independent mode may still use Xvfb on headless Linux servers.
+    this.virtualDisplay = options.browserMode === 'user'
+      ? { enabled: false, async close() {} }
+      : await startVirtualDisplayIfNeeded();
     this.attachBridgeDiagnostics(this.bridgeHub, runId, options.debugBridge);
     const extensionBridge = await this.bridgeHub.createSessionBridge(runId);
-    const chromePath = options.chromePath ?? (await resolveChrome({
-      onStatus: (status) => {
-        this.emit('log', {
-          runId,
-          level: status.state === 'failed' ? 'error' : 'info',
-          message: `runtime.chrome.resolve ${formatChromeResolveStatus(status)}`
-        });
-      }
-    })).executablePath;
+
+    const userBrowser = options.browserMode === 'user'
+      ? await prepareUserBrowserForRun({
+          browserId: options.browserId,
+          profileName: options.browserProfile,
+          chromePath: options.chromePath,
+          forceClose: options.forceCloseBrowser
+        })
+      : null;
+
+    const chromePath = userBrowser?.chromePath
+      ?? options.chromePath
+      ?? (await resolveChrome({
+        onStatus: (status) => {
+          this.emit('log', {
+            runId,
+            level: status.state === 'failed' ? 'error' : 'info',
+            message: `runtime.chrome.resolve ${formatChromeResolveStatus(status)}`
+          });
+        }
+      })).executablePath;
+
     this.emit('log', {
       runId,
       level: 'info',
-      message: `runtime.chrome ${chromePath}`
+      message: userBrowser
+        ? `runtime.chrome.user ${chromePath} profile=${userBrowser.profileName} userData=${userBrowser.userDataDirectory}`
+        : `runtime.chrome ${chromePath}`
+    });
+    if (userBrowser) {
+      this.emitUserBrowserLogs(runId, userBrowser);
+    }
+
+    // Friendly local splash page; browser-runtime appends sessionId + wsUrl for extension registration.
+    this.bootstrapPage = await startBootstrapPageServer({
+      mode: 'run',
+      label: runtimeTaskName
+    });
+    this.emit('log', {
+      runId,
+      level: 'debug',
+      message: `runtime.bootstrap ${this.bootstrapPage.origin}`
     });
 
-    // browser-runtime loads the extension bridge from the first page URL query
-    // (sessionId + wsUrl). WorkflowAgent appends those params to localPageUrl.
     const workflow = new WorkflowAgent({
       taskId: runId,
       taskName: runtimeTaskName,
@@ -216,7 +262,7 @@ export class EngineHost extends EventEmitter {
       userAgent: task.userAgent ?? defaultUserAgent(),
       brokerSettings: mergePlain(defaultBrokerSettings(), task.brokerSettings),
       downloadFolderPath: options.outputDir,
-      localPageUrl: 'https://example.com/',
+      localPageUrl: this.bootstrapPage.origin,
       extensionBridge
     });
 
@@ -311,8 +357,15 @@ export class EngineHost extends EventEmitter {
     });
 
     await workflow.start({
-      headless: options.headless,
-      path: chromePath
+      headless: userBrowser ? false : options.headless,
+      path: chromePath,
+      ...(userBrowser
+        ? {
+            localBrowserMode: true,
+            localBrowserUserDataDirectory: userBrowser.userDataDirectory,
+            localBrowserProfileName: userBrowser.profileName
+          }
+        : {})
     });
 
     void this.bridgeHub.waitForSessionConnected(runId, options.extensionTimeoutMs)
@@ -351,10 +404,31 @@ export class EngineHost extends EventEmitter {
     // browser-runtime owns ChromeProcess lifecycle inside WorkflowAgent.close().
     this.workflow?.close();
     this.bridgeHub?.close();
+    await this.bootstrapPage?.close().catch(() => undefined);
     await this.virtualDisplay?.close();
     this.workflow = null;
     this.bridgeHub = null;
+    this.bootstrapPage = null;
     this.virtualDisplay = null;
+  }
+
+  private emitUserBrowserLogs(runId: string, userBrowser: UserBrowserLaunchPlan): void {
+    this.emit('log', {
+      runId,
+      level: 'info',
+      message: [
+        'runtime.browser.mode=user',
+        `browser=${userBrowser.browserName}`,
+        `profile=${userBrowser.profileDisplayName}(${userBrowser.profileName})`,
+        `extension.bundled=${userBrowser.extensionStatus.bundledVersion ?? 'n/a'}`,
+        `extension.installed=${userBrowser.extensionStatus.installedVersion ?? 'n/a'}`
+      ].join(' ')
+    });
+    this.emit('log', {
+      runId,
+      level: 'warn',
+      message: 'runtime.browser.user_mode uses the real browser profile (cookies/login state). Reuses a running browser when present; task end closes only the session window, not the whole browser.'
+    });
   }
 
   private attachBridgeDiagnostics(bridgeHub: BridgeHubLike, runId: string, debugBridge: boolean): void {

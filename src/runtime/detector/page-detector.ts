@@ -53,6 +53,7 @@ export {
   preferredPaginationForTesting
 } from './page-detector-pagination.js';
 export {
+  detectSemanticFeedCandidatesForTesting,
   detectSearchResultBlocksForTesting,
   detectSemanticBusinessCardsForTesting
 } from './page-detector-candidates.js';
@@ -248,6 +249,19 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
         await waitForPageSettled(page, Math.min(options.waitMs, 800));
         candidates = await detectCandidates(page, effectiveOptions, scrollProbe);
       }
+    }
+    if (process.env.OCTOPARSE_TRACKING_DEBUG === '1') {
+      runtimeConsole.writeStderr(`[detect-debug] candidate summaries: ${JSON.stringify(candidates.map((candidate) => ({
+        id: candidate.id,
+        type: candidate.type,
+        confidence: candidate.confidence,
+        xpath: candidate.xpath,
+        itemXPath: candidate.itemXPath,
+        itemCount: candidate.itemCount,
+        fields: candidate.fields.map((field) => field.name),
+        layout: candidate.layout,
+        reasons: candidate.reasons
+      })), null, 2)}\n`);
     }
     const llmRankInput = options.llmRank ? buildLlmRankInput(candidates, options.goal) : undefined;
     let selectedCandidateIds: string[] = [];

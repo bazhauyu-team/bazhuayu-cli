@@ -278,6 +278,18 @@ export interface DetectOptions {
   manual: boolean;
   interactive: boolean;
   chromePath?: string;
+  /**
+   * Browser launch mode:
+   * - independent: temporary Chrome for Testing + unpacked extension (default)
+   * - user: system Chrome/Edge user profile + permanently installed extension
+   */
+  browserMode?: 'independent' | 'user';
+  /** Target browser for user mode. Defaults to chrome. */
+  browserId?: 'chrome' | 'edge';
+  /** Chromium profile directory name for user mode. */
+  browserProfile?: string;
+  /** Close a running user browser before user-mode detect when true. */
+  forceCloseBrowser?: boolean;
   waitMs: number;
   scrolls: number;
   timeoutMs: number;

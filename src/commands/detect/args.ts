@@ -103,7 +103,8 @@ export function splitRunUrlArgs(args: string[]): { detectArgs: string[]; runArgs
   ]);
   const runValueFlags = new Set(['--output', '--max-rows', '--extension-timeout-ms']);
   const runBooleanFlags = new Set(['--headless', '--disable-image', '--disable-ad', '--debug-bridge', '--detach', '--json', '--jsonl']);
-  const sharedValueFlags = new Set(['--chrome-path', '--timeout-ms']);
+  const sharedValueFlags = new Set(['--chrome-path', '--timeout-ms', '--browser', '--browser-id', '--profile']);
+  const sharedBooleanFlags = new Set(['--force-close-browser', '--force-close']);
   const detectArgs: string[] = [];
   const runArgs: string[] = [];
 
@@ -119,6 +120,11 @@ export function splitRunUrlArgs(args: string[]): { detectArgs: string[]; runArgs
       pushValue(detectArgs, arg, value);
       pushValue(runArgs, arg, value);
       index += 1;
+      continue;
+    }
+    if (sharedBooleanFlags.has(arg)) {
+      detectArgs.push(arg);
+      runArgs.push(arg);
       continue;
     }
     if (detectValueFlags.has(arg)) {

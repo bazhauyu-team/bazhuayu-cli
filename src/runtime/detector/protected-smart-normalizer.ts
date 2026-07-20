@@ -1,5 +1,6 @@
 import type { DetectedCandidate, DetectedField, DetectedPagination } from './types.js';
 import type { SmartExtractItem, SmartListResult, SmartRawResult } from './protected-smart-provider.js';
+import { hardenDetectedCandidate } from './xpath-hardening.js';
 
 const SAMPLE_ROW_LIMIT = 10;
 
@@ -25,7 +26,9 @@ export function protectedSmartResultToCandidates(result: SmartRawResult, maxCand
     const fields = smartFields.map(stripSmartFieldMetadata);
     const sampleRows = buildSampleRows(smartFields, element.data ?? [], sampleRowIndices);
     const pagination = smartPaginationToDetected(item.page ?? result.Page);
-    return {
+    // Harden brittle SPA XPaths (e.g. //div[@id="mount_0_0_XX"]/.../article)
+    // at candidate normalize time so customers never get session-only loop selectors.
+    return hardenDetectedCandidate({
       id: `protected_smart_${index + 1}`,
       type: fields.some((field) => field.kind === 'href') ? 'search_results' : 'repeated_card',
       title: `Protected Smart list (${element.data?.[0]?.length ?? 0} items)`,
@@ -42,7 +45,7 @@ export function protectedSmartResultToCandidates(result: SmartRawResult, maxCand
         `fullColRate=${Number(element.fullColRate ?? 0).toFixed(2)}`
       ],
       ...(pagination ? { pagination } : {})
-    } satisfies DetectedCandidate;
+    } satisfies DetectedCandidate);
   }).filter((candidate) => candidate.fields.length && candidate.itemCount > 0);
 }
 
@@ -1028,11 +1031,13 @@ function buildSampleRows(fields: SmartDetectedField[], data: string[][], rowIndi
 }
 
 function smartPaginationToDetected(page: SmartRawResult['Page']): DetectedPagination | undefined {
-  if (!page?.XPath) return undefined;
+  if (!page) return undefined;
   const type = page.PagingType === 1 ? 'load_more' : page.PagingType === 2 ? 'scroll' : 'next_page';
+  const xpath = page.XPath?.trim() || '';
+  if (type !== 'scroll' && !xpath) return undefined;
   return {
     type,
-    xpath: page.XPath,
+    xpath,
     text: page.Text || (type === 'load_more' ? 'Load more' : type === 'scroll' ? 'Scroll page' : 'Next page'),
     confidence: 0.86,
     isAjax: page.IsAjax === true || type !== 'next_page',

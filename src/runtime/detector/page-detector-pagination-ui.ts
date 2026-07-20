@@ -25,7 +25,11 @@ import { showManualProgressOverlay } from './page-detector-manual-ui.js';
 
 export async function choosePaginationInteractively(page: Page, candidates: DetectedCandidate[], runtimeConsole: SuppressedRuntimeConsole, scrollProbe?: ScrollProbeSummary): Promise<DetectedPagination | undefined> {
   const restoreViewport = await preparePaginationDetectionViewport(page, candidates).catch(() => undefined);
-  const options = await detectInteractivePaginationOptions(page, candidates, scrollProbe);
+  const detectedOptions = await detectInteractivePaginationOptions(page, candidates, scrollProbe);
+  const manualScroll = manualScrollPaginationOption(candidates);
+  const options = manualScroll && !detectedOptions.some((option) => option.type === 'scroll')
+    ? [...detectedOptions, manualScroll]
+    : detectedOptions;
   if (!options.length) {
     await restoreViewport?.().catch(() => undefined);
     await showManualProgressOverlay(page, {
@@ -120,6 +124,26 @@ export async function choosePaginationInteractively(page: Page, candidates: Dete
     await removePaginationOverlay(page).catch(() => undefined);
     runtimeConsole.suppress();
   }
+}
+
+export function manualScrollPaginationOption(candidates: DetectedCandidate[]): DetectedPagination | undefined {
+  const candidate = candidates.find((item) => (
+    item.type !== 'detail'
+    && item.type !== 'form'
+    && item.itemCount >= 3
+    && item.fields.length >= 2
+    && item.fields.some((field) => field.kind === 'href' || field.kind === 'src')
+  ));
+  if (!candidate) return undefined;
+  return {
+    type: 'scroll',
+    xpath: '',
+    text: 'Scroll page',
+    confidence: 0.35,
+    isAjax: true,
+    scope: 'global',
+    reasons: ['Manual scroll option for the selected record list']
+  };
 }
 
 export async function showPaginationChoiceInBrowser(

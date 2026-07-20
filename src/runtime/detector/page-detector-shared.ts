@@ -26,6 +26,11 @@ export interface DetectorExtensionBridge {
   runtimeConfig: { sessionId: string; wsUrl: string };
   sendActionCommand(command: Record<string, unknown>): Promise<ExtensionCommandResponse>;
   resolveTabId(pageUrl: string): number | undefined;
+  getTabUrl?(tabId: number): string | undefined;
+  getTabWindowId?(tabId: number): number | undefined;
+  getBootstrapTabId?(): number | undefined;
+  getBootstrapWindowId?(): number | undefined;
+  getAnyTabId?(): number | undefined;
   close(): void;
 }
 
@@ -91,6 +96,10 @@ export interface ScrollProbeSnapshot {
   pageHeight: number;
   contentHeight: number;
   articleLikeCount: number;
+  /** Anonymous record identities used to detect virtualized lists whose DOM count stays flat. */
+  articleLikeKeys?: string[];
+  /** A visible loading/progress indicator is present while more records are pending. */
+  hasLoadingIndicator?: boolean;
   activeLoadMoreCount: number;
   activeLoadMoreTexts: string[];
   activeLoadMoreXPaths: string[];
@@ -105,7 +114,9 @@ export interface ScrollProbeSummary {
   maxArticleLikeCount: number;
   maxContentHeight: number;
   maxPageHeight: number;
+  discoveredArticleLikeCount?: number;
   grewArticleLikeCount?: number;
+  grewArticleLikeKeyCount?: number;
   grewContentHeight?: number;
   grewPageHeight?: number;
   reachedBottom?: boolean;

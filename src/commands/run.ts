@@ -18,6 +18,11 @@ import { LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE, isLocalC
 import { BillingRuntimeError } from '../runtime/run-services.js';
 import { resolveAuth } from '../runtime/auth.js';
 import { buildCookieHeaderFromSession, loadBrowserSession } from '../runtime/browser-session.js';
+import { readCliConfig } from '../runtime/config.js';
+import {
+  resolveBrowserLaunchOptions,
+  UserBrowserError
+} from '../runtime/user-browser.js';
 import {
   isRunControlReachable,
   listActiveTaskControlStates,
@@ -66,7 +71,7 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      '用法: octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--chrome-path <path>] [--max-rows <n>] [--detach] [--json|--jsonl]'
+      '用法: octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--max-rows <n>] [--detach] [--json|--jsonl]'
     );
   }
 
@@ -88,11 +93,27 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
     return EXIT_OPERATION_FAILED;
   }
 
-  const options = parseRunOptions(taskId, args);
+  let options: RunOptions;
+  try {
+    options = await parseRunOptions(taskId, args);
+  } catch (error) {
+    if (error instanceof UserBrowserError) {
+      if (json) printEnvelope(false, undefined, error.code, error.message);
+      else console.error(error.message);
+      return EXIT_OPERATION_FAILED;
+    }
+    throw error;
+  }
   if (!isLocalChromeRuntimeSupported()) {
     if (options.json || options.jsonl) printEnvelope(false, undefined, LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE);
     else console.error(LINUX_ARM64_UNSUPPORTED_MESSAGE);
     return EXIT_RUNTIME_FAILED;
+  }
+  if (options.browserMode === 'user' && options.headless) {
+    const message = 'User browser mode does not support --headless because it reuses the real desktop Chrome/Edge profile.';
+    if (options.json || options.jsonl) printEnvelope(false, undefined, 'USER_BROWSER_HEADLESS_UNSUPPORTED', message);
+    else console.error(message);
+    return EXIT_OPERATION_FAILED;
   }
 
   const maxRowsError = validateMaxRows(args);
@@ -744,6 +765,7 @@ function printBillingWarnings(
 function runErrorCode(error: unknown): string {
   if (error instanceof BillingPreflightError) return error.code;
   if (error instanceof BillingRuntimeError) return error.code;
+  if (error instanceof UserBrowserError) return error.code;
   return 'ENGINE_RUN_FAILED';
 }
 
@@ -751,7 +773,14 @@ export function localDataExportCommand(summary: Pick<RunSummary, 'taskId' | 'lot
   return `octopus data export ${summary.taskId} --source local --lot-id ${summary.lotId}`;
 }
 
-function parseRunOptions(taskId: string, args: string[]): RunOptions {
+async function parseRunOptions(taskId: string, args: string[]): Promise<RunOptions> {
+  const config = await readCliConfig();
+  const browser = resolveBrowserLaunchOptions({
+    browserFlag: valueAfter(args, '--browser'),
+    browserIdFlag: valueAfter(args, '--browser-id'),
+    profileFlag: valueAfter(args, '--profile'),
+    preference: config.browser
+  });
   return {
     taskId,
     taskFile: valueAfter(args, '--task-file'),
@@ -760,6 +789,10 @@ function parseRunOptions(taskId: string, args: string[]): RunOptions {
     json: hasFlag(args, '--json'),
     jsonl: hasFlag(args, '--jsonl'),
     chromePath: valueAfter(args, '--chrome-path'),
+    browserMode: browser.browserMode,
+    browserId: browser.browserId,
+    browserProfile: browser.browserProfile,
+    forceCloseBrowser: hasFlag(args, '--force-close-browser') || hasFlag(args, '--force-close'),
     disableImage: hasFlag(args, '--disable-image'),
     disableAD: hasFlag(args, '--disable-ad'),
     runTimeoutMs: parsePositiveInt(valueAfter(args, '--timeout-ms'), 10 * 60 * 1000),

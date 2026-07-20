@@ -24,6 +24,7 @@ import { authCommand, ensureAuthenticated } from './commands/auth.js';
 import { capabilitiesCommand } from './commands/capabilities.js';
 import { cloudCommand } from './commands/cloud.js';
 import { dataCount, dataExport, dataHistory, dataPreview } from './commands/data.js';
+import { browserCommand } from './commands/browser.js';
 import { doctorCommand } from './commands/doctor.js';
 import { hiddenEnvCommand } from './commands/env.js';
 import { localCommand } from './commands/local.js';
@@ -106,6 +107,10 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === 'doctor') {
     return doctorCommand(argv.slice(1));
+  }
+
+  if (command === 'browser') {
+    return browserCommand(subcommand, rest);
   }
 
   if (command === 'auth') {
@@ -257,6 +262,7 @@ function requiresAuthentication(argv: string[]): boolean {
     || command === 'local'
     || command === 'data'
     || command === 'runs';
+  // browser status/install/close/profiles are local diagnostics and do not require auth.
 }
 
 function hasFlagWithValue(args: string[], flag: string): boolean {
