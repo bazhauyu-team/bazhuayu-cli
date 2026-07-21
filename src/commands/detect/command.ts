@@ -147,7 +147,13 @@ export async function detectCommand(args: string[]): Promise<number> {
       : error instanceof DetectionLoginRequiredError
         ? 'LOGIN_SESSION_REQUIRED'
         : 'DETECT_FAILED';
-    if (json) printEnvelope(false, undefined, code, message);
+    if (json) printEnvelope(
+      false,
+      undefined,
+      code,
+      message,
+      error instanceof UserBrowserError ? error.details : undefined
+    );
     else console.error(`检测失败: ${message}`);
     return EXIT_RUNTIME_FAILED;
   }

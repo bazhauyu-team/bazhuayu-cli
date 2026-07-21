@@ -98,7 +98,7 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
     options = await parseRunOptions(taskId, args);
   } catch (error) {
     if (error instanceof UserBrowserError) {
-      if (json) printEnvelope(false, undefined, error.code, error.message);
+      if (json) printEnvelope(false, undefined, error.code, error.message, error.details);
       else console.error(error.message);
       return EXIT_OPERATION_FAILED;
     }

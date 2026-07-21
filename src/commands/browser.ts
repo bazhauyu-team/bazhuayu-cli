@@ -13,10 +13,18 @@ import {
   summarizeInspection,
   UserBrowserError,
   userBrowserPlatformNote,
+  type BrowserInspection,
   type BrowserMode,
   type UserBrowserId
 } from '../runtime/user-browser.js';
 import { EXIT_OK, EXIT_OPERATION_FAILED, EXIT_RUNTIME_FAILED } from '../types.js';
+
+interface BrowserNextAction {
+  action: 'install_browser' | 'list_profiles' | 'install_extension' | 'reopen_browser' | 'verify_extension' | 'set_default' | 'run';
+  command?: string;
+  reason: string;
+  requiresHuman: boolean;
+}
 
 const USAGE = '用法: octopus browser <status|use|install|close|profiles> [options] [--json]';
 
@@ -64,13 +72,17 @@ async function browserStatus(args: string[], json: boolean): Promise<number> {
 
   const inspection = inspectUserBrowser({ browserId, profileName });
   const summary = summarizeInspection(inspection);
+  const selectedProfileName = profileName ?? inspection.defaultProfileName;
+  const readyForUserBrowserRun = isReadyForUserBrowserRun(inspection, selectedProfileName);
   const data = {
     supported: true as const,
     platform: process.platform,
     defaultBrowser: preference,
+    selectedProfileName,
     ...summary,
-    readyForUserBrowserRun: isReadyForUserBrowserRun(inspection),
-    hints: buildStatusHints(inspection, preference.mode)
+    readyForUserBrowserRun,
+    hints: buildStatusHints(inspection, preference.mode, selectedProfileName),
+    nextActions: buildStatusNextActions(inspection, preference.mode, selectedProfileName)
   };
 
   if (json) {
@@ -126,13 +138,36 @@ async function browserUse(args: string[], json: boolean): Promise<number> {
     return printBrowserError(json, new UserBrowserError('UNSUPPORTED_PLATFORM', userBrowserPlatformNote()));
   }
 
+  const selectedBrowserId = browserId ?? 'chrome';
+  const inspection = mode === 'user'
+    ? inspectUserBrowser({ browserId: selectedBrowserId, profileName: profile })
+    : undefined;
+  if (profile && inspection && inspection.profiles.length > 0
+      && !inspection.profiles.some((item) => item.profileName === profile)) {
+    return printBrowserError(json, new UserBrowserError(
+      'PROFILE_NOT_FOUND',
+      `Browser profile not found: ${profile}`,
+      {
+        browserId: selectedBrowserId,
+        requestedProfile: profile,
+        availableProfiles: inspection.profiles.map((item) => item.profileName),
+        nextActions: [{
+          action: 'list_profiles',
+          command: `octopus browser profiles --browser-id ${selectedBrowserId} --json`,
+          reason: 'Choose an existing browser profile before enabling user mode.',
+          requiresHuman: false
+        } satisfies BrowserNextAction]
+      }
+    ));
+  }
+
   // When switching to independent, clear user-only fields so status stays clear.
   const saved = await saveBrowserPreference(
     mode === 'independent'
       ? { mode: 'independent' }
       : {
           mode: 'user',
-          ...(browserId ? { browserId } : { browserId: 'chrome' }),
+          ...(browserId ? { browserId } : { browserId: selectedBrowserId }),
           ...(profile ? { profile } : {})
         }
   );
@@ -144,9 +179,18 @@ async function browserUse(args: string[], json: boolean): Promise<number> {
     configFile: configFilePath(),
     source: 'config' as const
   };
+  const data = {
+    ...preference,
+    readyForUserBrowserRun: inspection
+      ? isReadyForUserBrowserRun(inspection, profile ?? inspection.defaultProfileName)
+      : false,
+    nextActions: inspection
+      ? buildStatusNextActions(inspection, preference.mode, profile ?? inspection.defaultProfileName)
+      : []
+  };
 
   if (json) {
-    printEnvelope(true, preference);
+    printEnvelope(true, data);
     return EXIT_OK;
   }
 
@@ -163,13 +207,14 @@ async function browserUse(args: string[], json: boolean): Promise<number> {
 
 async function browserInstall(args: string[], json: boolean): Promise<number> {
   const browserId = parseBrowserIdArg(args);
+  const profileName = valueAfter(args, '--profile');
   const forceClose = hasFlag(args, '--force-close') || hasFlag(args, '--force-close-browser');
 
   if (!isUserBrowserPlatformSupported()) {
     return printBrowserError(json, new UserBrowserError('UNSUPPORTED_PLATFORM', userBrowserPlatformNote()));
   }
 
-  const result = await installUserBrowserExtension({ browserId, forceClose });
+  const result = await installUserBrowserExtension({ browserId, profileName, forceClose });
   const data = {
     ok: result.ok,
     browserName: result.browserName,
@@ -178,11 +223,14 @@ async function browserInstall(args: string[], json: boolean): Promise<number> {
     errorMessage: result.errorMessage ?? null,
     nextSteps: result.nextSteps ?? [],
     before: result.inspectionBefore ? summarizeInspection(result.inspectionBefore) : null,
-    after: result.inspectionAfter ? summarizeInspection(result.inspectionAfter) : null
+    after: result.inspectionAfter ? summarizeInspection(result.inspectionAfter) : null,
+    nextActions: result.ok
+      ? buildInstallNextActions(browserId, profileName, true)
+      : buildInstallFailureNextActions(browserId, profileName, result.errorCode)
   };
 
   if (!result.ok) {
-    if (json) printEnvelope(false, undefined, result.errorCode ?? 'INSTALL_FAILED', result.errorMessage ?? 'install failed');
+    if (json) printEnvelope(false, undefined, result.errorCode ?? 'INSTALL_FAILED', result.errorMessage ?? 'install failed', data);
     else {
       console.error(result.errorMessage ?? 'install failed');
       if (result.errorCode === 'BROWSER_RUNNING' || result.errorCode === 'PROFILE_RUNNING') {
@@ -217,7 +265,16 @@ async function browserClose(args: string[], json: boolean): Promise<number> {
   if (!result.ok) {
     const message = result.errorMessage
       ?? `Failed to close ${result.browserName ?? browserId}${result.errorCode ? ` (${result.errorCode})` : ''}`;
-    if (json) printEnvelope(false, undefined, result.errorCode ?? 'BROWSER_CLOSE_FAILED', message);
+    if (json) printEnvelope(false, undefined, result.errorCode ?? 'BROWSER_CLOSE_FAILED', message, {
+      browserId,
+      profileName: profileName ?? null,
+      nextActions: [{
+        action: 'verify_extension',
+        command: `octopus browser status --browser-id ${browserId}${profileArg(profileName)} --json`,
+        reason: 'Inspect the browser lock and profile state before retrying.',
+        requiresHuman: false
+      } satisfies BrowserNextAction]
+    });
     else console.error(message);
     return EXIT_OPERATION_FAILED;
   }
@@ -323,18 +380,26 @@ function parseBrowserIdArg(args: string[]): UserBrowserId {
   return 'chrome';
 }
 
-function isReadyForUserBrowserRun(inspection: ReturnType<typeof inspectUserBrowser>): boolean {
-  // Browser may already be running — that is fine for run/detect (localBrowserMode).
-  // Only extension readiness + paths matter for user-mode launch.
+function isReadyForUserBrowserRun(
+  inspection: BrowserInspection,
+  selectedProfileName?: string | null
+): boolean {
+  const selectedProfile = selectedProfileName
+    ? inspection.profiles.find((profile) => profile.profileName === selectedProfileName)
+    : undefined;
+  const selectedProfileReady = inspection.profiles.length === 0
+    || Boolean(selectedProfile?.plugin.installed);
   return inspection.browser.installed
     && !inspection.extensionStatus.needsInstallOrUpdate
+    && selectedProfileReady
     && Boolean(inspection.browser.path)
     && Boolean(inspection.browser.userDataDirectory);
 }
 
 function buildStatusHints(
-  inspection: ReturnType<typeof inspectUserBrowser>,
-  defaultMode: BrowserMode
+  inspection: BrowserInspection,
+  defaultMode: BrowserMode,
+  selectedProfileName?: string | null
 ): string[] {
   const hints: string[] = [];
   if (!inspection.browser.installed) {
@@ -353,11 +418,132 @@ function buildStatusHints(
   } else {
     hints.push('Default is user browser. Switch back with: octopus browser use independent');
   }
-  if (isReadyForUserBrowserRun(inspection)) {
+  if (isReadyForUserBrowserRun(inspection, selectedProfileName)) {
     hints.push('Ready for user mode. Example: octopus run <taskId>   (uses saved default)');
     hints.push('Or override once: octopus run <taskId> --browser independent');
   }
   return hints;
+}
+
+function buildStatusNextActions(
+  inspection: BrowserInspection,
+  defaultMode: BrowserMode,
+  selectedProfileName?: string | null
+): BrowserNextAction[] {
+  const browserId = inspection.browser.id;
+  if (!inspection.browser.installed) {
+    return [{
+      action: 'install_browser',
+      reason: `Install ${inspection.browser.name} before using user-browser mode.`,
+      requiresHuman: true
+    }];
+  }
+
+  const selectedProfile = selectedProfileName
+    ? inspection.profiles.find((profile) => profile.profileName === selectedProfileName)
+    : undefined;
+  if (selectedProfileName && inspection.profiles.length > 0 && !selectedProfile) {
+    return [{
+      action: 'list_profiles',
+      command: `octopus browser profiles --browser-id ${browserId} --json`,
+      reason: `Profile ${selectedProfileName} was not found. Choose an available profile.`,
+      requiresHuman: false
+    }];
+  }
+
+  const extensionReady = !inspection.extensionStatus.needsInstallOrUpdate
+    && (inspection.profiles.length === 0 || Boolean(selectedProfile?.plugin.installed));
+  if (!extensionReady) {
+    const installCommand = `octopus browser install --browser-id ${browserId}${profileArg(selectedProfileName)}${inspection.launch.requiresClose ? ' --force-close' : ''} --json`;
+    return [
+      {
+        action: 'install_extension',
+        command: installCommand,
+        reason: 'Install or update the Octopus extension for the selected browser profile.',
+        requiresHuman: false
+      },
+      ...buildInstallNextActions(browserId, selectedProfileName, true)
+    ];
+  }
+
+  if (defaultMode !== 'user') {
+    return [{
+      action: 'set_default',
+      command: `octopus browser use user --browser-id ${browserId}${profileArg(selectedProfileName)} --json`,
+      reason: 'Persist user-browser mode as the default for run and detect.',
+      requiresHuman: false
+    }];
+  }
+
+  return [{
+    action: 'run',
+    command: 'octopus run <taskId> --json',
+    reason: 'User-browser mode is ready and selected as the default.',
+    requiresHuman: false
+  }];
+}
+
+function buildInstallFailureNextActions(
+  browserId: UserBrowserId,
+  profileName: string | null | undefined,
+  errorCode: string | null | undefined
+): BrowserNextAction[] {
+  if (errorCode === 'BROWSER_RUNNING' || errorCode === 'PROFILE_RUNNING') {
+    return [{
+      action: 'install_extension',
+      command: `octopus browser install --browser-id ${browserId}${profileArg(profileName)} --force-close --json`,
+      reason: 'Retry extension installation after allowing the CLI to close the running browser.',
+      requiresHuman: false
+    }];
+  }
+  if (errorCode === 'PROFILE_NOT_FOUND') {
+    return [{
+      action: 'list_profiles',
+      command: `octopus browser profiles --browser-id ${browserId} --json`,
+      reason: 'Choose an existing browser profile before installing the extension.',
+      requiresHuman: false
+    }];
+  }
+  if (errorCode === 'BROWSER_NOT_INSTALLED') {
+    return [{
+      action: 'install_browser',
+      reason: `Install ${browserId === 'edge' ? 'Microsoft Edge' : 'Google Chrome'} before installing the extension.`,
+      requiresHuman: true
+    }];
+  }
+  return [];
+}
+
+function buildInstallNextActions(
+  browserId: UserBrowserId,
+  profileName: string | null | undefined,
+  installed: boolean
+): BrowserNextAction[] {
+  if (!installed) return [];
+  const statusCommand = `octopus browser status --browser-id ${browserId}${profileArg(profileName)} --json`;
+  return [
+    {
+      action: 'reopen_browser',
+      reason: 'Open the browser once so it loads the staged extension.',
+      requiresHuman: true
+    },
+    {
+      action: 'verify_extension',
+      command: statusCommand,
+      reason: 'Confirm readyForUserBrowserRun is true before enabling user mode.',
+      requiresHuman: true
+    },
+    {
+      action: 'set_default',
+      command: `octopus browser use user --browser-id ${browserId}${profileArg(profileName)} --json`,
+      reason: 'Persist the verified user browser and profile.',
+      requiresHuman: false
+    }
+  ];
+}
+
+function profileArg(profileName: string | null | undefined): string {
+  return profileName ? ` --profile ${JSON.stringify(profileName)}` : '';
 }
 
 function printHumanStatus(data: {
@@ -425,7 +611,7 @@ function printHumanStatus(data: {
 
 function printBrowserError(json: boolean, error: unknown): number {
   if (error instanceof UserBrowserError) {
-    if (json) printEnvelope(false, undefined, error.code, error.message);
+    if (json) printEnvelope(false, undefined, error.code, error.message, error.details);
     else console.error(error.message);
     return error.code === 'UNSUPPORTED_PLATFORM' ? EXIT_RUNTIME_FAILED : EXIT_OPERATION_FAILED;
   }

@@ -173,7 +173,7 @@ Schedule types:
   octopus browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]
   octopus browser use status [--json]
   octopus browser status [--browser-id chrome|edge] [--profile <name>] [--json]
-  octopus browser install [--browser-id chrome|edge] [--force-close] [--json]
+  octopus browser install [--browser-id chrome|edge] [--profile <name>] [--force-close] [--json]
   octopus browser close [--browser-id chrome|edge] [--profile <name>] [--json]
   octopus browser profiles [--browser-id chrome|edge] [--json]
 
@@ -186,18 +186,28 @@ Browser modes:
   user         System Chrome/Edge + permanently installed extension (Windows/macOS).
 
 Examples:
+  octopus browser status --browser-id chrome --json
+  octopus browser profiles --browser-id chrome --json
+  octopus browser install --browser-id chrome --profile "Default" --force-close --json
+  # Reopen Chrome once and confirm the extension is enabled, then verify status.
+  octopus browser status --browser-id chrome --profile "Default" --json
+  octopus browser use user --browser-id chrome --profile "Default" --json
   octopus browser use user                 # default run/detect to user browser
   octopus browser use user --profile "Profile 1"
   octopus browser use independent          # switch back to Chrome for Testing
   octopus browser use status               # show saved default
 
 Notes:
+  Recommended order: status -> profiles -> install -> reopen/enable -> status -> use user.
+  In --json mode, follow data.nextActions (or error.details.nextActions) until
+  status reports readyForUserBrowserRun=true; only then persist user mode.
   Saved default lives in ~/.octopus/config.json and applies to both run and detect.
   Override once with: octopus run|detect ... --browser independent|user
   Env override: OCTOPUS_BROWSER=user|independent (optional OCTOPUS_BROWSER_ID / OCTOPUS_BROWSER_PROFILE)
   User browser mode reuses your real Chrome/Edge profile (cookies/login state).
   Installing the extension requires the browser to be fully closed.
   Use --force-close to let the CLI close a running browser before install.
+  Pass --profile to install the extension for the same profile selected by use/run/detect.
   Supported platforms for user mode: Windows and macOS. Linux uses independent Chrome.
   After install, reopen the browser once and confirm the extension is enabled.
 `,
@@ -217,7 +227,8 @@ Agent notes:
   Set default once: octopus browser use user|independent
   --browser independent launches a temporary Chrome for Testing profile.
   --browser user reuses system Chrome/Edge with the permanently installed extension.
-  User browser mode first needs: octopus browser install
+  User browser setup includes: octopus browser install (full verified flow: octopus browser --help)
+  Agents should follow browserRuntime.modes.user.setupRecipe from capabilities --json.
   User browser mode does not support --headless.
 `,
     detect: `Usage:
@@ -246,7 +257,8 @@ Notes:
   Set default once: octopus browser use user|independent
   --browser independent launches temporary Chrome for Testing.
   --browser user reuses system Chrome/Edge + permanently installed extension
-  (Windows/macOS). Setup first with: octopus browser install
+  (Windows/macOS). Setup includes octopus browser install; see: octopus browser --help
+  Agents should follow browserRuntime.modes.user.setupRecipe and JSON nextActions.
   User-browser detect/run does not require closing an already-open Chrome;
   it opens a dedicated session window and closes only that window when finished.
   Only browser install needs the browser closed (or --force-close).
@@ -403,7 +415,7 @@ Usage:
   octopus capabilities [--json]
   octopus doctor [--chrome-path <path>] [--output <runsDir>] [--api-base-url <url>] [--json]
   octopus browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]
-  octopus browser status|install|close|profiles [--browser-id chrome|edge] [--json]
+  octopus browser status|install|close|profiles [--browser-id chrome|edge] [--profile <name>] [--json]
   octopus auth login <apiKey> [--api-base-url <url>] [--json]
   octopus auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
   octopus auth status [--json]

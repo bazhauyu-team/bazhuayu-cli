@@ -97,6 +97,40 @@ octopus task inspect <taskId>
 octopus run <taskId>
 ```
 
+### 使用已登录的 Chrome 或 Edge
+
+用户浏览器模式会复用现有 Chrome/Edge profile，包括 Cookie 和登录状态；
+目前支持 Windows 和 macOS。请按以下顺序配置：
+
+```bash
+# 检查 Chrome；Edge 使用 --browser-id edge。
+octopus browser status --browser-id chrome --json
+octopus browser profiles --browser-id chrome --json
+
+# 先关闭浏览器，或用 --force-close 让 CLI 关闭。
+octopus browser install --browser-id chrome --profile "Default" --force-close --json
+
+# 重新打开一次 Chrome，确认八爪鱼扩展已启用，然后再次验证：
+octopus browser status --browser-id chrome --profile "Default" --json
+
+# 保存为 run 和 detect 的默认浏览器：
+octopus browser use user --browser-id chrome --profile "Default" --json
+```
+
+profile 可用前，`browser status --json` 必须返回
+`data.readyForUserBrowserRun=true`。机器调用方应继续执行
+`data.nextActions` 或 `error.details.nextActions`。随时可以切回独立浏览器：
+
+```bash
+octopus browser use independent --json
+```
+
+保存后的模式同时应用于 `run` 和 `detect`。单次覆盖可传
+`--browser independent|user`，并可配合 `--browser-id chrome|edge` 和
+`--profile <name>`。用户浏览器模式不支持 headless。Agent 应先读取
+`octopus capabilities --json` 中的 `browserRuntime.modes.user.setupRecipe`，
+自主执行所有机器步骤；重新打开浏览器并确认扩展启用仍需要用户操作。
+
 直接用 CLI 自动选择创建本地任务：
 
 ```bash

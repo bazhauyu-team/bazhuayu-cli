@@ -374,6 +374,12 @@ test('capabilities is available before authentication and documents API key cont
   assert.equal(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.doNotUseAutoForAgentTaskCreationRequests, true);
   assert.equal(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.doNotFallbackToHandwrittenTaskJson, true);
   assert.match(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.routingRule, /Do not use detect --auto as the default agent path/);
+  assert.match(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.routingRule, /browserRuntime\.modes\.user\.setupRecipe/);
+  const browserSetup = payload.data.browserRuntime.modes.user.setupRecipe;
+  assert.equal(browserSetup.steps[0].step, 'inspect');
+  assert.equal(browserSetup.steps.at(-1).step, 'persist');
+  assert.ok(browserSetup.steps.some((step) => step.requiresHuman));
+  assert.match(browserSetup.switchBackCommand, /browser use independent/);
   assert.ok(payload.data.machineContract.agentEntrypoint.intentAliases.some((item) => /采集任务/.test(item)));
   assert.ok(payload.data.commands.find((item) => item.command === 'run <taskId>')?.authRequired);
   assert.ok(payload.data.commands.find((item) => item.command === 'task rename/move/delete <taskId>')?.requiresConfirmation);

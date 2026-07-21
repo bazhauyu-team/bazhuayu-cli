@@ -103,6 +103,41 @@ Linux x64. Linux arm64 is not supported by the local CLI runtime because Chrome
 for Testing does not currently provide a Linux arm64 browser package; use a
 supported local platform or cloud collection there.
 
+### Use your signed-in Chrome or Edge profile
+
+User-browser mode reuses an existing Chrome/Edge profile, including its cookies
+and login state. It is supported on Windows and macOS. Set it up in this order:
+
+```bash
+# Inspect Chrome or use --browser-id edge.
+octopus browser status --browser-id chrome --json
+octopus browser profiles --browser-id chrome --json
+
+# Close the browser first, or let the CLI close it with --force-close.
+octopus browser install --browser-id chrome --profile "Default" --force-close --json
+
+# Reopen Chrome once, confirm the Octopus extension is enabled, then verify:
+octopus browser status --browser-id chrome --profile "Default" --json
+
+# Persist this browser/profile for both run and detect:
+octopus browser use user --browser-id chrome --profile "Default" --json
+```
+
+`browser status --json` must report `data.readyForUserBrowserRun=true` before
+the profile is ready. Machine clients should follow `data.nextActions` or
+`error.details.nextActions`. Switch back at any time:
+
+```bash
+octopus browser use independent --json
+```
+
+The saved mode applies to `run` and `detect`. Override one invocation with
+`--browser independent|user`, plus optional `--browser-id chrome|edge` and
+`--profile <name>`. User-browser mode cannot run headless. Agents should read
+`browserRuntime.modes.user.setupRecipe` from `octopus capabilities --json` and
+perform every machine step themselves; reopening/enabling the extension remains
+an explicit user action.
+
 Create a local task from a URL directly with CLI-only selection:
 
 ```bash

@@ -9,11 +9,15 @@ export function printResult<T>(json: boolean, data: T): void {
 }
 
 export function printEnvelope<T>(ok: true, data: T): void;
-export function printEnvelope(ok: false, data: undefined, code: string, message: string): void;
-export function printEnvelope<T>(ok: boolean, data?: T, code?: string, message?: string): void {
+export function printEnvelope(ok: false, data: undefined, code: string, message: string, details?: unknown): void;
+export function printEnvelope<T>(ok: boolean, data?: T, code?: string, message?: string, details?: unknown): void {
   const payload: JsonEnvelope<T> = ok
     ? { ok: true, data }
-    : { ok: false, error: { code: code ?? 'ERROR', message: message ?? 'Unknown error' } };
+    : { ok: false, error: {
+        code: code ?? 'ERROR',
+        message: message ?? 'Unknown error',
+        ...(details === undefined ? {} : { details })
+      } };
   console.log(JSON.stringify(payload));
 }
 

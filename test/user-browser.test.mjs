@@ -166,6 +166,9 @@ test('browser status works without authentication', async () => {
     assert.ok(payload.data.extensionStatus);
     assert.ok(Array.isArray(payload.data.profiles));
     assert.ok(Array.isArray(payload.data.hints));
+    assert.ok(Array.isArray(payload.data.nextActions));
+    assert.ok(payload.data.nextActions.length > 0);
+    assert.ok(payload.data.nextActions.every((action) => typeof action.requiresHuman === 'boolean'));
   } else {
     assert.match(payload.data.note, /Windows or macOS/i);
   }
@@ -193,7 +196,9 @@ test('browser help documents install and user-mode workflow', async () => {
   assert.equal(result.code, 0, result.stdout || result.stderr);
   assert.match(result.stdout, /browser use independent\|user/);
   assert.match(result.stdout, /browser status/);
-  assert.match(result.stdout, /browser install/);
+  assert.match(result.stdout, /browser install.*--profile/);
+  assert.match(result.stdout, /status -> profiles -> install -> reopen\/enable -> status -> use user/);
+  assert.match(result.stdout, /nextActions/);
   assert.match(result.stdout, /config\.json/);
 });
 
@@ -203,6 +208,7 @@ test('run help documents --browser user flags', async () => {
   assert.match(result.stdout, /--browser independent\|user/);
   assert.match(result.stdout, /octopus browser use/);
   assert.match(result.stdout, /octopus browser install/);
+  assert.match(result.stdout, /setupRecipe/);
 });
 
 test('detect help documents --browser user flags', async () => {
@@ -211,6 +217,7 @@ test('detect help documents --browser user flags', async () => {
   assert.match(result.stdout, /--browser user/);
   assert.match(result.stdout, /octopus browser use/);
   assert.match(result.stdout, /octopus browser install/);
+  assert.match(result.stdout, /setupRecipe/);
   assert.match(result.stdout, /session window/i);
 });
 
@@ -370,8 +377,15 @@ test('capabilities documents user browser mode for run and detect', async () => 
   assert.ok(payload.data.browserRuntime.modes.user.runFlags.includes('--browser user'));
   assert.ok(payload.data.browserRuntime.modes.user.detectFlags.includes('--browser user'));
   assert.ok(payload.data.browserRuntime.modes.user.affectedCommands.includes('detect'));
-  assert.ok(payload.data.browserRuntime.modes.user.setupCommands.includes('octopus browser use user'));
+  assert.ok(payload.data.browserRuntime.modes.user.setupCommands.some((command) => command.startsWith('octopus browser use user')));
+  const setupRecipe = payload.data.browserRuntime.modes.user.setupRecipe;
+  assert.equal(setupRecipe.steps[0].step, 'inspect');
+  assert.equal(setupRecipe.steps.at(-1).step, 'persist');
+  assert.ok(setupRecipe.steps.some((step) => step.requiresHuman));
+  assert.match(setupRecipe.switchBackCommand, /browser use independent/);
+  assert.match(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.routingRule, /browserRuntime\.modes\.user\.setupRecipe/);
   assert.ok(payload.data.commands.some((item) => item.command.includes('browser use')));
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('EXTENSION_NOT_READY'));
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('BROWSER_RUNNING'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('PROFILE_NOT_FOUND'));
 });

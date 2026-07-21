@@ -133,6 +133,40 @@ OCTOPUS_API_BASE_URL=https://example.com
 
 `OCTOPUS_API_KEY` overrides stored credentials.
 
+## User browser setup
+
+When the user asks to reuse their signed-in Chrome or Edge profile, read:
+
+```text
+data.browserRuntime.modes.user.setupRecipe
+```
+
+from `octopus capabilities --json`. Do not guess flags or persist user mode
+before verification. The required state machine is:
+
+1. Run `octopus browser status --browser-id <chrome|edge> --json`.
+2. Follow `data.nextActions`. Use `browser profiles --json` to select an existing
+   `profileName` when a specific signed-in profile is required.
+3. Run `browser install` for that same browser/profile. On
+   `BROWSER_RUNNING`/`PROFILE_RUNNING`, execute the returned
+   `error.details.nextActions`; `--force-close` is the non-interactive retry.
+4. Ask the user to reopen the browser once and confirm the Octopus extension is
+   enabled. This is the only required human browser action.
+5. Re-run `browser status --json`. Continue only when
+   `data.readyForUserBrowserRun` is `true`.
+6. Persist the verified selection with `browser use user ... --json`, then run
+   or detect without additional browser flags.
+
+Switch back with:
+
+```bash
+octopus browser use independent --json
+```
+
+Selection priority is CLI flags, then `OCTOPUS_BROWSER*` environment variables,
+then saved config, then independent mode. User mode supports Windows/macOS,
+Chrome/Edge, and named profiles; it does not support Linux or `--headless`.
+
 ## Test commands
 
 Run the full CLI contract suite:

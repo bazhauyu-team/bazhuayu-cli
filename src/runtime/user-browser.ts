@@ -239,6 +239,7 @@ export async function closeUserBrowser(options: {
 
 export async function installUserBrowserExtension(options: {
   browserId?: UserBrowserId;
+  profileName?: string;
   forceClose?: boolean;
 } = {}): Promise<{
   ok: boolean;
@@ -252,7 +253,7 @@ export async function installUserBrowserExtension(options: {
 }> {
   assertUserBrowserPlatformSupported();
   const browserId = options.browserId ?? 'chrome';
-  const before = inspectUserBrowser({ browserId });
+  const before = inspectUserBrowser({ browserId, profileName: options.profileName });
 
   if (!before.browser.installed) {
     return {
@@ -263,6 +264,20 @@ export async function installUserBrowserExtension(options: {
       inspectionBefore: before
     };
   }
+
+  const requestedProfile = options.profileName
+    ? before.profiles.find((profile) => profile.profileName === options.profileName)
+    : undefined;
+  if (options.profileName && before.profiles.length > 0 && !requestedProfile) {
+    return {
+      ok: false,
+      browserName: before.browser.name,
+      errorCode: 'PROFILE_NOT_FOUND',
+      errorMessage: `Browser profile not found: ${options.profileName}`,
+      inspectionBefore: before
+    };
+  }
+  const installProfileName = options.profileName ?? before.defaultProfileName ?? undefined;
 
   if (!before.installGuide.crxPath || !existsSync(before.installGuide.crxPath)) {
     return {
@@ -290,7 +305,7 @@ export async function installUserBrowserExtension(options: {
     }
     const closed = await closeUserBrowser({
       browserId,
-      profileName: before.defaultProfileName ?? undefined,
+      profileName: installProfileName,
       userDataDirectory: before.browser.userDataDirectory ?? undefined
     });
     if (!closed.ok) {
@@ -309,7 +324,7 @@ export async function installUserBrowserExtension(options: {
     browserId,
     browserName: before.browser.name,
     userDataDirectory: before.browser.userDataDirectory ?? undefined,
-    profileName: before.defaultProfileName ?? undefined
+    profileName: installProfileName
   });
 
   const after = inspectUserBrowser({ browserId });
@@ -336,8 +351,8 @@ export async function installUserBrowserExtension(options: {
       before.installGuide.extensionsPageUrl
         ? `Confirm the extension is enabled at ${before.installGuide.extensionsPageUrl}`
         : 'Confirm the extension is enabled on the browser extensions page.',
-      'Then set default: octopus browser use user',
-      'Or run once with: octopus run <taskId> --browser user'
+      `Then set default: octopus browser use user --browser-id ${browserId}${installProfileName ? ` --profile ${JSON.stringify(installProfileName)}` : ''}`,
+      `Or run once with: octopus run <taskId> --browser user --browser-id ${browserId}${installProfileName ? ` --profile ${JSON.stringify(installProfileName)}` : ''}`
     ]
   };
 }

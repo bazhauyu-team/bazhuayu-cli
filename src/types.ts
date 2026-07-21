@@ -171,5 +171,6 @@ export interface JsonEnvelope<T> {
   error?: {
     code: string;
     message: string;
+    details?: unknown;
   };
 }

@@ -58,11 +58,55 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           platforms: ['darwin', 'win32'],
           unsupportedNote: userBrowserPlatformNote(),
           setupCommands: [
-            'octopus browser use user',
-            'octopus browser status',
-            'octopus browser install',
-            'octopus browser profiles'
+            'octopus browser status --browser-id chrome --json',
+            'octopus browser profiles --browser-id chrome --json',
+            'octopus browser install --browser-id chrome [--profile <name>] [--force-close] --json',
+            'octopus browser status --browser-id chrome [--profile <name>] --json',
+            'octopus browser use user --browser-id chrome [--profile <name>] --json'
           ],
+          setupRecipe: {
+            rule: 'Follow steps in order. Use nextActions from each JSON response. Do not persist user mode until status reports readyForUserBrowserRun=true.',
+            successCondition: 'browser status --json returns data.readyForUserBrowserRun=true and browser use user --json succeeds.',
+            steps: [
+              {
+                step: 'inspect',
+                command: 'octopus browser status --browser-id <chrome|edge> --json',
+                action: 'Read supported, readyForUserBrowserRun, selectedProfileName, profiles, and nextActions.',
+                requiresHuman: false
+              },
+              {
+                step: 'select-profile',
+                command: 'octopus browser profiles --browser-id <chrome|edge> --json',
+                action: 'Choose an existing profileName when the user needs a specific signed-in profile.',
+                requiresHuman: false
+              },
+              {
+                step: 'install-extension',
+                command: 'octopus browser install --browser-id <chrome|edge> [--profile <name>] [--force-close] --json',
+                action: 'Install into the selected profile. Retry the returned install_extension nextAction when the browser is running.',
+                requiresHuman: false
+              },
+              {
+                step: 'load-extension',
+                action: 'Ask the user to reopen Chrome/Edge once and confirm the Octopus extension is enabled. This browser action cannot be completed by the CLI.',
+                requiresHuman: true
+              },
+              {
+                step: 'verify',
+                command: 'octopus browser status --browser-id <chrome|edge> [--profile <name>] --json',
+                action: 'Continue only when readyForUserBrowserRun is true; otherwise follow nextActions.',
+                requiresHuman: false
+              },
+              {
+                step: 'persist',
+                command: 'octopus browser use user --browser-id <chrome|edge> [--profile <name>] --json',
+                action: 'Set the verified user browser as the default for run and detect.',
+                requiresHuman: false
+              }
+            ],
+            switchBackCommand: 'octopus browser use independent --json',
+            oneShotOverride: 'octopus run <taskId> --browser independent|user [--browser-id chrome|edge] [--profile <name>]'
+          },
           runFlags: ['--browser user', '--browser-id chrome|edge', '--profile <name>', '--force-close-browser (optional)'],
           detectFlags: ['--browser user', '--browser-id chrome|edge', '--profile <name>', '--force-close-browser (optional)'],
           requiresBrowserClosed: ['browser install'],
@@ -93,7 +137,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           doNotUseAutoForAgentTaskCreationRequests: true,
           doNotFallbackToHandwrittenTaskJson: true,
           doNotAskUserForInternalFlags: true,
-          routingRule: 'If the user asks an LLM/agent to create, build, generate, run, or validate a scraping/collection task from a URL using bazhuayu-cli/octopus, call capabilities --json, then use detect --agent with a trusted agent runner. Add --run-sample <n> when the user wants fast evidence rows. Use the lower-level prepare/preview/apply workflow for audit, repair, or custom orchestration. Do not use detect --auto as the default agent path; --auto is only for direct CLI-only task generation when the user explicitly asks for automatic CLI selection. Use manual detect only when the user explicitly asks to choose elements themselves or when login/verification requires user action.'
+          routingRule: 'If the user asks an LLM/agent to create, build, generate, run, or validate a scraping/collection task from a URL using bazhuayu-cli/octopus, call capabilities --json, then use detect --agent with a trusted agent runner. Add --run-sample <n> when the user wants fast evidence rows. If the user asks to reuse their signed-in Chrome/Edge profile, first follow browserRuntime.modes.user.setupRecipe and its JSON nextActions; do not ask the user to choose internal flags. Use the lower-level prepare/preview/apply workflow for audit, repair, or custom orchestration. Do not use detect --auto as the default agent path; --auto is only for direct CLI-only task generation when the user explicitly asks for automatic CLI selection. Use manual detect only when the user explicitly asks to choose elements themselves or when login/verification requires user action.'
         },
         intentAliases: [
           'create scraping task from url',
@@ -193,6 +237,9 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           'PROFILE_RUNNING',
           'BROWSER_NOT_INSTALLED',
           'UNSUPPORTED_PLATFORM',
+          'PROFILE_NOT_FOUND',
+          'BROWSER_PATH_MISSING',
+          'CRX_MISSING',
           'USER_BROWSER_HEADLESS_UNSUPPORTED',
           'RUN_NOT_FOUND',
           'LOCAL_LOT_NOT_FOUND',
