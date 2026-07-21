@@ -5531,6 +5531,118 @@ test('buildTaskFromCandidate preserves sibling-axis relative extraction fields',
   assert.doesNotMatch(task.xml, /&lt;RelativeXpath&gt;\/following-sibling::/);
 });
 
+test('buildTaskFromCandidate infers a nested semantic row instead of a protected Smart container', () => {
+  const task = buildTaskFromCandidate({
+    url: 'https://news.ycombinator.com/',
+    taskId: 'detected_nested_hn_rows',
+    taskName: 'Nested HN Rows',
+    candidate: {
+      id: 'protected_smart_1',
+      type: 'search_results',
+      title: 'Protected Smart list',
+      confidence: 0.98,
+      selector: '',
+      xpath: '//tr[@id="bigbox"]',
+      itemSelector: '',
+      itemXPath: '//tr[@id="bigbox"]',
+      itemCount: 30,
+      fields: [
+        {
+          name: 'title',
+          kind: 'text',
+          selector: '',
+          xpath: '//tr[@id="bigbox"]/TD[1]/TABLE[1]/TBODY[1]/TR/TD[3]/SPAN[1]/A[1]',
+          relativeXPath: '/TD[3]/SPAN[1]/A[1]',
+          samples: ['Example title']
+        },
+        {
+          name: 'score',
+          kind: 'text',
+          selector: '',
+          xpath: '//tr[@id="bigbox"]/td[1]/table[1]/TBODY[1]/tr[contains(@class,"athing submission")]/following-sibling::*[1]/td[2]/span[1]/span[1]',
+          relativeXPath: 'following-sibling::*[1]/td[2]/span[1]/span[1]',
+          samples: ['42 points']
+        },
+        {
+          name: 'author',
+          kind: 'text',
+          selector: '',
+          xpath: '//tr[@id="bigbox"]/td[1]/table[1]/TBODY[1]/tr[contains(@class,"athing submission")]/following-sibling::*[1]/td[2]/span[1]/a[1]',
+          relativeXPath: 'following-sibling::*[1]/td[2]/span[1]/a[1]',
+          samples: ['alice']
+        }
+      ],
+      sampleRows: [{ title: 'Example title', score: '42 points' }],
+      reasons: ['Detected by protected SmartProxy resource']
+    }
+  });
+
+  const variableList = task.xml.match(/<ns0:LoopAction[^>]*x:Name="LoopItems"[^>]*VariableList="([^"]*)"/)?.[1];
+  assert.ok(variableList);
+  assert.match(variableList, /athing submission/);
+  assert.match(task.xml, /&lt;RelativeXpath&gt;\/TD\[3\]\/SPAN\[1\]\/A\[1\]&lt;\/RelativeXpath&gt;/);
+});
+
+test('buildTaskFromCandidate infers repeated articles supported by direct child fields', () => {
+  const task = buildTaskFromCandidate({
+    url: 'https://github.com/trending',
+    taskId: 'detected_nested_github_rows',
+    taskName: 'Nested GitHub Rows',
+    candidate: {
+      id: 'protected_smart_1',
+      type: 'search_results',
+      title: 'Protected Smart list',
+      confidence: 0.98,
+      selector: '',
+      xpath: '//DIV[@class="Box"]/DIV',
+      itemSelector: '',
+      itemXPath: '//DIV[@class="Box"]/DIV',
+      itemCount: 20,
+      fields: [
+        { name: 'title', kind: 'text', selector: '', xpath: '//DIV[@class="Box"]/DIV[2]/article[contains(@class,"Box-row")]/h2[1]/a[1]', relativeXPath: '/h2[1]/a[1]', samples: ['repo'] },
+        { name: 'stars', kind: 'text', selector: '', xpath: '//DIV[@class="Box"]/DIV[2]/article[contains(@class,"Box-row")]/div[2]/a[1]', relativeXPath: '/div[2]/a[1]', samples: ['100'] },
+        { name: 'description', kind: 'text', selector: '', xpath: '//DIV[@class="Box"]/DIV[2]/article[contains(@class,"Box-row")]//p[1]', relativeXPath: '/descendant-or-self::p[1]', samples: ['Example'] }
+      ],
+      sampleRows: [{ title: 'repo', stars: '100', description: 'Example' }],
+      reasons: ['Detected by protected SmartProxy resource']
+    }
+  });
+
+  const variableList = task.xml.match(/<ns0:LoopAction[^>]*x:Name="LoopItems"[^>]*VariableList="([^"]*)"/)?.[1];
+  assert.ok(variableList);
+  assert.match(variableList, /article\[contains\(@class,&amp;quot;Box-row&amp;quot;\)\]/);
+});
+
+test('buildTaskFromCandidate keeps an existing article loop for descendant search fields', () => {
+  const task = buildTaskFromCandidate({
+    url: 'https://www.bbc.com/news',
+    taskId: 'detected_bbc_article',
+    taskName: 'BBC Article Container',
+    candidate: {
+      id: 'protected_smart_1',
+      type: 'search_results',
+      title: 'Protected Smart list',
+      confidence: 0.9,
+      selector: '',
+      xpath: '//main[@id="bbc-main"]/ARTICLE',
+      itemSelector: '',
+      itemXPath: '//main[@id="bbc-main"]/ARTICLE',
+      itemCount: 1,
+      fields: [
+        { name: 'title', kind: 'text', selector: '', xpath: '//main[@id="bbc-main"]/ARTICLE[1]/SECTION[1]/DIV[1]//h2[1]', relativeXPath: '/descendant-or-self::h2[1]', samples: ['News'] },
+        { name: 'link', kind: 'href', selector: '', xpath: '//main[@id="bbc-main"]/ARTICLE[1]/SECTION[1]/DIV[1]/descendant-or-self::A[1]', relativeXPath: '/descendant-or-self::A[1]', samples: ['https://example.com'] }
+      ],
+      sampleRows: [{ title: 'News', link: 'https://example.com' }],
+      reasons: ['Detected by protected SmartProxy resource']
+    }
+  });
+
+  const variableList = task.xml.match(/<ns0:LoopAction[^>]*x:Name="LoopItems"[^>]*VariableList="([^"]*)"/)?.[1];
+  assert.ok(variableList);
+  assert.match(variableList, /\/ARTICLE&lt;\/AbsXpath&gt;/);
+  assert.doesNotMatch(variableList, /SECTION/);
+});
+
 test('buildTaskFromCandidate preserves search input and submit actions before extraction', () => {
   const task = buildTaskFromCandidate({
     url: 'https://www.baidu.com/s?wd=%E6%9D%8E%E5%B0%8F%E9%BE%99',

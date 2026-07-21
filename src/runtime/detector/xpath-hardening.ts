@@ -79,22 +79,83 @@ function hardenCandidateFieldsOnly(candidate: DetectedCandidate): DetectedCandid
 }
 
 function inferItemXPathFromFields(candidate: DetectedCandidate): string | undefined {
-  const fieldPaths = candidate.fields
-    .map((field) => field.xpath)
-    .filter((xpath) => xpath && xpath.startsWith(candidate.xpath));
+  const candidateRoot = candidate.xpath.trim();
+  const inferred = candidate.fields
+    .map(inferItemXPathCandidateFromField)
+    .filter((item): item is InferredItemXPath => Boolean(item))
+    .filter((item) => item.xpath.startsWith(candidateRoot))
+    .filter((item) => normalizeXPath(item.xpath) !== normalizeXPath(candidateRoot));
+  const supported = selectSupportedItemXPath(inferred);
+  if (supported) return supported;
+
+  const fallback = candidate.fields
+    .filter((field) => !(field.relativeXPath || '').trim())
+    .map((field) => inferNestedItemXPathFromAbsolute(candidateRoot, field.xpath))
+    .filter((item): item is InferredItemXPath => Boolean(item));
+  return selectSupportedItemXPath(fallback);
+}
+
+interface InferredItemXPath {
+  xpath: string;
+  fromSiblingAxis: boolean;
+}
+
+function inferItemXPathCandidateFromField(field: DetectedField): InferredItemXPath | undefined {
+  const relative = (field.relativeXPath || '').trim();
+  if (!relative || /^(?:\.?\/\/|\/?descendant(?:-or-self)?::)/i.test(relative)) return undefined;
+  const suffix = engineRelativeSuffix(relative);
+  const base = relative === '.'
+    ? field.xpath
+    : suffix && field.xpath.endsWith(suffix)
+      ? field.xpath.slice(0, -suffix.length)
+      : '';
+  if (!base || !/\/(?:article|li|tr|section|div)(?:\[[^\]]+\])?$/i.test(base)) return undefined;
+  return {
+    xpath: stripLastIndex(base),
+    fromSiblingAxis: /^(?:\.\/)?(?:following|preceding)-sibling::/i.test(relative)
+  };
+}
+
+function inferNestedItemXPathFromAbsolute(candidateRoot: string, fieldXPath: string): InferredItemXPath | undefined {
+  if (!candidateRoot || !fieldXPath.startsWith(candidateRoot)) return undefined;
+  const suffix = fieldXPath.slice(candidateRoot.length);
   for (const tag of ['article', 'li', 'tr', 'section', 'div'] as const) {
-    for (const fieldPath of fieldPaths) {
-      const match = fieldPath.match(new RegExp(
-        `^(.*?\\/${tag}(?:\\[[^\\]]+\\])?)(?:\\/|\\/\\/).+$`,
-        'i'
-      ));
-      if (!match) continue;
-      const base = match[1];
-      if (normalizeXPath(base) === normalizeXPath(candidate.xpath)) continue;
-      return stripLastIndex(base);
-    }
+    const match = suffix.match(new RegExp(`^(.*?\\/${tag}(?:\\[[^\\]]+\\])?)(?=\\/|$)`, 'i'));
+    if (!match) continue;
+    const xpath = stripLastIndex(`${candidateRoot}${match[1]}`);
+    if (normalizeXPath(xpath) !== normalizeXPath(candidateRoot)) return { xpath, fromSiblingAxis: false };
   }
   return undefined;
+}
+
+function engineRelativeSuffix(relativeXPath: string): string {
+  if (!relativeXPath || relativeXPath === '.' || relativeXPath.includes('|')) return '';
+  if (relativeXPath.startsWith('./')) return relativeXPath.slice(1);
+  if (relativeXPath.startsWith('/')) return relativeXPath;
+  return `/${relativeXPath}`;
+}
+
+function selectSupportedItemXPath(items: InferredItemXPath[]): string | undefined {
+  const groups = new Map<string, { xpath: string; support: number; siblingSupport: number }>();
+  for (const item of items) {
+    const key = normalizeXPath(item.xpath).toLowerCase();
+    const current = groups.get(key);
+    if (current) {
+      current.support += 1;
+      if (item.fromSiblingAxis) current.siblingSupport += 1;
+    } else {
+      groups.set(key, { xpath: item.xpath, support: 1, siblingSupport: item.fromSiblingAxis ? 1 : 0 });
+    }
+  }
+  const supported = [...groups.values()].filter((group) => group.support >= 2);
+  supported.sort((a, b) => inferredItemXPathScore(b) - inferredItemXPathScore(a));
+  return supported[0]?.xpath;
+}
+
+function inferredItemXPathScore(item: { xpath: string; support: number; siblingSupport: number }): number {
+  const lastSegment = item.xpath.slice(item.xpath.lastIndexOf('/') + 1);
+  const semanticPredicate = /\[(?!\d+\])/.test(lastSegment);
+  return item.siblingSupport * 1_000 + (semanticPredicate ? 100 : 0) + item.support * 10;
 }
 
 export function hardenRuntimeItemXPath(itemXPath: string, fields: DetectedField[] = []): string | undefined {
