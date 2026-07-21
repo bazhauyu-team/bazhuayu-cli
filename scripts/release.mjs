@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const args = process.argv.slice(2);
 const versionArg = args.find((arg) => !arg.startsWith('-'));
 const dryRun = args.includes('--dry-run');
 const noPush = args.includes('--no-push');
 const npmTag = valueAfter('--tag') ?? 'latest';
-const cacheDir = process.env.NPM_CONFIG_CACHE || '/tmp/octopus-npm-cache';
+const cacheDir = process.env.NPM_CONFIG_CACHE || join(tmpdir(), 'octopus-npm-cache');
 
 if (!versionArg) {
   usage();
@@ -27,9 +29,9 @@ if (status.trim()) {
 }
 
 run('npm', ['run', 'test']);
-run('npm', ['--cache', cacheDir, 'pack', '--dry-run']);
 
 if (dryRun) {
+  run('npm', ['run', 'verify:package']);
   console.log('Dry run complete. No version bump, publish, or push was performed.');
   process.exit(0);
 }
@@ -37,10 +39,11 @@ if (dryRun) {
 run('npm', ['version', versionArg]);
 
 try {
+  run('npm', ['run', 'verify:package']);
   run('npm', ['--cache', cacheDir, 'publish', '--access', 'public', '--tag', npmTag]);
 } catch (error) {
-  console.error('Publish failed after npm version created a local commit and tag.');
-  console.error('Fix the publish issue, then rerun: npm publish --access public');
+  console.error('Package verification or publish failed after npm version created a local commit and tag.');
+  console.error('Do not push the tag until verification passes. If only publish failed, rerun: npm publish --access public');
   process.exit(error.status ?? 1);
 }
 

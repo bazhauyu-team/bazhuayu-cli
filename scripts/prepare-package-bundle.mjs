@@ -90,9 +90,10 @@ function preparePackageManifest() {
 }
 
 function stripNestedDependencies() {
+  // workflow-core imports version-specific internals (notably axios 0.27's HTTP
+  // adapter), so its manifest and nested modules must ship with the bundle.
   for (const packageJson of [
     path.join(browserRuntimeRoot, 'package.json'),
-    path.join(workflowCoreRoot, 'package.json'),
     path.join(bpmnRoot, 'package.json'),
     path.join(protectRoot, 'package.json')
   ]) {
@@ -105,7 +106,6 @@ function stripNestedDependencies() {
 
   for (const dir of [
     path.join(browserRuntimeRoot, 'node_modules'),
-    path.join(workflowCoreRoot, 'node_modules'),
     path.join(bpmnRoot, 'node_modules')
   ]) {
     if (!fs.existsSync(dir)) continue;
