@@ -9,6 +9,7 @@ import { runTask } from '../run.js';
 import { splitRunUrlArgs } from './args.js';
 import { detectCommand } from './command.js';
 import { SKIP_DETECT_CLOUD_SAVE_ENV } from './persist.js';
+import { normalizeDetectUrl } from './url.js';
 
 export async function detectUrlCommand(url: string | undefined, args: string[]): Promise<number> {
   const allArgs = [url ?? '', ...args].filter(Boolean);
@@ -29,6 +30,17 @@ export async function detectUrlCommand(url: string | undefined, args: string[]):
       'USAGE_ERROR'
     );
   }
+  let normalizedUrl: string;
+  try {
+    normalizedUrl = normalizeDetectUrl(url);
+  } catch (error) {
+    return printUsageError(
+      json,
+      error instanceof Error ? error.message : String(error),
+      '示例: octopus run-url https://example.com/list --auto',
+      'DETECT_URL_INVALID'
+    );
+  }
   if (!isLocalChromeRuntimeSupported()) {
     return printUsageError(json, LINUX_ARM64_UNSUPPORTED_MESSAGE, undefined, LINUX_ARM64_UNSUPPORTED_CODE);
   }
@@ -46,7 +58,7 @@ export async function detectUrlCommand(url: string | undefined, args: string[]):
   const taskFile = join(outputDir, 'task.json');
   const splitArgs = splitRunUrlArgs(args);
   const detectArgs = [
-    url,
+    normalizedUrl,
     ...splitArgs.detectArgs,
     ...(json ? ['--json'] : []),
     '--quiet',

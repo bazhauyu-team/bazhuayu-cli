@@ -31,6 +31,8 @@ const EngineModule = require('@octopus/browser-runtime') as {
   ChromeProcess: new () => ChromeProcessLike;
 };
 
+const activeIndependentBrowserProcesses = new Set<ChildProcess>();
+
 interface ChromeProcessLike {
   launch(options: {
     executablePath: string;
@@ -150,7 +152,8 @@ export class ExtensionDetectorHost {
     } catch {
       // best-effort cleanup
     }
-    await waitForBrowserProcessExit(browserProcess, 1500);
+    await terminateBrowserProcess(browserProcess);
+    if (browserProcess) activeIndependentBrowserProcesses.delete(browserProcess);
     this.bridgeHub.close();
     if (this.runtimeExtensionPath) await rm(this.runtimeExtensionPath, { recursive: true, force: true }).catch(() => undefined);
     await this.modeState.bootstrapPage?.close().catch(() => undefined);
@@ -175,6 +178,7 @@ async function startIndependentDetectorHost(
     runtimeExtensionPath = await prepareDetectorRuntimeExtension(runId, extensionBridge);
     bootstrapPage = await startBootstrapPageServer({ mode: 'detect', label: options.url });
     browser = await launchDetectorBrowser(chromePath, runtimeExtensionPath);
+    trackDetectorBrowserProcess(browser.process?.() as ChildProcess | null | undefined);
     // browser-runtime extension reads sessionId/wsUrl from the page URL, not runtime-config.json.
     // Open a friendly local bootstrap page first so the extension can register before target navigation.
     const page = await openDetectorBootstrapPage(
@@ -185,7 +189,7 @@ async function startIndependentDetectorHost(
       bootstrapPage.origin
     );
     await bridgeHub.waitForSessionConnected(runId, Math.min(options.timeoutMs, 30_000));
-    await page.goto(options.url, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs });
+    await navigateDetectorTarget(page, options.url, options.timeoutMs);
     const tabId = await waitForTabId(extensionBridge, page, options.timeoutMs);
     await readyCheck(extensionBridge, tabId, Math.min(options.timeoutMs, 15_000)).catch(() => undefined);
     return new ExtensionDetectorHost(
@@ -199,7 +203,11 @@ async function startIndependentDetectorHost(
       { mode: 'independent', bootstrapPage }
     );
   } catch (error) {
+    const browserProcess = browser?.process?.() as ChildProcess | null | undefined;
+    silenceBrowserProcess(browserProcess);
     await browser?.close().catch(() => undefined);
+    await terminateBrowserProcess(browserProcess);
+    if (browserProcess) activeIndependentBrowserProcesses.delete(browserProcess);
     if (runtimeExtensionPath) await rm(runtimeExtensionPath, { recursive: true, force: true }).catch(() => undefined);
     await bootstrapPage?.close().catch(() => undefined);
     bridgeHub.close();
@@ -257,7 +265,7 @@ async function startUserBrowserDetectorHost(
       }
     );
     hooks.onTargetPageReady?.(page);
-    await page.goto(options.url, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs });
+    await navigateDetectorTarget(page, options.url, options.timeoutMs);
     // After navigation the same tab should still be registered; refresh if URL mapping changed.
     tabRef.tabId = await waitForTabId(extensionBridge, page, Math.min(options.timeoutMs, 15_000)).catch(() => tabRef.tabId);
     await readyCheck(extensionBridge, tabRef.tabId, Math.min(options.timeoutMs, 15_000)).catch(() => undefined);
@@ -300,6 +308,40 @@ async function startUserBrowserDetectorHost(
     await virtualDisplay.close();
     throw error;
   }
+}
+
+async function navigateDetectorTarget(page: Page, url: string, timeoutMs: number): Promise<void> {
+  const initialUrl = page.url();
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    return;
+  } catch (error) {
+    if (!isNavigationTimeout(error)) throw error;
+    await delay(250);
+    const currentUrl = page.url();
+    const usable = /^https?:\/\//i.test(currentUrl)
+      && currentUrl !== initialUrl
+      && await page.evaluate(() => {
+        const body = document.body;
+        if (!body) return false;
+        const textLength = (body.innerText || body.textContent || '').replace(/\s+/g, ' ').trim().length;
+        const elementCount = body.querySelectorAll('*').length;
+        const linkCount = body.querySelectorAll('a[href]').length;
+        const imageCount = body.querySelectorAll('img[src]').length;
+        return textLength >= 80 || elementCount >= 20 || linkCount >= 2 || imageCount >= 3;
+      }).catch(() => false);
+    if (!usable) throw error;
+  }
+}
+
+function isNavigationTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === 'TimeoutError'
+    || /navigation(?:\s+timeout|[^.]*timed?\s*out)|Navigation timeout of \d+ ms exceeded/i.test(error.message);
+}
+
+export async function navigateDetectorTargetForTesting(page: Page, url: string, timeoutMs: number): Promise<void> {
+  return navigateDetectorTarget(page, url, timeoutMs);
 }
 
 async function closeUserBrowserDetectorHost(
@@ -427,6 +469,24 @@ export async function launchDetectorBrowser(chromePath: string, runtimeExtension
   }) as Promise<Browser>;
 }
 
+export function trackDetectorBrowserProcess(child: ChildProcess | null | undefined): void {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  activeIndependentBrowserProcesses.add(child);
+  child.once('exit', () => activeIndependentBrowserProcesses.delete(child));
+}
+
+export function terminateActiveDetectorBrowserProcesses(): void {
+  for (const child of activeIndependentBrowserProcesses) {
+    activeIndependentBrowserProcesses.delete(child);
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // Best-effort synchronous cleanup during process termination.
+    }
+  }
+}
+
 export function silenceBrowserProcess(child: ChildProcess | null | undefined): void {
   child?.stdout?.unpipe(process.stdout);
   child?.stderr?.unpipe(process.stderr);
@@ -434,12 +494,32 @@ export function silenceBrowserProcess(child: ChildProcess | null | undefined): v
   child?.stderr?.removeAllListeners('data');
 }
 
-export async function waitForBrowserProcessExit(child: ChildProcess | null | undefined, timeoutMs: number): Promise<void> {
-  if (!child || child.exitCode !== null || child.killed) return;
-  await Promise.race([
-    new Promise<void>((resolve) => child.once('exit', () => resolve())),
-    delay(timeoutMs)
+export async function waitForBrowserProcessExit(child: ChildProcess | null | undefined, timeoutMs: number): Promise<boolean> {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return true;
+  return Promise.race([
+    new Promise<boolean>((resolve) => child.once('exit', () => resolve(true))),
+    delay(timeoutMs).then(() => false)
   ]);
+}
+
+export async function terminateBrowserProcess(
+  child: ChildProcess | null | undefined,
+  gracefulTimeoutMs = 1500,
+  terminateTimeoutMs = 1000
+): Promise<void> {
+  if (!child || await waitForBrowserProcessExit(child, gracefulTimeoutMs)) return;
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    // Continue to the hard-kill fallback below.
+  }
+  if (await waitForBrowserProcessExit(child, terminateTimeoutMs)) return;
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    // Best-effort cleanup; the process may have exited between checks.
+  }
+  await waitForBrowserProcessExit(child, 500);
 }
 
 export async function waitForDetectorPage(browser: Browser, url: string, timeoutMs: number): Promise<Page> {

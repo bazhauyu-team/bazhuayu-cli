@@ -189,6 +189,7 @@ export interface DetectedApiListCandidate {
   type: 'api_list';
   title: string;
   confidence: number;
+  replayability?: 'context_free' | 'browser_context';
   request: {
     url: string;
     method: 'GET' | 'POST';

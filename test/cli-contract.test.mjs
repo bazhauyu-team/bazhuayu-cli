@@ -443,6 +443,8 @@ test('capabilities is available before authentication and documents API key cont
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('CAPTCHA_BALANCE_NOT_ENOUGH'));
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('CLOUD_BALANCE_NOT_ENOUGH'));
   assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('CLOUD_PROXY_BALANCE_NOT_ENOUGH'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('DETECT_INPUT_REQUIRED'));
+  assert.ok(payload.data.machineContract.json.commonErrorCodes.includes('DETECT_NO_EXTRACTABLE_DATA'));
   assert.equal(payload.data.machineContract.json.commonErrorCodes.includes('LOCAL_RUN_LIMIT_EXCEEDED'), false);
   assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('warning'));
   assert.ok(payload.data.machineContract.jsonl.stableEvents.includes('billing.warning'));
@@ -3454,6 +3456,25 @@ test('detached startup failure writes bootstrap artifact', async () => {
   assert.equal(bootstrap.taskId, 'invalid-detach');
 });
 
+test('max rows completes when the runtime never settles its start promise after stop', async () => {
+  const result = await runWithFakeRuntimeEvent('max-rows-never-settles', {
+    rowData: { id: 1, title: 'first row' },
+    maxRows: 1,
+    neverStops: true,
+    timeoutMs: 10_000
+  });
+  const stopped = result.jsonl.find((item) => item.event === 'run.stopped');
+
+  assert.equal(result.code, 0);
+  assert.equal(stopped?.status, 'stopped');
+  assert.equal(stopped?.stopReason, 'max_rows');
+  assert.equal(stopped?.maxRows, 1);
+  assert.deepEqual(result.rows, [{ id: 1, title: 'first row' }]);
+  assert.equal(result.workflowStopCalls, 1);
+  assert.equal(result.workflowCloseCalls, 1);
+  assert.equal(result.jsonl.some((item) => item.event === 'run.failed'), false);
+});
+
 async function runWithFakeRuntimeEvent(scenario, options = {}) {
   const originalFetch = globalThis.fetch;
   const originalApiKey = process.env.OCTOPUS_API_KEY;
@@ -3542,9 +3563,11 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
           engineHost.resume();
           engineHost.stop();
         }
-        setTimeout(() => {
-          this.emit(workflowEvents.Stopped, { data: { status: 'completed' } });
-        }, 20);
+        if (!options.neverStops) {
+          setTimeout(() => {
+            this.emit(workflowEvents.Stopped, { data: { status: 'completed' } });
+          }, 20);
+        }
       });
     }
 
@@ -3646,7 +3669,7 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
   });
 
   try {
-    const code = await runTask(scenario, [
+    const runArgs = [
       '--task-file',
       taskFile,
       '--output',
@@ -3655,8 +3678,10 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
       'independent',
       '--jsonl',
       '--timeout-ms',
-      '2000'
-    ]);
+      String(options.timeoutMs ?? 2_000),
+      ...(options.maxRows === undefined ? [] : ['--max-rows', String(options.maxRows)])
+    ];
+    const code = await runTask(scenario, runArgs);
     const jsonl = lines.flatMap((line) => {
       try { return [JSON.parse(line)]; } catch { return []; }
     });

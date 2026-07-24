@@ -7,6 +7,8 @@ import { join, resolve } from 'node:path';
 import { mock, test } from 'node:test';
 import { gunzipSync } from 'node:zlib';
 import { buildAgentContextForTesting, buildTaskFromAgentPlan, previewAgentPlanForTesting, defaultDetectedTaskNameForTesting, detectCommand, detectUrlCommand, recommendedApiCandidateForTesting, resolveAgentScreenshotPathForTesting, resolveAvailableDetectedTaskFile, runInlineAgentDetectForTesting, splitRunUrlArgs } from '../dist/commands/detect.js';
+import { normalizeDetectUrl } from '../dist/commands/detect/url.js';
+import { descendantProcessIdsForTesting, missingSelectionFailureForTesting, runDetectionWithTransientRetryForTesting } from '../dist/commands/detect/command.js';
 import { EngineHost } from '../dist/runtime/engine-host.js';
 import { setEngineHostFactoryForTesting } from '../dist/commands/run.js';
 import { browserSessionPath, buildCookieHeaderFromSession, loadBrowserSession, normalizeCookieValue, saveBrowserSession, sanitizeSessionCookies } from '../dist/runtime/browser-session.js';
@@ -14,25 +16,119 @@ import { detectedTaskToCloudTaskInfo, encodeTaskXml } from '../dist/runtime/task
 import { hasLinuxDisplayEnvironment, requiresVirtualDisplay } from '../dist/runtime/virtual-display.js';
 import * as pageDetectorFacade from '../dist/runtime/detector/page-detector.js';
 import { applyGoalScoresForTesting, assessPrimaryCandidateQuality, augmentAdjacentMetadataFieldsForTesting, dedupeEquivalentCandidates, detectApiListCandidatesForTesting, detectInteractivePaginationOptionsForTesting, detectKnownApiListCandidatesForTesting, detectPageObstructionsForTesting, detectPaginationForCandidatesForTesting, detectSearchResultBlocksForTesting, detectSemanticBusinessCardsForTesting, detectSemanticFeedCandidatesForTesting, dismissPageObstructionsForTesting, filterDetectedBoilerplateCandidates, findSearchInputCandidatesForTesting, hasUsablePrimaryCandidateForTesting, inferPageTargetForTesting, isInjectableBrowserPageUrlForTesting, isPlausiblePaginationOptionForTesting, pageLooksLikeSearchResultForTesting, preferredPaginationForTesting, rankCandidatesForTesting, refineCandidateFieldsForTesting, resetManualOverlayHintKeysForTesting, resolveSearchSubmitButtonByGeometryForTesting, resolveSearchSubmitButtonForTesting, sanitizeCandidatePaginationByLayoutForTesting, scoreSearchResultPageForTesting, selectDetailUrlFieldForTesting, shouldPromptForLoginInterventionForTesting, writeManualOverlayHintOnceForTesting } from '../dist/runtime/detector/page-detector.js';
-import { ExtensionDetectorHost } from '../dist/runtime/detector/page-detector-host.js';
+import { ExtensionDetectorHost, navigateDetectorTargetForTesting, terminateActiveDetectorBrowserProcesses, terminateBrowserProcess, trackDetectorBrowserProcess, waitForBrowserProcessExit } from '../dist/runtime/detector/page-detector-host.js';
 import { candidateIdsForAnnotatedScreenshotForTesting, candidateIdsForCandidateScreenshotsForTesting } from '../dist/runtime/detector/agent-visual-artifacts.js';
 import { protectedSmartResultToCandidatesForTesting } from '../dist/runtime/detector/protected-smart.js';
 import { autoScroll, captureScrollProbeSnapshot, scrollProbeStable, summarizeScrollProbe } from '../dist/runtime/detector/page-detector-scroll.js';
 import { manualScrollPaginationOption } from '../dist/runtime/detector/page-detector-pagination-ui.js';
 import { buildTaskFromCandidate } from '../dist/runtime/detector/xml.js';
 
+test('detect retries one transient detached-frame failure', async () => {
+  let transientAttempts = 0;
+  const result = await runDetectionWithTransientRetryForTesting(async () => {
+    transientAttempts += 1;
+    if (transientAttempts === 1) throw new Error("Attempted to use detached Frame 'frame-1'.");
+    return 'detected';
+  });
+  assert.equal(result, 'detected');
+  assert.equal(transientAttempts, 2);
+
+  let permanentAttempts = 0;
+  await assert.rejects(
+    runDetectionWithTransientRetryForTesting(async () => {
+      permanentAttempts += 1;
+      throw new Error('invalid candidate');
+    }),
+    /invalid candidate/
+  );
+  assert.equal(permanentAttempts, 1);
+});
+
+test('detector browser cleanup escalates when graceful close leaves Chrome alive', async () => {
+  const signals = [];
+  const stubborn = Object.assign(new EventEmitter(), {
+    exitCode: null,
+    signalCode: null,
+    kill(signal) {
+      signals.push(signal);
+      return true;
+    }
+  });
+
+  assert.equal(await waitForBrowserProcessExit(stubborn, 0), false);
+  await terminateBrowserProcess(stubborn, 0, 0);
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+
+  const gracefulSignals = [];
+  const graceful = Object.assign(new EventEmitter(), {
+    exitCode: null,
+    signalCode: null,
+    kill(signal) {
+      gracefulSignals.push(signal);
+      this.signalCode = signal;
+      return true;
+    }
+  });
+  await terminateBrowserProcess(graceful, 0, 0);
+  assert.deepEqual(gracefulSignals, ['SIGTERM']);
+});
+
+test('active detector browser registry hard-kills interrupted Chrome processes once', () => {
+  const signals = [];
+  const child = Object.assign(new EventEmitter(), {
+    exitCode: null,
+    signalCode: null,
+    kill(signal) {
+      signals.push(signal);
+      return true;
+    }
+  });
+
+  trackDetectorBrowserProcess(child);
+  terminateActiveDetectorBrowserProcesses();
+  terminateActiveDetectorBrowserProcesses();
+  assert.deepEqual(signals, ['SIGKILL']);
+});
+
+test('detector signal cleanup resolves the complete descendant process tree', () => {
+  const output = [
+    '10 1',
+    '11 10',
+    '12 11',
+    '13 10',
+    '20 1'
+  ].join('\n');
+  assert.deepEqual(descendantProcessIdsForTesting(output, 10).sort((a, b) => a - b), [11, 12, 13]);
+});
+
+test('auto detect reports missing search input instead of asking for --auto again', () => {
+  const searchFailure = missingSelectionFailureForTesting(['--auto'], {
+    candidates: [{ type: 'form' }],
+    searchPlan: { queryInput: { name: 'q' } }
+  });
+  assert.equal(searchFailure.code, 'DETECT_INPUT_REQUIRED');
+  assert.match(searchFailure.message, /--input/);
+
+  const emptyFailure = missingSelectionFailureForTesting(['--auto'], { candidates: [] });
+  assert.equal(emptyFailure.code, 'DETECT_NO_EXTRACTABLE_DATA');
+  assert.doesNotMatch(emptyFailure.message, /--auto/);
+});
+
 test('page detector facade preserves its public runtime exports', () => {
   const expectedExports = [
     'DetectionLoginRequiredError',
+    'DetectionPageAccessError',
     'applyGoalScoresForTesting',
     'assessPrimaryCandidateQuality',
     'augmentAdjacentMetadataFieldsForTesting',
     'confirmManualPopupDismissalForTesting',
+    'classifyPageAccessSnapshotForTesting',
     'dedupeEquivalentCandidates',
     'detectApiListCandidatesForTesting',
     'detectInteractivePaginationOptionsForTesting',
     'detectKnownApiListCandidatesForTesting',
     'detectPage',
+    'detectPageAccessIssueForTesting',
     'detectPageObstructionsForTesting',
     'detectPaginationForCandidatesForTesting',
     'detectSearchResultBlocksForTesting',
@@ -63,6 +159,134 @@ test('page detector facade preserves its public runtime exports', () => {
   ];
 
   assert.deepEqual(Object.keys(pageDetectorFacade).sort(), expectedExports.sort());
+});
+
+test('normalizeDetectUrl adds https without losing URL components', () => {
+  assert.equal(
+    normalizeDetectUrl('  www.example.com:8443/items?q=red#results  '),
+    'https://www.example.com:8443/items?q=red#results'
+  );
+  assert.equal(normalizeDetectUrl('//example.com/list'), 'https://example.com/list');
+  assert.equal(normalizeDetectUrl('localhost:3000/list'), 'https://localhost:3000/list');
+  assert.equal(normalizeDetectUrl('http://example.com/list'), 'http://example.com/list');
+});
+
+test('normalizeDetectUrl rejects relative, credentialed, and non-http inputs', () => {
+  assert.throws(() => normalizeDetectUrl('/c'), { code: 'DETECT_URL_INVALID' });
+  assert.throws(() => normalizeDetectUrl('example'), { code: 'DETECT_URL_INVALID' });
+  assert.throws(() => normalizeDetectUrl('ftp://example.com/file'), { code: 'DETECT_URL_INVALID' });
+  assert.throws(() => normalizeDetectUrl('https://user:secret@example.com/list'), { code: 'DETECT_URL_INVALID' });
+});
+
+test('page access classifier rejects generic access and security challenge pages', () => {
+  const base = {
+    title: '',
+    bodyText: '',
+    mainTextLength: 0,
+    articleTextLength: 0,
+    paragraphCount: 1,
+    linkCount: 0,
+    hasChallengeElement: false,
+    hasCaptchaElement: false,
+  };
+  const geoBlock = pageDetectorFacade.classifyPageAccessSnapshotForTesting({
+    ...base,
+    title: '403 - Geo-block',
+    bodyText: 'Looks like our server fumbled the play. It is likely this error was intermittent.'
+  });
+  const challenge = pageDetectorFacade.classifyPageAccessSnapshotForTesting({
+    ...base,
+    bodyText: 'Complete the security check before continuing. This step verifies that you are not a bot.',
+    hasChallengeElement: true
+  });
+  const serviceError = pageDetectorFacade.classifyPageAccessSnapshotForTesting({
+    ...base,
+    title: '503 Service Unavailable'
+  });
+
+  assert.equal(geoBlock?.kind, 'access_denied');
+  assert.equal(challenge?.kind, 'security_challenge');
+  assert.equal(challenge?.reasons.includes('challenge-specific DOM element found'), true);
+  assert.equal(serviceError?.kind, 'service_error');
+});
+
+test('page access classifier keeps substantive pages that discuss challenges', () => {
+  assert.equal(pageDetectorFacade.classifyPageAccessSnapshotForTesting({
+    title: 'How CAPTCHA systems work',
+    bodyText: 'This article explains CAPTCHA and unusual traffic detection in detail.',
+    mainTextLength: 2_500,
+    articleTextLength: 2_500,
+    paragraphCount: 12,
+    linkCount: 20,
+    hasChallengeElement: false
+  }), undefined);
+});
+
+test('page access classifier keeps short content that merely discusses CAPTCHA', () => {
+  assert.equal(pageDetectorFacade.classifyPageAccessSnapshotForTesting({
+    title: 'Octoparse Demo Seite',
+    bodyText: 'Diese Demo-Site enthält Beispielseiten für CAPTCHA und ist nur für Testzwecke gedacht.',
+    mainTextLength: 0,
+    articleTextLength: 0,
+    paragraphCount: 2,
+    linkCount: 4,
+    hasChallengeElement: false,
+    hasCaptchaElement: false
+  }), undefined);
+});
+
+test('detector navigation continues after timeout when the target DOM is already usable', async () => {
+  const timeout = new Error('Navigation timeout of 30000 ms exceeded');
+  timeout.name = 'TimeoutError';
+  let currentUrl = 'http://127.0.0.1:4321/bootstrap';
+  const page = {
+    url: () => currentUrl,
+    async goto() {
+      currentUrl = 'https://example.com/results';
+      throw timeout;
+    },
+    async evaluate() {
+      return true;
+    }
+  };
+
+  await navigateDetectorTargetForTesting(page, 'https://example.com/results', 30_000);
+});
+
+test('detector navigation preserves timeout when no usable target DOM loaded', async () => {
+  const timeout = new Error('Navigation timeout of 30000 ms exceeded');
+  timeout.name = 'TimeoutError';
+  let currentUrl = 'http://127.0.0.1:4321/bootstrap';
+  const page = {
+    url: () => currentUrl,
+    async goto() {
+      currentUrl = 'https://example.com/results';
+      throw timeout;
+    },
+    async evaluate() {
+      return false;
+    }
+  };
+
+  await assert.rejects(
+    navigateDetectorTargetForTesting(page, 'https://example.com/results', 30_000),
+    (error) => error === timeout
+  );
+});
+
+test('detector navigation never hides non-timeout failures', async () => {
+  const navigationError = new Error('net::ERR_NAME_NOT_RESOLVED');
+  const page = {
+    url: () => 'http://127.0.0.1:4321/bootstrap',
+    async goto() {
+      throw navigationError;
+    }
+  };
+
+  await assert.rejects(
+    navigateDetectorTargetForTesting(page, 'https://missing.example', 30_000),
+    (error) => error === navigationError
+  );
 });
 
 function minimalDetectOptions() {
@@ -230,6 +454,7 @@ test('auto detect prefers DOM candidate and only falls back to apiList when DOM 
     type: 'api_list',
     title: 'API list',
     confidence: 0.93,
+    replayability: 'context_free',
     request: { url: 'https://api.example.com/search', method: 'GET' },
     itemsPath: '$.items',
     fields: [
@@ -295,6 +520,14 @@ test('auto detect prefers DOM candidate and only falls back to apiList when DOM 
     candidates: [weakDom],
     apiCandidates: [apiCandidate]
   })?.id, 'api_list_1');
+  assert.equal(recommendedApiCandidateForTesting({
+    url: 'https://example.com/search',
+    finalUrl: 'https://example.com/search',
+    title: 'Example',
+    capturedAt: '2026-06-25T00:00:00.000Z',
+    candidates: [weakDom],
+    apiCandidates: [{ ...apiCandidate, replayability: 'browser_context' }]
+  }), undefined);
 });
 
 test('known Tata CLiQ apiList adapter is exposed as fallback API candidate', () => {
@@ -303,6 +536,7 @@ test('known Tata CLiQ apiList adapter is exposed as fallback API candidate', () 
   );
   assert.equal(candidates.length, 1);
   assert.equal(candidates[0].id, 'known_api_tatacliq_search');
+  assert.equal(candidates[0].replayability, 'context_free');
   assert.equal(candidates[0].request.url, 'https://searchbff.tatacliq.com/products/mpl/search');
   assert.equal(candidates[0].pagination.param, 'page');
   assert.equal(candidates[0].pagination.pageSize, 40);
@@ -348,6 +582,7 @@ test('detectApiListCandidatesForTesting infers JSON list path, fields, and page 
       }
     }
   ]);
+  assert.equal(candidates[0].replayability, 'browser_context');
   assert.equal(candidates[0].itemsPath, '$.searchresult');
   assert.equal(candidates[0].pagination.param, 'page');
   assert.equal(candidates[0].pagination.pageSizeParam, 'pageSize');
@@ -355,6 +590,32 @@ test('detectApiListCandidatesForTesting infers JSON list path, fields, and page 
   assert.ok(candidates[0].fields.some((field) => field.name === 'name' && field.path === '$.productname'));
   assert.ok(candidates[0].fields.some((field) => field.name === 'brand'));
   assert.ok(candidates[0].fields.some((field) => field.name === 'image_url'));
+});
+
+test('resource timing API candidates require a successful context-free replay', async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => new Response(JSON.stringify({
+      items: [
+        { productId: 'p1', productname: 'Alpha', webURL: '/alpha', imageURL: '//img.test/a.jpg', price: 10, ratingCount: 3 },
+        { productId: 'p2', productname: 'Beta', webURL: '/beta', imageURL: '//img.test/b.jpg', price: 20, ratingCount: 2 },
+        { productId: 'p3', productname: 'Gamma', webURL: '/gamma', imageURL: '//img.test/c.jpg', price: 30, ratingCount: 1 }
+      ]
+    }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' }
+    });
+    const { detectApiListCandidatesFromResourceTimings } = await import('../dist/runtime/detector/api-list-response-detector.js');
+    const candidates = await detectApiListCandidatesFromResourceTimings({
+      evaluate: async () => ['https://api.example.test/products?page=1']
+    });
+
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].replayability, 'context_free');
+    assert.match(candidates[0].reasons.join(' '), /context-free GET replay/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('detectApiListCandidatesForTesting preserves POST body and bracket JSON paths', () => {
@@ -445,6 +706,7 @@ test('agent plan can select apiCandidateId and build apiList task', () => {
         type: 'api_list',
         title: 'API list',
         confidence: 0.91,
+        replayability: 'context_free',
         request: {
           url: 'https://api.example.com/search',
           method: 'GET',
@@ -480,6 +742,16 @@ test('agent plan can select apiCandidateId and build apiList task', () => {
   assert.equal(preview.candidateId, 'api_list_1');
   assert.equal(preview.candidate.type, 'api_list');
   assert.deepEqual(preview.fields.map((field) => field.name), ['name', 'price']);
+  assert.equal(preview.pass, true);
+  const browserContextPreview = previewAgentPlanForTesting({
+    context: {
+      ...context,
+      apiCandidates: context.apiCandidates.map((candidate) => ({ ...candidate, replayability: 'browser_context' }))
+    },
+    plan
+  });
+  assert.equal(browserContextPreview.pass, false);
+  assert.match(browserContextPreview.warnings.join(' '), /no successful context-free replay/);
   const task = buildTaskFromAgentPlan({
     context,
     plan,
@@ -629,6 +901,19 @@ test('detect rejects obsolete explicit screenshot flags', async () => {
     assert.equal(await detectCommand(['https://example.com/list', '--prepare-agent', '--screenshot', 'custom.png', '--json', '--quiet']), 1);
     assert.equal(await detectCommand(['https://example.com/list', '--agent-screenshot', 'custom.png', '--json', '--quiet']), 1);
     assert.equal(await detectUrlCommand('https://example.com/list', ['--auto', '--screenshot', 'custom.png', '--json']), 1);
+  } finally {
+    console.log = previousLog;
+  }
+});
+
+test('detect reports malformed input before starting a browser', async () => {
+  const previousLog = console.log;
+  const lines = [];
+  console.log = (line) => lines.push(String(line));
+  try {
+    const code = await detectCommand(['/c', '--auto', '--json']);
+    assert.equal(code, 1);
+    assert.equal(JSON.parse(lines.at(-1)).error.code, 'DETECT_URL_INVALID');
   } finally {
     console.log = previousLog;
   }
@@ -2313,6 +2598,68 @@ test('detail page target prefers type=detail over related/sidebar lists', () => 
     candidates: [relatedList, detailCandidate]
   }, '预览详情页标题、作者和正文');
   assert.equal(context.recommendedCandidateId, 'detail_main');
+});
+
+test('whole-page navigation shells are not accepted as detail records', () => {
+  const content = 'Navigation card text and promotional link. '.repeat(12);
+  const shell = {
+    id: 'detail_shell',
+    type: 'detail',
+    title: 'Whole page shell',
+    confidence: 0.96,
+    selector: '#root',
+    xpath: '/html[1]/body[1]/div[1]/main[1]',
+    itemSelector: '#root',
+    itemXPath: '/html[1]/body[1]/div[1]/main[1]',
+    itemCount: 1,
+    fields: [
+      { name: 'title', kind: 'text', selector: 'h1', xpath: '/html[1]/body[1]/h1[1]', samples: ['Site directory'] },
+      { name: 'content', kind: 'text', selector: 'body', xpath: '/html[1]/body[1]', samples: [content] },
+      { name: 'image', kind: 'src', selector: 'img', xpath: '/html[1]/body[1]/img[1]', samples: ['https://example.com/hero.jpg'] }
+    ],
+    sampleRows: [{ title: 'Site directory', content, image: 'https://example.com/hero.jpg' }],
+    reasons: ['Single detail page with semantic fields'],
+    layout: {
+      role: 'main',
+      score: 0.95,
+      mainScore: 0.95,
+      sidebarPenalty: 0,
+      boilerplatePenalty: 0,
+      visualCoverage: 1,
+      textDensity: 0.05,
+      linkDensity: 0.9,
+      centerDistance: 0,
+      reasons: ['high link density']
+    },
+    diagnostics: {
+      matchCount: 1,
+      sampleBoxes: [],
+      textLength: content.length,
+      visualCoverage: 0.99,
+      warnings: []
+    }
+  };
+
+  const quality = assessPrimaryCandidateQuality(shell);
+  assert.equal(quality.usable, false);
+  assert.ok(quality.reasons.includes('detail candidate is a whole-page navigation shell'));
+  const context = buildAgentContextForTesting({
+    url: 'https://example.com',
+    finalUrl: 'https://example.com',
+    title: 'Example',
+    capturedAt: '2026-07-23T00:00:00.000Z',
+    candidates: [shell]
+  });
+  assert.equal(context.recommendedCandidateId, undefined);
+  const preview = previewAgentPlanForTesting({
+    context,
+    plan: {
+      schemaVersion: 'octopus.detect.agent-plan.v1',
+      selection: { candidateId: 'detail_shell' }
+    }
+  });
+  assert.equal(preview.pass, false);
+  assert.match(preview.warnings.join(' '), /whole-page navigation shell/);
 });
 
 test('detail goals keep encyclopedia bodies that mention copyright and reject wiki edit lists', () => {
@@ -4868,6 +5215,104 @@ test('detectPageObstructionsForTesting ignores normal content feeds that mention
   assert.deepEqual(detected, []);
 });
 
+test('detectPageObstructionsForTesting ignores closed-site layouts with login-themed classes', async () => {
+  const page = fakeObstructionPage({
+    bodyHeight: 900,
+    viewportHeight: 900,
+    topElementId: 'page-login',
+    elements: [
+      {
+        tag: 'div',
+        text: 'ZÁRVA! Az oldal jelenleg zárva van. Kérjük próbálkozz később.',
+        attrs: { id: 'page-login', className: 'page-login' },
+        rect: { left: 0, top: 0, right: 1200, bottom: 900 },
+        style: { position: 'fixed', zIndex: '1000' },
+        children: []
+      }
+    ]
+  });
+
+  const detected = await detectPageObstructionsForTesting(page);
+
+  assert.deepEqual(detected, []);
+});
+
+test('detectPageObstructionsForTesting ignores fixed navigation that only links to login', async () => {
+  const page = fakeObstructionPage({
+    bodyHeight: 2200,
+    viewportHeight: 900,
+    topElementId: 'main-content',
+    elements: [
+      {
+        tag: 'aside',
+        text: 'Find Freelancers Find Jobs About Solutions Sign Up Log In',
+        attrs: { id: 'site-navigation', className: 'mobile-navigation' },
+        rect: { left: 0, top: 0, right: 520, bottom: 900 },
+        style: { position: 'fixed', zIndex: '1000' },
+        children: []
+      },
+      {
+        tag: 'main',
+        text: 'Find and hire expert freelancers. Browse programming, writing, design, and engineering professionals.',
+        attrs: { id: 'main-content' },
+        rect: { left: 0, top: 0, right: 1200, bottom: 1600 },
+        style: { position: 'static', zIndex: 'auto' },
+        children: []
+      }
+    ]
+  });
+
+  const detected = await detectPageObstructionsForTesting(page);
+
+  assert.deepEqual(detected, []);
+});
+
+test('detectPageObstructionsForTesting keeps scroll-locked OAuth login modals with Log in wording', async () => {
+  const page = fakeObstructionPage({
+    bodyHeight: 1200,
+    viewportHeight: 900,
+    bodyOverflow: 'hidden',
+    topElementId: 'oauth-gate',
+    elements: [
+      {
+        tag: 'div',
+        text: 'Log in with Google Continue with Apple Or email',
+        attrs: { id: 'oauth-gate', className: 'auth overlay', role: 'dialog' },
+        rect: { left: 300, top: 180, right: 900, bottom: 650 },
+        style: { position: 'fixed', zIndex: '1000' },
+        children: []
+      }
+    ]
+  });
+
+  const detected = await detectPageObstructionsForTesting(page);
+
+  assert.equal(detected.length, 1);
+  assert.equal(detected[0].type, 'login');
+});
+
+test('detectPageObstructionsForTesting ignores public app roots with overlay-themed classes', async () => {
+  const page = fakeObstructionPage({
+    bodyHeight: 5000,
+    viewportHeight: 900,
+    topElementId: 'app-root',
+    elements: [
+      {
+        tag: 'div',
+        text: 'Navigation Platform Solutions Resources Open Source Pricing Sign in Sign up The future of building happens together Explore features and customer stories.',
+        attrs: { id: 'app-root', className: 'logged-out page-responsive header-overlay' },
+        rect: { left: 0, top: 0, right: 1200, bottom: 900 },
+        style: { position: 'static', zIndex: 'auto' },
+        children: []
+      }
+    ]
+  });
+
+  const detected = await detectPageObstructionsForTesting(page);
+
+  assert.deepEqual(detected, []);
+});
+
 test('detectPageObstructionsForTesting keeps real fixed login modals', async () => {
   const page = fakeObstructionPage({
     bodyHeight: 1200,
@@ -4945,6 +5390,82 @@ test('dismissPageObstructionsForTesting closes dismissible premium overlays', as
   assert.equal(results[0].action, 'click');
 });
 
+test('detectPageObstructionsForTesting ignores elevated newsletter sections', async () => {
+  const page = fakeObstructionPage({
+    bodyHeight: 3200,
+    viewportHeight: 900,
+    topElementId: 'catalog',
+    elements: [
+      {
+        tag: 'main',
+        text: 'Computers TVs Headphones Home Appliances Gaming Cameras Hottest Deals',
+        attrs: { id: 'catalog' },
+        rect: { left: 0, top: 0, right: 1200, bottom: 1500 },
+        style: { position: 'static', zIndex: 'auto' },
+        children: []
+      },
+      {
+        tag: 'footer',
+        text: 'GET INSTANT DEALS AND EXCLUSIVE OFFERS! Subscribe By providing your email you agree to our privacy policy.',
+        attrs: { id: 'newsletter', className: 'newsletter premium-offers' },
+        rect: { left: 0, top: 1800, right: 1200, bottom: 2600 },
+        style: { position: 'static', zIndex: '20' },
+        children: []
+      }
+    ]
+  });
+
+  const detected = await detectPageObstructionsForTesting(page);
+
+  assert.equal(detected.some((item) => item.type === 'paywall'), false, detected);
+});
+
+test('detectPageObstructionsForTesting keeps inline blocking paywalls', async () => {
+  const page = fakeObstructionPage({
+    bodyHeight: 1200,
+    viewportHeight: 900,
+    topElementId: 'article-paywall',
+    elements: [
+      {
+        tag: 'section',
+        text: 'Premium subscribers only. Subscribe to continue reading this article.',
+        attrs: { id: 'article-paywall', className: 'subscriber-content' },
+        rect: { left: 220, top: 120, right: 980, bottom: 760 },
+        style: { position: 'static', zIndex: '20' },
+        children: []
+      }
+    ]
+  });
+
+  const detected = await detectPageObstructionsForTesting(page);
+
+  assert.equal(detected[0]?.type, 'paywall');
+  assert.equal(detected[0]?.canHide, false);
+});
+
+test('detectPageObstructionsForTesting keeps Chinese membership overlays without paywall attributes', async () => {
+  const page = fakeObstructionPage({
+    bodyHeight: 1200,
+    viewportHeight: 900,
+    topElementId: 'membership-gate',
+    elements: [
+      {
+        tag: 'section',
+        text: '开通会员解锁全部内容，阅读全文并查看更多精彩文章。',
+        attrs: { id: 'membership-gate', className: 'content-gate' },
+        rect: { left: 220, top: 120, right: 980, bottom: 760 },
+        style: { position: 'fixed', zIndex: '1000' },
+        children: []
+      }
+    ]
+  });
+
+  const detected = await detectPageObstructionsForTesting(page);
+
+  assert.equal(detected[0]?.type, 'paywall');
+  assert.equal(detected[0]?.canHide, false);
+});
+
 test('detectPageObstructionsForTesting ignores ordinary Baidu search home content', async () => {
   const page = fakeObstructionPage({
     bodyHeight: 1400,
@@ -4982,6 +5503,28 @@ test('detectPageObstructionsForTesting ignores ordinary Baidu search home conten
             ]
           }
         ]
+      }
+    ]
+  });
+
+  const detected = await detectPageObstructionsForTesting(page);
+
+  assert.deepEqual(detected, []);
+});
+
+test('detectPageObstructionsForTesting ignores full public pages with subscribe navigation', async () => {
+  const page = fakeObstructionPage({
+    bodyHeight: 2200,
+    viewportHeight: 900,
+    topElementId: 'app-root',
+    elements: [
+      {
+        tag: 'div',
+        text: 'Ministers Careers Contact Subscribe Policy Topics Publications Consultations Reviews and inquiries The Treasury provides public economic and fiscal advice. Latest consultations Latest publications.',
+        attrs: { id: 'app-root', className: 'site-root' },
+        rect: { left: 0, top: 0, right: 1200, bottom: 900 },
+        style: { position: 'static', zIndex: 'auto' },
+        children: []
       }
     ]
   });
@@ -5501,6 +6044,94 @@ test('buildTaskFromCandidate hardens volatile SPA mount_0_0 item XPath to short 
   assert.match(task.xml, /descendant-or-self::a|::a/i);
 });
 
+test('buildTaskFromCandidate strips long generated IDs from list item XPath', () => {
+  const generatedId = 's0-0-1-1-0-2-9-4-13-2-0-3-0-1-3-@homepage-0-0-7[0]-@general-1-0-15[3]-@102997--live-events-2-54-6-1-11-1-1-9-list';
+  const itemXPath = `//UL[@id="${generatedId}"]/li[contains(@class,"carousel__snap-point")]`;
+  const task = buildTaskFromCandidate({
+    url: 'https://example.com',
+    taskId: 'generated-id-list',
+    taskName: 'Generated ID List',
+    candidate: {
+      id: 'protected_smart_1',
+      type: 'search_results',
+      title: 'Carousel records',
+      confidence: 0.9,
+      selector: '',
+      xpath: itemXPath,
+      itemXPath,
+      itemCount: 5,
+      fields: [
+        { name: 'title', kind: 'text', selector: 'a', xpath: `${itemXPath}//a[1]`, relativeXPath: './/a[1]', samples: ['Alpha'] },
+        { name: 'url', kind: 'href', selector: 'a', xpath: `${itemXPath}//a[1]`, relativeXPath: './/a[1]', samples: ['https://example.com/a'] }
+      ],
+      sampleRows: [{ title: 'Alpha', url: 'https://example.com/a' }],
+      reasons: ['test']
+    }
+  });
+
+  assert.doesNotMatch(task.xml, new RegExp(generatedId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.match(task.xml, /&lt;AbsXpath&gt;\/\/UL\/li\[contains\(@class,&amp;quot;carousel__snap-point&amp;quot;\)\]&lt;\/AbsXpath&gt;/);
+});
+
+test('buildTaskFromCandidate scopes shared carousel item roots to rows containing a selected field', () => {
+  const itemXPath = '//LI[contains(@class,"swiper-slide")]';
+  const task = buildTaskFromCandidate({
+    url: 'https://example.com',
+    taskId: 'shared-carousel-root',
+    taskName: 'Shared Carousel Root',
+    candidate: {
+      id: 'protected_smart_3',
+      type: 'search_results',
+      title: 'Award records',
+      confidence: 0.99,
+      selector: 'li.swiper-slide',
+      xpath: itemXPath,
+      itemXPath,
+      itemCount: 36,
+      fields: [
+        { name: 'image', kind: 'src', selector: 'img', xpath: `${itemXPath}//IMG[1]`, relativeXPath: '/descendant-or-self::IMG[1]', samples: ['https://example.com/a.jpg'] },
+        { name: 'url', kind: 'href', selector: 'a.award', xpath: `${itemXPath}//A[contains(@class,"award")]`, relativeXPath: '/descendant-or-self::A[contains(@class,"award")]', samples: ['https://example.com/a', 'https://example.com/b'] },
+        { name: 'name', kind: 'text', selector: '.name', xpath: `${itemXPath}//SPAN[contains(@class,"name")]`, relativeXPath: '/descendant-or-self::SPAN[contains(@class,"name")]', samples: ['Alpha', 'Beta'] }
+      ],
+      sampleRows: [{ name: 'Alpha', url: 'https://example.com/a' }],
+      reasons: ['shared framework carousel class']
+    }
+  });
+
+  assert.match(task.xml, /&lt;AbsXpath&gt;\/\/LI\[contains\(@class,&amp;quot;swiper-slide&amp;quot;\)\]\[descendant-or-self::A\[contains\(@class,&amp;quot;award&amp;quot;\)\]\]&lt;\/AbsXpath&gt;/);
+  const loopTag = task.xml.match(/<ns0:LoopAction[^>]+Caption="Loop detected items"[^>]+>/)?.[0] ?? '';
+  assert.match(loopTag, /ScrollDown="false"/);
+  assert.match(loopTag, /ScrollTime="0"/);
+});
+
+test('buildTaskFromCandidate scopes brittle deep list roots by a semantic field', () => {
+  const itemXPath = '/html[1]/body[1]/div[1]/div[7]/div[1]/div[2]/div[4]/section[1]/div[1]/div[1]/div[1]/ul[1]/li';
+  const task = buildTaskFromCandidate({
+    url: 'https://example.com/jobs',
+    taskId: 'deep-list-root',
+    taskName: 'Deep List Root',
+    candidate: {
+      id: 'fallback_search_results_4',
+      type: 'search_results',
+      title: 'Jobs',
+      confidence: 0.9,
+      selector: 'li',
+      xpath: itemXPath,
+      itemXPath,
+      itemCount: 24,
+      fields: [
+        { name: 'title', kind: 'text', selector: '.job-title', xpath: `${itemXPath}//h3`, relativeXPath: '/descendant-or-self::h3[contains(@class,"job-title")]', samples: ['Engineer', 'Designer'] },
+        { name: 'url', kind: 'href', selector: 'a', xpath: `${itemXPath}/a[1]`, relativeXPath: '/a[1]', samples: ['https://example.com/a', 'https://example.com/b'] }
+      ],
+      sampleRows: [{ title: 'Engineer', url: 'https://example.com/a' }],
+      reasons: ['deep generated DOM path']
+    }
+  });
+
+  assert.match(task.xml, /&lt;AbsXpath&gt;\/\/li\[descendant-or-self::h3\[contains\(@class,&amp;quot;job-title&amp;quot;\)\]\]&lt;\/AbsXpath&gt;/);
+  assert.doesNotMatch(task.xml, /&lt;AbsXpath&gt;\/\/li&lt;\/AbsXpath&gt;/);
+});
+
 test('buildTaskFromCandidate preserves sibling-axis relative extraction fields', () => {
   const task = buildTaskFromCandidate({
     url: 'https://example.com/news',
@@ -5754,7 +6385,7 @@ test('buildTaskFromCandidate does not insert search result navigation when URL d
   assert.doesNotMatch(task.xml, /x:Name="NavigateSearchResults"/);
 });
 
-test('buildTaskFromCandidate inserts safe popup dismissal clicks after navigation', () => {
+test('buildTaskFromCandidate presence-checks safe popup dismissal clicks after navigation', () => {
   const task = buildTaskFromCandidate({
     url: 'https://example.com/list',
     taskId: 'detected_popup',
@@ -5804,9 +6435,15 @@ test('buildTaskFromCandidate inserts safe popup dismissal clicks after navigatio
     ]
   });
 
+  assert.match(task.xml, /x:Name="DismissPopupCondition1"/);
+  assert.match(task.xml, /x:Name="DismissPopupWhenPresent1"/);
+  assert.match(task.xml, /CheckType="ContainItem"/);
+  assert.match(task.xml, /CheckValue="&lt;ActionItem&gt;&lt;AbsXpath&gt;\/html\[1\]\/body\[1\]\/div\[2\]\/button\[1\]/);
   assert.match(task.xml, /x:Name="DismissPopup1"/);
   assert.match(task.xml, /Caption="Dismiss login popup"/);
   assert.match(task.xml, /ElementXPath="&lt;ActionItem&gt;&lt;AbsXpath&gt;\/html\[1\]\/body\[1\]\/div\[2\]\/button\[1\]/);
+  assert.match(task.xml, /x:Name="DismissPopup1"[^>]*PageIndex="0"/);
+  assert.doesNotMatch(task.xml, /x:Name="DismissPopup1"[^>]*PageIndex="-1"/);
   assert.doesNotMatch(task.xml, /Dismiss captcha popup/);
   assert.equal(task.detection.popupDismissals.length, 2);
 });
@@ -9019,3 +9656,195 @@ function decodeCloudTaskXml(xoml) {
   assert.equal(compressed.readInt32LE(0), compressed.byteLength - 4);
   return gunzipSync(compressed.subarray(4)).toString('ucs2');
 }
+
+test('page access and candidate quality reject visually false successes', () => {
+  const snapshot = (overrides = {}) => ({
+    title: '',
+    bodyText: '',
+    mainTextLength: 0,
+    articleTextLength: 0,
+    paragraphCount: 0,
+    linkCount: 0,
+    hasChallengeElement: false,
+    ...overrides
+  });
+
+  const loginGate = pageDetectorFacade.classifyPageAccessSnapshotForTesting(snapshot({
+    title: 'X',
+    bodyText: 'Happening now. Continue with phone Continue with Google Continue with Apple or Email or username Continue.'
+  }));
+  assert.equal(loginGate?.kind, 'access_denied');
+  assert.ok(loginGate?.reasons.includes('short page body is an authentication gate'));
+
+  const clientError = pageDetectorFacade.classifyPageAccessSnapshotForTesting(snapshot({
+    title: 'Error 405 Not allowed',
+    bodyText: 'Error 405 Not allowed Details: cache-SJC Varnish cache server'
+  }));
+  assert.equal(clientError?.kind, 'service_error');
+
+  const javascriptShell = pageDetectorFacade.classifyPageAccessSnapshotForTesting(snapshot({
+    title: 'Camera store',
+    bodyText: "We're sorry but Camera Store doesn't work properly without JavaScript enabled. Please enable it to continue."
+  }));
+  assert.equal(javascriptShell?.kind, 'service_error');
+
+  const substantiveArticle = pageDetectorFacade.classifyPageAccessSnapshotForTesting(snapshot({
+    title: 'Handling Error 405 in JavaScript applications',
+    bodyText: 'A substantive technical article paragraph. '.repeat(50) + 'Sign in to receive updates.',
+    mainTextLength: 1_800,
+    paragraphCount: 12,
+    linkCount: 20
+  }));
+  assert.equal(substantiveArticle, undefined);
+
+  const mediaRail = {
+    id: 'protected_smart_brand_rail',
+    type: 'search_results',
+    title: 'Protected Smart list (27 items)',
+    confidence: 0.99,
+    selector: '',
+    xpath: '//div[contains(@class,"logo-slider")]',
+    itemSelector: '',
+    itemXPath: '//div[contains(@class,"logo-slider")]//a',
+    itemCount: 27,
+    fields: [
+      { name: '图片', kind: 'src', selector: '', xpath: './/img/@src', relativeXPath: './/img/@src', samples: ['https://cdn.example.test/lenovo.png', 'https://cdn.example.test/asus.png'] },
+      { name: 'slide_URL', kind: 'href', selector: '', xpath: './/a/@href', relativeXPath: './/a/@href', samples: ['https://example.test/brands/lenovo', 'https://example.test/brands/asus'] }
+    ],
+    sampleRows: [
+      { 图片: 'https://cdn.example.test/lenovo.png', slide_URL: 'https://example.test/brands/lenovo' },
+      { 图片: 'https://cdn.example.test/asus.png', slide_URL: 'https://example.test/brands/asus' }
+    ],
+    reasons: ['Detected by protected SmartProxy resource'],
+    layout: {
+      role: 'main', score: 0.7, mainScore: 0.75, sidebarPenalty: 0, boilerplatePenalty: 0,
+      visualCoverage: 0.3, textDensity: 0.01, linkDensity: 1,
+      boundingBox: { x: 100, y: 900, width: 1200, height: 90 }
+    },
+    diagnostics: { matchCount: 27, sampleBoxes: [], textLength: 0, visualCoverage: 0.3, warnings: [] }
+  };
+  const mediaQuality = assessPrimaryCandidateQuality(mediaRail, '采集页面主要列表或详情数据');
+  assert.equal(mediaQuality.usable, false);
+  assert.ok(mediaQuality.reasons.includes('media-only link collection'));
+  assert.equal(assessPrimaryCandidateQuality(mediaRail, '采集品牌 logo 图片和链接').usable, true);
+
+  const hiddenMenu = {
+    ...mediaRail,
+    id: 'protected_smart_hidden_menu',
+    title: 'Protected Smart list (5 items)',
+    itemCount: 5,
+    fields: [
+      { name: 'menuitem', kind: 'text', selector: '', xpath: './/span', relativeXPath: './/span', samples: ['Laptops', 'Smartphones'] },
+      { name: 'menuitem_URL', kind: 'href', selector: '', xpath: './/a/@href', relativeXPath: './/a/@href', samples: ['https://example.test/490-laptops', 'https://example.test/515-smartphones'] }
+    ],
+    sampleRows: [
+      { menuitem: 'Laptops', menuitem_URL: 'https://example.test/490-laptops' },
+      { menuitem: 'Smartphones', menuitem_URL: 'https://example.test/515-smartphones' }
+    ],
+    diagnostics: { matchCount: 5, sampleBoxes: [], textLength: 18, visualCoverage: 0, warnings: ['itemXPath matched no visible elements'] }
+  };
+  const hiddenQuality = assessPrimaryCandidateQuality(hiddenMenu, '采集页面主要列表或详情数据');
+  assert.equal(hiddenQuality.usable, false);
+  assert.ok(hiddenQuality.reasons.includes('candidate has no visible rows'));
+  assert.ok(hiddenQuality.reasons.includes('looks like navigation/menu list'));
+
+  const utilityLinks = {
+    ...hiddenMenu,
+    id: 'protected_smart_utility_links',
+    title: 'Protected Smart list (5 items)',
+    xpath: '//section[contains(@class,"stay-in-touch")]//li',
+    itemXPath: '//section[contains(@class,"stay-in-touch")]//li',
+    fields: [
+      { name: 'title', kind: 'text', selector: '', xpath: './/span', relativeXPath: './/span', samples: ['Visit us', 'Contact us'] },
+      { name: 'url', kind: 'href', selector: '', xpath: './/a/@href', relativeXPath: './/a/@href', samples: ['https://example.test/visiting', 'https://example.test/contact'] }
+    ],
+    sampleRows: [
+      { title: 'Visit us', url: 'https://example.test/visiting' },
+      { title: 'Contact us', url: 'https://example.test/contact' }
+    ],
+    diagnostics: { matchCount: 5, sampleBoxes: [], textLength: 18, visualCoverage: 0.3, warnings: [] }
+  };
+  const utilityQuality = assessPrimaryCandidateQuality(utilityLinks, '采集页面主要列表或详情数据');
+  assert.equal(utilityQuality.usable, false);
+  assert.ok(utilityQuality.reasons.includes('looks like navigation/menu list'));
+
+  const reassurance = {
+    ...hiddenMenu,
+    id: 'protected_smart_reassurance',
+    title: 'Protected Smart list (5 items)',
+    xpath: '//div[contains(@class,"blockreassurance")]//li',
+    itemXPath: '//div[contains(@class,"blockreassurance")]//li',
+    fields: [
+      { name: 'title', kind: 'text', selector: '', xpath: './/h3', relativeXPath: './/h3', samples: ['Free delivery', 'Secure payment'] },
+      { name: 'image', kind: 'src', selector: '', xpath: './/img/@src', relativeXPath: './/img/@src', samples: ['https://cdn.example.test/delivery.png', 'https://cdn.example.test/payment.png'] }
+    ],
+    sampleRows: [
+      { title: 'Free delivery', image: 'https://cdn.example.test/delivery.png' },
+      { title: 'Secure payment', image: 'https://cdn.example.test/payment.png' }
+    ],
+    layout: { ...mediaRail.layout, visualCoverage: 0.12 },
+    diagnostics: { matchCount: 5, sampleBoxes: [], textLength: 24, visualCoverage: 0.12, warnings: [] }
+  };
+  const reassuranceQuality = assessPrimaryCandidateQuality(reassurance, '采集页面主要列表或详情数据');
+  assert.equal(reassuranceQuality.usable, false);
+  assert.ok(reassuranceQuality.reasons.includes('promotional reassurance boilerplate'));
+  assert.equal(assessPrimaryCandidateQuality(reassurance, '采集服务保障图片').usable, true);
+
+  const templatedNavigation = {
+    ...hiddenMenu,
+    id: 'protected_smart_directive_navigation',
+    title: 'Protected Smart list (3 items)',
+    xpath: '//main//article//li',
+    itemXPath: '//main//article//li',
+    itemCount: 3,
+    fields: [
+      { name: 'title', kind: 'text', selector: '', xpath: './/h2', relativeXPath: './/h2', samples: ['Go to the page Topics', 'Go to the page Today in Parliament', 'Go to the page Latest news'] },
+      { name: 'url', kind: 'href', selector: '', xpath: './/a/@href', relativeXPath: './/a/@href', samples: ['https://example.test/topics', 'https://example.test/today', 'https://example.test/news'] }
+    ],
+    sampleRows: [
+      { title: 'Go to the page Topics', url: 'https://example.test/topics' },
+      { title: 'Go to the page Today in Parliament', url: 'https://example.test/today' },
+      { title: 'Go to the page Latest news', url: 'https://example.test/news' }
+    ],
+    diagnostics: { matchCount: 3, sampleBoxes: [], textLength: 72, visualCoverage: 0.25, warnings: [] }
+  };
+  const templatedQuality = assessPrimaryCandidateQuality(templatedNavigation, '采集新闻列表');
+  assert.equal(templatedQuality.usable, false);
+  assert.ok(templatedQuality.reasons.includes('looks like navigation/menu list'));
+
+  const substantiveNews = {
+    ...templatedNavigation,
+    id: 'protected_smart_substantive_news',
+    fields: [
+      { name: 'title', kind: 'text', selector: '', xpath: './/h2', relativeXPath: './/h2', samples: ['Parliament adopts the annual budget after final debate', 'Committee publishes findings on regional investment', 'Members question ministers about housing policy'] },
+      { name: 'url', kind: 'href', selector: '', xpath: './/a/@href', relativeXPath: './/a/@href', samples: ['https://example.test/news/budget', 'https://example.test/news/investment', 'https://example.test/news/housing'] },
+      { name: 'author', kind: 'text', selector: '', xpath: './/span', relativeXPath: './/span', samples: ['Go to the page Today in Parliament', 'Go to the page Topics', 'Go to the page Latest news'] }
+    ],
+    sampleRows: [
+      { title: 'Parliament adopts the annual budget after final debate', url: 'https://example.test/news/budget', author: 'Go to the page Today in Parliament' },
+      { title: 'Committee publishes findings on regional investment', url: 'https://example.test/news/investment', author: 'Go to the page Topics' },
+      { title: 'Members question ministers about housing policy', url: 'https://example.test/news/housing', author: 'Go to the page Latest news' }
+    ]
+  };
+  assert.equal(assessPrimaryCandidateQuality(substantiveNews, '采集新闻列表').usable, true);
+
+  const context = buildAgentContextForTesting({
+    url: 'https://example.test/',
+    finalUrl: 'https://example.test/',
+    title: 'Store',
+    capturedAt: '2026-07-23T00:00:00.000Z',
+    candidates: [hiddenMenu, mediaRail, utilityLinks, reassurance, templatedNavigation]
+  }, '采集页面主要列表或详情数据');
+  assert.equal(context.recommendedCandidateId, undefined);
+  const mediaGoalContext = buildAgentContextForTesting({
+    url: 'https://example.test/',
+    finalUrl: 'https://example.test/',
+    title: 'Store',
+    capturedAt: '2026-07-23T00:00:00.000Z',
+    candidates: [mediaRail]
+  }, '采集品牌 logo 图片和链接');
+  assert.equal(
+    mediaGoalContext.decisionSummary.candidates[0].risks.includes('media-only link collection'),
+    false
+  );
+});

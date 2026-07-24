@@ -146,6 +146,10 @@ export function hasUsablePrimaryCandidate(candidates: DetectedCandidate[], goal?
 export function assessPrimaryCandidateQuality(candidate: DetectedCandidate, goal?: string): PrimaryCandidateQuality {
   const reasons: string[] = [];
   const pageTarget = inferPageTarget(goal);
+  const hasNoVisibleRows = candidate.diagnostics?.warnings.some((warning) =>
+    /matched no visible elements|no visible (?:candidate )?(?:elements|items|rows)/i.test(warning)
+  ) ?? false;
+  if (hasNoVisibleRows) reasons.push('candidate has no visible rows');
   const role = candidate.layout?.role;
   if (role === 'header' || role === 'nav' || role === 'footer' || role === 'ad') {
     reasons.push(`layout role is ${role}`);
@@ -170,6 +174,11 @@ export function assessPrimaryCandidateQuality(candidate: DetectedCandidate, goal
   }
 
   const fieldCount = candidate.fields.filter((field) => field.samples.some((sample) => String(sample ?? '').trim())).length;
+  const onlyMediaAndLinks = candidate.fields.some((field) => field.kind === 'src')
+    && candidate.fields.every((field) => field.kind === 'src' || field.kind === 'href');
+  if (onlyMediaAndLinks && !goalAsksForMediaContent(goal)) {
+    reasons.push('media-only link collection');
+  }
   const sampleRowCount = candidate.sampleRows.length;
   const warningCount = candidate.diagnostics?.warnings.length ?? 0;
   const visualCoverage = candidate.diagnostics?.visualCoverage ?? candidate.layout?.visualCoverage ?? 1;
@@ -201,6 +210,7 @@ export function assessPrimaryCandidateQuality(candidate: DetectedCandidate, goal
   if (candidateIsLegalBoilerplate(candidate)) reasons.push('legal boilerplate');
   if (candidateIsCookieConsent(candidate)) reasons.push('cookie consent');
   if (candidateLooksLikeWikiSectionEditList(candidate)) reasons.push('looks like wiki section edit controls');
+  if (candidateLooksLikePromotionalReassurance(candidate, goal)) reasons.push('promotional reassurance boilerplate');
   if (candidateLooksLikeNavigationList(candidate)) reasons.push('looks like navigation/menu list');
   if (candidateLooksLikeFooterOrNavigation(candidate)) reasons.push('looks like footer/navigation');
 
@@ -243,6 +253,12 @@ function assessDetailCandidateQuality(
   if (contentField && contentLen > 0 && contentLen < 40 && pageTarget === 'detail') {
     reasons.push('detail content too short');
   }
+  const visualCoverage = candidate.diagnostics?.visualCoverage ?? candidate.layout?.visualCoverage ?? 0;
+  const linkDensity = candidate.layout?.linkDensity ?? 0;
+  const textDensity = candidate.layout?.textDensity ?? 1;
+  if (visualCoverage >= 0.9 && linkDensity >= 0.55 && textDensity <= 0.08 && contentLen >= 400) {
+    reasons.push('detail candidate is a whole-page navigation shell');
+  }
   if (candidateIsLegalBoilerplate(candidate)) reasons.push('legal boilerplate');
   if (candidateIsCookieConsent(candidate)) reasons.push('cookie consent');
 
@@ -253,9 +269,33 @@ export function candidateLooksLikeNavigationList(candidate: DetectedCandidate): 
   if (candidate.type === 'form' || candidate.type === 'detail') return false;
   if (candidate.layout && ['header', 'nav', 'footer', 'ad'].includes(candidate.layout.role)) return true;
 
+  const structuralValues = [
+    candidate.selector,
+    candidate.xpath,
+    candidate.itemSelector ?? '',
+    candidate.itemXPath ?? '',
+    ...candidate.fields.flatMap((field) => [field.name, field.selector, field.xpath, field.relativeXPath ?? ''])
+  ];
+  const navigationStructure = /(?:^|[^a-z0-9])(?:mega[-_]?menu|sub[-_]?menu|menu[-_]?item|nav[-_]?item|navbar|breadcrumb|wbmenucol|stay[-_]?in[-_]?(?:touch|formed)|quick[-_]?links|utility[-_]?links|call[-_]?to[-_]?action|cta)(?:[^a-z0-9]|$)/i;
+  const navigationStructureHits = structuralValues.filter((value) => navigationStructure.test(value)).length;
+  const hasHrefField = candidate.fields.some((field) => field.kind === 'href' && field.samples.some(Boolean));
+  const hasPriceField = candidate.fields.some((field) => /price|价格|金额|薪资|salary/i.test(field.name));
+  if (navigationStructureHits >= 2 && hasHrefField && !candidateHasDateSignal(candidate) && !hasPriceField) return true;
+
   const titleValues = candidateTitleLikeTextValues(candidate);
   const hrefs = candidateHrefValues(candidate);
   if (!titleValues.length && !hrefs.length) return false;
+  const navigationDirective = /^(?:go|navigate)\s+to\s+(?:(?:the|this)\s+)?(?:page|website|section|portal|homepage)\b/i;
+  const navigationDirectiveRate = titleValues.length
+    ? titleValues.filter((value) => navigationDirective.test(normalizeSampleValue(value))).length / titleValues.length
+    : 0;
+  if (candidate.itemCount >= 3
+    && hrefs.length >= Math.min(3, titleValues.length)
+    && navigationDirectiveRate >= 0.6
+    && !candidateHasDateSignal(candidate)
+    && !hasPriceField) {
+    return true;
+  }
 
   const shortTitleRate = titleValues.length
     ? titleValues.filter((value) => {
@@ -284,6 +324,30 @@ export function candidateLooksLikeNavigationList(candidate: DetectedCandidate): 
   if (candidate.type === 'link_collection' && shortTitleRate >= 0.75 && !hasDate && longTitleRate < 0.2) return true;
   if (shallow && candidate.itemCount >= 6 && shortTitleRate >= 0.8 && navHrefRate >= 0.35) return true;
   return false;
+}
+
+function candidateLooksLikePromotionalReassurance(candidate: DetectedCandidate, goal?: string): boolean {
+  if (candidate.type === 'form' || candidate.type === 'detail' || goalAsksForMediaContent(goal)) return false;
+  if (candidate.itemCount < 2 || candidate.itemCount > 8) return false;
+  const hasMedia = candidate.fields.some((field) => field.kind === 'src' && field.samples.some(Boolean));
+  const hasText = candidate.fields.some((field) => field.kind === 'text' && field.samples.some(Boolean));
+  const hasHref = candidate.fields.some((field) => field.kind === 'href' && field.samples.some(Boolean));
+  const hasRecordField = candidate.fields.some((field) => /price|价格|金额|薪资|salary|rating|评分|date|time|日期|时间|sku|库存|stock/i.test(field.name));
+  if (!hasMedia || !hasText || hasHref || hasRecordField || candidateHasDateSignal(candidate)) return false;
+
+  const structuralValues = [
+    candidate.title,
+    candidate.selector,
+    candidate.xpath,
+    candidate.itemSelector ?? '',
+    candidate.itemXPath ?? '',
+    ...candidate.fields.flatMap((field) => [field.name, field.selector, field.xpath, field.relativeXPath ?? '', ...field.samples.slice(0, 3)])
+  ];
+  const reassuranceStructure = /(?:^|[^a-z0-9])(?:block[-_]?reassurance|reassurance|trust[-_]?(?:bar|badge|strip)|service[-_]?(?:benefit|feature)|usp(?:s|[-_]?(?:bar|strip))?|benefit[-_]?(?:bar|strip)|guarantee[-_]?(?:bar|strip))(?:[^a-z0-9]|$)/i;
+  if (!structuralValues.some((value) => reassuranceStructure.test(String(value ?? '')))) return false;
+
+  const titleValues = candidateTitleLikeTextValues(candidate);
+  return titleValues.length >= 2 && titleValues.every((value) => normalizeSampleValue(value).length <= 120);
 }
 
 function candidateIsLegalBoilerplate(candidate: Pick<DetectedCandidate, 'sampleRows' | 'fields' | 'reasons' | 'layout' | 'type'>): boolean {
@@ -818,6 +882,10 @@ export function layoutRankingBoost(candidate: Pick<DetectedCandidate, 'layout' |
   if (layout.role === 'nav' || layout.role === 'header' || layout.role === 'footer' || layout.role === 'ad') boost -= 0.16;
   if (candidate.type === 'link_collection' && layout.role !== 'main') boost -= 0.08;
   return boost;
+}
+
+function goalAsksForMediaContent(goal?: string): boolean {
+  return Boolean(goal && /图片|图像|照片|相册|画廊|封面|海报|logo|logos|images?|photos?|pictures?|gallery/i.test(goal));
 }
 
 function goalTokens(goal: string): string[] {

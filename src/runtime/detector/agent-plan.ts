@@ -1,6 +1,7 @@
 import type { DetectedApiListCandidate, DetectedCandidate, DetectedDetailPlan, DetectedField, DetectedFieldDiagnostics, DetectedPagination, DetectedVisualElement } from './types.js';
 import { buildTaskFromCandidate } from './xml.js';
 import { buildTaskFromApiListCandidate } from './api-list-detector.js';
+import { assessPrimaryCandidateQuality } from './candidate-ranking.js';
 import type {
   AgentCustomCandidatePlan,
   AgentDetailPlan,
@@ -23,6 +24,7 @@ export function previewAgentPlan(options: { context: DetectAgentContext; plan: A
   const detailFields = candidate.detailPlan ? previewFields(candidate.detailPlan.fields, base.detailPlan?.fields ?? []) : [];
   collectAgentVisualReviewWarnings(warnings, recommendedFixes, options.context, options.plan, candidate.id);
   collectAgentGoalRegionWarnings(warnings, recommendedFixes, options.context, candidate);
+  collectAgentCandidateQualityWarnings(warnings, recommendedFixes, options.context, candidate);
   collectAgentPreviewWarnings(warnings, recommendedFixes, candidate, fields, detailFields);
   const dedupedWarnings = Array.from(new Set(warnings));
   const dedupedFixes = Array.from(new Set(recommendedFixes));
@@ -51,7 +53,8 @@ export function previewAgentPlan(options: { context: DetectAgentContext; plan: A
     warnings: dedupedWarnings,
     recommendedFixes: dedupedFixes,
     ...(dedupedWarnings.length || dedupedFixes.length ? { repairInstruction: buildAgentRepairInstruction(dedupedWarnings, dedupedFixes) } : {}),
-    pass: !hasBlockingAgentPreviewRisk(fields, detailFields)
+    pass: !hasBlockingCandidateQualityRisk(options.context, candidate)
+      && !hasBlockingAgentPreviewRisk(fields, detailFields)
       && !hasBlockingVisualReviewRisk(options.context, options.plan, candidate.id)
       && !hasBlockingGoalRegionRisk(options.context, candidate)
   };
@@ -97,6 +100,10 @@ function resolveAgentPlanApiCandidate(context: DetectAgentContext, plan: AgentPl
 function previewApiAgentPlan(context: DetectAgentContext, plan: AgentPlan, candidate: DetectedApiListCandidate): AgentPlanPreview {
   const warnings: string[] = [];
   const recommendedFixes: string[] = [];
+  if (candidate.replayability !== 'context_free') {
+    warnings.push('API candidate was observed only in browser context and has no successful context-free replay');
+    recommendedFixes.push('选择 replayability=context_free 的 API candidate，或改用可运行的 DOM candidate。');
+  }
   if (context.screenshot?.path && !plan.visualReview?.reviewed) {
     warnings.push('visualReview: plan does not confirm that context.screenshot.path was opened before choosing API candidate');
     recommendedFixes.push('确认 API candidate 对应截图中的主列表，而不是推荐、广告或无关接口。');
@@ -251,6 +258,24 @@ function isAcceptableLoopFieldWarning(warning: string, field: DetectedField): bo
   return Boolean(field.relativeXPath)
     && /xpath matched \d+ elements/i.test(warning)
     && /runtime may use the first element/i.test(warning);
+}
+
+function collectAgentCandidateQualityWarnings(
+  warnings: string[],
+  recommendedFixes: string[],
+  context: DetectAgentContext,
+  candidate: DetectedCandidate
+): void {
+  const quality = assessPrimaryCandidateQuality(candidate, context.goal);
+  if (quality.usable) return;
+  warnings.push(...quality.reasons.map((reason) => `candidate quality: ${reason}`));
+  recommendedFixes.push('改选没有硬质量风险、且与页面主数据区一致的候选；若缺失则从 pageVisualElements 创建 customCandidate。');
+}
+
+function hasBlockingCandidateQualityRisk(context: DetectAgentContext, candidate: DetectedCandidate): boolean {
+  return assessPrimaryCandidateQuality(candidate, context.goal).reasons.some((reason) =>
+    /^(?:candidate has no visible rows|layout role is (?:header|nav|footer|ad)|high boilerplate penalty|high sidebar penalty|media-only link collection|promotional reassurance boilerplate|looks like pagination controls|legal boilerplate|cookie consent|looks like wiki section edit controls|list candidate rejected for detail goal|detail candidate is a whole-page navigation shell)$/.test(reason)
+  );
 }
 
 function collectAgentVisualReviewWarnings(

@@ -19,7 +19,7 @@ export function buildAgentContext(result: PageDetectionResult, goal?: string): D
     const recommended = recommendedCandidate(candidates, goal);
     const visualArtifacts = buildAgentVisualArtifacts(result.agentScreenshot);
     const visualElements = buildAgentVisualElements(candidates);
-    const decisionSummary = buildAgentDecisionSummary(candidates, recommended?.id, visualArtifacts);
+    const decisionSummary = buildAgentDecisionSummary(candidates, recommended?.id, visualArtifacts, goal);
     return {
       schemaVersion: 'octopus.detect.agent-context.v1',
       instruction: [
@@ -32,13 +32,14 @@ export function buildAgentContext(result: PageDetectionResult, goal?: string): D
       'Always use the user goal, annotated/full-page screenshot, candidate bounding boxes, diagnostics, and sample rows together when judging candidates.',
       'Before selecting any candidate, infer the page primary task target from the user goal and the live visible structure: title, first viewport, active navigation/tab, semantic page purpose, and main content prominence. If the user goal is explicit, honor it; if it is vague or absent, let the visible page structure decide. Do not default to either detail extraction or the largest repeated list. Choose a detail entity, list, feed, table, or form only after that target judgment.',
       'If the correct visible region is missing from candidates, use pageVisualElements and return selection.customCandidate with xpath, itemXPath, fieldElementIds or fields; the CLI will validate it as a synthetic candidate before task generation.',
-      'If apiCandidates is present, it contains JSON/XHR list candidates observed from browser network responses. Prefer an API candidate only when it clearly represents the same primary visible list and the user wants scalable list collection.',
+      'If apiCandidates is present, prefer one only when replayability=context_free and it clearly represents the same primary visible list; browser_context candidates are evidence for manual review, not safe local replay.',
       'When the goal asks for the current page, primary content, detail page, article/body, introduction, or explicitly says to ignore sidebars/navigation/ads, do not select sidebar/nav/footer/header/ad candidates even if they contain repeated cards. Recommendation modules such as nearby/related items are not the primary page entity unless the user explicitly asks for them.',
       'For a single detail page whose main content is absent from deterministic candidates, create a customCandidate with type=detail from pageVisualElements for title, rating, address, status, phone, body/introduction, and main image.',
       'Before writing the plan, open context.visualArtifacts.annotatedScreenshotPath or context.screenshot.annotatedPath with a vision-capable tool and verify the selected candidate and fields against the visible page.',
       'Include visualReview.reviewed=true, visualReview.screenshotPath, visualReview.selectedCandidateId, visualReview.evidence, and visualReview.checks in the plan when context.screenshot.path is present.',
       'Use diagnostics.matchCount, textLength, paragraphCount, hasStyleNoise, boundingBox, sampleRows, and screenshot to avoid narrow, noisy, or sidebar XPath.',
       'Before applying a task, run --preview-agent-plan and revise fields whose warnings say content is short, CSS noise exists, or XPath matches multiple elements.',
+      'Treat decisionSummary.candidates[].risks as acceptance evidence. Never select a whole-page navigation shell, blocked region, cookie/legal overlay, or candidate with no visible rows.',
       'Do not invent XPath when an existing candidate field can be reused. Ignore ads, sidebars, navigation, and boilerplate.'
     ].join(' '),
     ...(visualArtifacts ? { visualArtifacts } : {}),
@@ -132,7 +133,26 @@ export function recommendedCandidate(candidates: DetectedCandidate[], goal?: str
     const anyDetail = ranked.find((candidate) => candidate.type === 'detail');
     if (anyDetail) return anyDetail;
   }
-  return ranked[0];
+  // Sparse-but-plausible candidates remain a backward-compatible soft fallback. Hard
+  // visual failures must not drive --auto or bias an agent toward the wrong page region.
+  return ranked.find((candidate) => !hasHardPrimaryCandidateFailure(candidate, goal));
+}
+
+function hasHardPrimaryCandidateFailure(candidate: DetectedCandidate, goal?: string): boolean {
+  const reasons = assessPrimaryCandidateQuality(candidate, goal).reasons;
+  const explicitFailure = reasons.some((reason) =>
+    /^(?:candidate has no visible rows|layout role is (?:header|nav|footer|ad)|high boilerplate penalty|high sidebar penalty|media-only link collection|promotional reassurance boilerplate|looks like pagination controls|legal boilerplate|cookie consent|looks like wiki section edit controls|list candidate rejected for detail goal|detail candidate is a whole-page navigation shell)$/.test(reason)
+  );
+  if (explicitFailure) return true;
+
+  // Text-only fixtures and legacy callers do not carry visual diagnostics. Keep their old
+  // fallback behavior; only turn inferred nav/taxonomy signals into a hard rejection when
+  // the detector actually measured this candidate on the rendered page.
+  const hasVisualEvidence = Boolean(candidate.layout || candidate.diagnostics);
+  return hasVisualEvidence && reasons.some((reason) =>
+    /^(?:looks like navigation\/menu list|looks like footer\/navigation|looks like link-grid navigation|looks like taxonomy\/filter list|looks like local SEO links|goal asks for records but candidate looks like navigation)$/.test(reason)
+  );
+
 }
 
 function buildAgentVisualArtifacts(screenshot: DetectedAgentScreenshot | undefined): AgentVisualArtifacts | undefined {
@@ -152,7 +172,8 @@ function buildAgentVisualArtifacts(screenshot: DetectedAgentScreenshot | undefin
 function buildAgentDecisionSummary(
   candidates: DetectedCandidate[],
   recommendedCandidateId: string | undefined,
-  visualArtifacts: AgentVisualArtifacts | undefined
+  visualArtifacts: AgentVisualArtifacts | undefined,
+  goal?: string
 ): AgentDecisionSummary {
   const cropByCandidate = new Map((visualArtifacts?.candidateScreenshots ?? []).map((item) => [item.candidateId, item]));
   const ranked = rankCandidates(candidates);
@@ -199,7 +220,7 @@ function buildAgentDecisionSummary(
           ...(crop ? { candidateScreenshotPath: crop.path } : {})
         },
         strengths: candidateStrengths(candidate, recommendedCandidateId),
-        risks: candidateRisks(candidate)
+        risks: candidateRisks(candidate, goal)
       };
     }),
     rules: [
@@ -226,12 +247,14 @@ function candidateStrengths(candidate: DetectedCandidate, recommendedCandidateId
   return strengths;
 }
 
-function candidateRisks(candidate: DetectedCandidate): string[] {
+function candidateRisks(candidate: DetectedCandidate, goal?: string): string[] {
   const risks: string[] = [];
   if (candidate.type === 'form') risks.push('form candidate is an input/search entry and cannot directly generate an extraction task');
   if (candidate.layout?.role && candidate.layout.role !== 'main') risks.push(`layout role is ${candidate.layout.role}`);
   if (candidate.fields.length <= 1) risks.push('few detected fields');
   if (candidate.diagnostics?.warnings.length) risks.push(...candidate.diagnostics.warnings.slice(0, 3));
+  const quality = assessPrimaryCandidateQuality(candidate, goal);
+  if (!quality.usable) risks.push(...quality.reasons.filter((reason) => !risks.includes(reason)));
   if (!candidate.sampleRows.length) risks.push('no sample rows');
   return risks;
 }

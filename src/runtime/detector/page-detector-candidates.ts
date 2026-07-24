@@ -49,7 +49,12 @@ export async function detectCandidates(page: Page, options: DetectOptions, scrol
   if (!options.legacyDetector) {
     const outputLimit = options.interactive ? Math.max(options.maxCandidates, 24) : options.maxCandidates;
     const refinementLimit = candidateRefinementLimit(outputLimit);
-    const protectedSmart = await timed('protectedSmartMs', () => detectProtectedSmartCandidates(page, { maxCandidates: refinementLimit, baseUrl: options.apiBaseUrl }));
+    let protectedSmartError: unknown;
+    const protectedSmart = await timed('protectedSmartMs', () => detectProtectedSmartCandidates(page, { maxCandidates: refinementLimit, baseUrl: options.apiBaseUrl }))
+      .catch((error: unknown) => {
+        protectedSmartError = error;
+        return [];
+      });
     // Skip heavy fallback only when Protected Smart already produced a usable primary
     // candidate. A non-empty but low-quality Smart result (e.g. nav/header) must still
     // run fallback so the real list can enter the candidate set.
@@ -79,6 +84,7 @@ export async function detectCandidates(page: Page, options: DetectOptions, scrol
       // Still try dedicated detail pass before failing hard (detail-only pages).
       const earlyDetail = await timed('detailCandidatesMs', () => detectDetailCandidates(page));
       if (!earlyDetail.length) {
+        if (protectedSmartError) throw protectedSmartError;
         throw new Error('No list candidates were detected. Use --legacy-detector only for debugging the old detector.');
       }
       const onlyDetail = await finalizeCandidates(page, earlyDetail, options, scrollProbe, outputLimit, timed);

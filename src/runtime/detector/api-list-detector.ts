@@ -63,6 +63,7 @@ export function buildTaskFromApiListCandidate(options: {
       mode: 'api_list',
       localOnly: true,
       confidence: options.candidate.confidence,
+      replayability: options.candidate.replayability ?? 'browser_context',
       reasons: options.candidate.reasons,
       note: 'Generated from browser network JSON response detection. Cloud task save is not supported for apiList tasks yet.'
     }
@@ -97,6 +98,7 @@ function buildTataCliqSearchCandidate(url: string): DetectedApiListCandidate {
     type: 'api_list',
     title: 'Tata CLiQ search API list',
     confidence: 0.94,
+    replayability: 'context_free',
     request: {
       url: apiList.request.url,
       method: apiList.request.method ?? 'GET',

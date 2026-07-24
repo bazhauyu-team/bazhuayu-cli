@@ -297,6 +297,8 @@ async function executeTask(
   let proxyRequests = 0;
   let rowLimitReached = false;
   let stopReason: string | undefined;
+  let resolveRowLimitStopped: ((summary: RunSummary) => void) | null = null;
+  let rowLimitSettleTimer: NodeJS.Timeout | undefined;
   const runtimeConsole = maybeSuppressRuntimeConsole(options);
   const detachedBootstrapDir = process.env[DETACHED_BOOTSTRAP_DIR_ENV];
   const startedAt = new Date().toISOString();
@@ -337,6 +339,39 @@ async function executeTask(
     if (server) await server.close().catch(() => undefined);
   };
 
+  const buildRowLimitSummary = (): RunSummary => ({
+    runId: currentRunId || `run_${safeFileName(taskId)}_max_rows`,
+    lotId: currentLotId || 'lot_max_rows',
+    taskId,
+    taskName: currentTaskName || loadedTask?.taskName,
+    status: 'stopped',
+    total: savedRows,
+    outputDir: options.outputDir,
+    startedAt,
+    stoppedAt: new Date().toISOString(),
+    stopReason: 'max_rows',
+    maxRows: options.maxRows
+  });
+  const scheduleRowLimitSettleFallback = (): void => {
+    if (!resolveRowLimitStopped || rowLimitSettleTimer) return;
+    rowLimitSettleTimer = setTimeout(() => {
+      rowLimitSettleTimer = undefined;
+      resolveRowLimitStopped?.(buildRowLimitSummary());
+    }, 3_000);
+  };
+  const stopForRowLimit = (): void => {
+    scheduleRowLimitSettleFallback();
+    try {
+      host.stop();
+    } catch (error) {
+      appendRunArtifact('events.jsonl', {
+        event: 'log',
+        runId: currentRunId,
+        level: 'warning',
+        message: `row-limit stop request failed: ${error instanceof Error ? error.message : String(error)}`
+      });
+    }
+  };
   host.on('run.started', (event) => {
     currentRunId = event.runId;
     currentLotId = event.lotId;
@@ -446,7 +481,7 @@ async function executeTask(
         stopReason = 'max_rows';
         runStatus = 'stopping';
         void updateControlStatus(runStatus);
-        host.stop();
+        stopForRowLimit();
       }
       return;
     }
@@ -481,7 +516,7 @@ async function executeTask(
           total: savedRows
         });
       }
-      host.stop();
+      stopForRowLimit();
     }
   };
 
@@ -527,6 +562,9 @@ async function executeTask(
       }
       return EXIT_OK;
     }
+    const rowLimitStopped = new Promise<RunSummary>((resolveStopped) => {
+      resolveRowLimitStopped = resolveStopped;
+    });
     await applyTaskBrowserSession(task, options, runtimeConsole);
     loadedTask = task;
     markTrackingTaskLoaded(trackingRun, task);
@@ -569,17 +607,29 @@ async function executeTask(
       process.once('SIGINT', signalHandler);
     });
 
-    const runPromise = withTimeout(host.start(task, options), options.runTimeoutMs, () => {
-      runStatus = 'stopping';
-      stopReason = 'timeout';
-      void updateControlStatus(runStatus);
-      host.stop();
+    const runAttempt = withTimeout(host.start(task, options), options.runTimeoutMs, () => {
+      if (!rowLimitReached) {
+        runStatus = 'stopping';
+        stopReason = 'timeout';
+        void updateControlStatus(runStatus);
+        host.stop();
+      }
       return `Run timeout after ${options.runTimeoutMs}ms`;
     });
-    const summary = await Promise.race([runPromise, interrupted]);
+    const runPromise = runAttempt.promise;
+    const observedRunPromise = runPromise.catch((error) => {
+      if (rowLimitReached) return buildRowLimitSummary();
+      throw error;
+    });
+    const summary = await Promise.race([observedRunPromise, interrupted, rowLimitStopped]);
+    runAttempt.cancel();
     await rowQueue;
     if (downloadStats?.total) downloadStats = { ...downloadStats, status: 'completed' };
     runPromise.catch(() => undefined);
+    if (rowLimitSettleTimer) {
+      clearTimeout(rowLimitSettleTimer);
+      rowLimitSettleTimer = undefined;
+    }
     if (signalHandler) {
       process.off('SIGINT', signalHandler);
       signalHandler = null;
@@ -645,6 +695,10 @@ async function executeTask(
     if (signalHandler) {
       process.off('SIGINT', signalHandler);
       signalHandler = null;
+    }
+    if (rowLimitSettleTimer) {
+      clearTimeout(rowLimitSettleTimer);
+      rowLimitSettleTimer = undefined;
     }
     const message = error instanceof Error ? error.message : String(error);
     const errorCode = runErrorCode(error);
@@ -888,18 +942,23 @@ function validateMaxRows(args: string[]): string | null {
   return null;
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => string): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onTimeout: () => string): {
+  promise: Promise<T>;
+  cancel: () => void;
+} {
   let timeout: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_resolve, reject) => {
-        timeout = setTimeout(() => reject(new Error(onTimeout())), timeoutMs);
-      })
-    ]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
+  const cancel = (): void => {
+    if (!timeout) return;
+    clearTimeout(timeout);
+    timeout = undefined;
+  };
+  const timedPromise = Promise.race([
+    promise,
+    new Promise<T>((_resolve, reject) => {
+      timeout = setTimeout(() => reject(new Error(onTimeout())), timeoutMs);
+    })
+  ]).finally(cancel);
+  return { promise: timedPromise, cancel };
 }
 
 async function waitForDetachedStartup(

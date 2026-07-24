@@ -94,7 +94,7 @@ export async function detectApiListCandidatesFromResourceTimings(page: {
       // ignore invalid JSON resources
     }
   }
-  return detectApiListCandidates(responses);
+  return detectApiListCandidates(responses, 'context_free');
 }
 
 async function captureResponse(
@@ -129,7 +129,10 @@ async function captureResponse(
   captured.push({ url: response.url(), method, status, contentType, ...(requestBody !== undefined ? { requestBody } : {}), payload });
 }
 
-function detectApiListCandidates(responses: CapturedJsonResponse[]): DetectedApiListCandidate[] {
+function detectApiListCandidates(
+  responses: CapturedJsonResponse[],
+  replayability: NonNullable<DetectedApiListCandidate['replayability']> = 'browser_context'
+): DetectedApiListCandidate[] {
   const candidates: DetectedApiListCandidate[] = [];
   for (const response of responses) {
     for (const arrayCandidate of findObjectArrays(response.payload)) {
@@ -144,6 +147,7 @@ function detectApiListCandidates(responses: CapturedJsonResponse[]): DetectedApi
         type: 'api_list',
         title: `API list (${arrayCandidate.items.length} items)`,
         confidence,
+        replayability,
         request: requestFromUrl(response.url, response.method, response.requestBody),
         ...(pagination ? { pagination } : {}),
         itemsPath: arrayCandidate.path,
@@ -153,7 +157,10 @@ function detectApiListCandidates(responses: CapturedJsonResponse[]): DetectedApi
         reasons: [
           `JSON response contains object array at ${arrayCandidate.path}`,
           ...analysis.reasons,
-          ...(pagination ? [`page pagination inferred from query param "${pagination.param}"`] : [])
+          ...(pagination ? [`page pagination inferred from query param "${pagination.param}"`] : []),
+          replayability === 'context_free'
+            ? 'context-free GET replay returned structured rows'
+            : 'observed in browser context; local replay is not verified'
         ]
       });
     }

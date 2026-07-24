@@ -73,7 +73,13 @@ export {
   DetectionLoginRequiredError,
   shouldPromptForLoginInterventionForTesting
 } from './page-detector-login.js';
+export {
+  DetectionPageAccessError,
+  classifyPageAccessSnapshotForTesting,
+  detectPageAccessIssueForTesting
+} from './page-access.js';
 
+import { DetectionPageAccessError, detectPageAccessIssue } from './page-access.js';
 import { confirmManualPopupDismissal, dedupePopupDismissals, dismissPageObstructions } from './page-detector-popup.js';
 import { autoScroll, waitForPageSettled } from './page-detector-scroll.js';
 import { detectCandidates, buildLlmRankInput } from './page-detector-candidates.js';
@@ -133,6 +139,10 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
   const recordPhaseTiming = (key: string, ms: number): void => {
     phaseTimings[key] = (phaseTimings[key] ?? 0) + ms;
   };
+  const assertPageAccess = async (page: Page): Promise<void> => {
+    const issue = await timed('pageAccessCheckMs', () => detectPageAccessIssue(page));
+    if (issue) throw new DetectionPageAccessError(issue);
+  };
   try {
     options = { ...options, onPhaseTiming: recordPhaseTiming };
     let apiCapture: ApiResponseCapture | null = null;
@@ -160,6 +170,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
     if (!apiCapture) apiCapture = startApiResponseCapture(page);
     page.setDefaultTimeout(options.timeoutMs);
     await timed('initialSettleMs', () => waitForPageSettled(page, options.waitMs));
+    await assertPageAccess(page);
     const popupDismissals: DetectedPopupDismissal[] = [];
     const manualPopupPromptKeys = new Set<string>();
     let loginIntervention = await handleLoginIntervention('打开页面后检测到登录要求');
@@ -189,6 +200,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
         page = host.page;
         restartApiCapture(page);
         await waitForPageSettled(page, options.waitMs);
+        await assertPageAccess(page);
         let afterSearchLogin = await handleLoginIntervention('搜索后检测到登录要求');
         popupDismissals.push(...afterSearchLogin.popupDismissals ?? []);
         page = host.page;
@@ -198,6 +210,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
           searchPlan = await retrySearchWithEnter(host, options, searchPlan);
           page = host.page;
           await waitForPageSettled(page, options.waitMs);
+          await assertPageAccess(page);
           const retryLogin = await handleLoginIntervention('重试搜索后检测到登录要求');
           popupDismissals.push(...retryLogin.popupDismissals ?? []);
           page = host.page;
@@ -213,6 +226,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
             page = host.page;
             restartApiCapture(page);
             await waitForPageSettled(host.page, options.waitMs);
+            await assertPageAccess(page);
             const replayLogin = await handleLoginIntervention('登录后重放搜索仍检测到登录要求');
             popupDismissals.push(...replayLogin.popupDismissals ?? []);
             page = host.page;
@@ -224,6 +238,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
           throw new Error('搜索后没有进入当前关键词的结果页。请确认搜索是否成功打开结果页，或直接传入搜索结果页 URL 后重试。');
         }
       }
+      await assertPageAccess(page);
       const preDetectionLogin = await handleLoginIntervention('采集检测前检测到登录/验证要求');
       popupDismissals.push(...preDetectionLogin.popupDismissals ?? []);
       page = host.page;
@@ -236,6 +251,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
     if (allowPopupDismissal) popupDismissals.push(...await timed('popupDismissalMs', () => dismissPageObstructions(page)));
     const scrollProbe = await timed('autoScrollMs', () => autoScroll(page, options.scrolls));
     await timed('postScrollSettleMs', () => waitForPageSettled(page, Math.min(options.waitMs, 1000)));
+    await assertPageAccess(page);
     if (allowPopupDismissal) popupDismissals.push(...await timed('popupDismissalMs', () => dismissPageObstructions(page)));
     if (options.dismissPopups && options.manual) {
       popupDismissals.push(...await confirmManualPopupDismissal(page, runtimeConsole, manualPopupPromptKeys));
@@ -334,10 +350,10 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
   }
 }
 
-function dedupeApiListCandidates<T extends { request: { method: string; url: string }; itemsPath: string; confidence: number }>(candidates: T[]): T[] {
+function dedupeApiListCandidates<T extends { request: { method: string; url: string }; itemsPath: string; confidence: number; replayability?: 'context_free' | 'browser_context' }>(candidates: T[]): T[] {
   const seen = new Set<string>();
   return candidates
-    .sort((a, b) => b.confidence - a.confidence)
+    .sort((a, b) => Number(b.replayability === 'context_free') - Number(a.replayability === 'context_free') || b.confidence - a.confidence)
     .filter((candidate) => {
       const key = `${candidate.request.method}:${candidate.request.url}:${candidate.itemsPath}`;
       if (seen.has(key)) return false;

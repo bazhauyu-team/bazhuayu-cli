@@ -140,11 +140,12 @@ export async function detectPageObstructions(page: Page): Promise<Array<{
     const viewportArea = viewportWidth * viewportHeight;
     const closeTextPattern = /^(×|x|X|关闭|关 闭|取消|跳过|暂不|稍后|以后再说|我知道了|知道了|不登录|先逛逛|close|skip|not now|later|maybe later)$/i;
     const unsafeTextPattern = /(登录|登陆|注册|手机号|验证码|获取验证码|同意|授权|支付|购买|开通|login|sign in|sign up|register|verify|submit|continue|agree)/i;
-    const loginPattern = /(登录|登陆|注册|手机号|验证码|扫码|二维码|微信|账号|密码|login|sign in|sign up|register|phone|verification|qr|account|password|auth)/i;
+    const loginPattern = /(登录|登陆|注册|手机号|验证码|扫码|二维码|微信|账号|密码|log\s*in|sign in|sign up|register|phone|verification|qr|account|password|auth)/i;
     const cookiePattern = /(cookie|cookies|隐私|privacy|同意使用|接受全部|accept all)/i;
     const adPattern = /(广告|推广|赞助|下载.?app|打开.?app|advert|sponsor|promotion|install app)/i;
     const captchaPattern = /(验证码|滑块|captcha|验证你是真人|人机验证)/i;
     const paywallPattern = /(付费|会员|订阅|开通|阅读全文|继续阅读|paywall|subscribe|premium)/i;
+    const blockingPaywallPattern = /(?:premium (?:subscribers?|members?) only|subscribers? only|subscribe (?:to|for) (?:continue|read|access|unlock)|(?:continue|sign in) to read|membership required|(?:become|join|upgrade to) (?:a )?(?:premium )?member|unlock (?:the )?(?:full )?(?:article|content)|\bmembers?[- ]only\b|付费后|(?:开通|成为|升级).{0,8}会员|解锁.{0,12}(?:内容|文章|全文|更多)|会员(?:专属|专享|限定|才能|特权)|订阅后|阅读全文|继续阅读)/i;
 
     function visible(element: Element): boolean {
       const rect = element.getBoundingClientRect();
@@ -301,14 +302,28 @@ export async function detectPageObstructions(page: Page): Promise<Array<{
         const hasOverlayEvidence = fixedLike || zIndex >= 10 || modalAttrSemantic || scrollLocked;
         const hasObstructionEvidence = hasOverlayEvidence && (hitRate >= 0.35 || centered || areaRatio >= 0.12 || scrollLocked);
         const type = popupType(value);
-        const explicitModalAttrSemantic = /(dialog|modal|popup|pop|mask|overlay|signin|auth)/i.test(attrs) || element.getAttribute('aria-modal') === 'true' || element.getAttribute('role') === 'dialog';
+        const modalRoleSemantic = element.getAttribute('aria-modal') === 'true' || element.getAttribute('role') === 'dialog';
+        const modalContainerAttrSemantic = /\b(?:dialog|modal|popup|popover|mask|overlay|signin|auth)\b/i.test(attrs);
+        const explicitModalAttrSemantic = modalRoleSemantic || modalContainerAttrSemantic && (fixedLike || zIndex >= 10 || scrollLocked);
         const loginContainerAttrSemantic = /(login|passport)/i.test(attrs);
+        const loginTextSemantic = loginPattern.test(bodyText);
         const strongLoginObstruction = type !== 'login'
           || hasLoginInput
-          || explicitModalAttrSemantic && (centered || hitRate >= 0.25 || areaRatio >= 0.08)
-          || loginContainerAttrSemantic && (fixedLike || zIndex >= 10) && centered && areaRatio >= 0.04
-          || scrollLocked && (centered || areaRatio >= 0.12)
-          || fixedLike && centered && areaRatio >= 0.08;
+          || loginTextSemantic && (
+            explicitModalAttrSemantic && (centered || hitRate >= 0.25 || areaRatio >= 0.08)
+            || loginContainerAttrSemantic && (fixedLike || zIndex >= 10) && centered && areaRatio >= 0.04
+            || scrollLocked && (centered || areaRatio >= 0.12)
+            || fixedLike && hitRate >= 0.35 && centered && areaRatio >= 0.08
+          );
+
+        const paywallAttrSemantic = /\b(?:paywall|subscriber[-_ ]?only|premium[-_ ]?content|member[-_ ]?only)\b/i.test(attrs);
+        const dismissiblePaywallOverlay = (fixedLike || scrollLocked || explicitModalAttrSemantic)
+          && Boolean(findCloseButton(element))
+          && (centered || hitRate >= 0.35 || areaRatio >= 0.08);
+        const strongPaywallObstruction = type !== 'paywall'
+          || paywallAttrSemantic
+          || dismissiblePaywallOverlay
+          || blockingPaywallPattern.test(bodyText) && (centered || areaRatio >= 0.08);
         let confidence = 0;
         const reasons: string[] = [];
         if (fixedLike) {
@@ -345,6 +360,7 @@ export async function detectPageObstructions(page: Page): Promise<Array<{
         }
         if (!hasObstructionEvidence) confidence = 0;
         if (!strongLoginObstruction) confidence = 0;
+        if (!strongPaywallObstruction) confidence = 0;
         return { element, rect, confidence, reasons, value, type, areaRatio };
       })
       .filter((item) => item.confidence >= 0.52)

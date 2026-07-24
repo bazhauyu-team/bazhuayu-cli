@@ -63,6 +63,17 @@ interface ProtectedSourceBundle {
   dictionarySource: string;
 }
 
+interface ProtectedSourceCache {
+  baseUrl: string;
+  credentialType: AuthCredential['type'];
+  credentialValue: string;
+  expiresAt: number;
+  promise: Promise<ProtectedSourceBundle>;
+}
+
+const PROTECTED_SOURCE_CACHE_TTL_MS = 5 * 60_000;
+let protectedSourceCache: ProtectedSourceCache | undefined;
+
 export async function runProtectedSmartDetection(page: Page, options: { baseUrl?: string } = {}): Promise<SmartRawResult> {
   const bundle = await loadProtectedSmartSources(options.baseUrl);
   return runProtectedSmartInPage(page, bundle);
@@ -73,12 +84,40 @@ async function loadProtectedSmartSources(baseUrl?: string): Promise<ProtectedSou
   if (!auth.authenticated || !auth.credential) {
     throw new Error('Protected Smart requires authenticated CLI credentials.');
   }
+  const normalizedBaseUrl = baseUrl ?? '';
+  const now = Date.now();
+  const cached = protectedSourceCache;
+  if (cached
+    && cached.baseUrl === normalizedBaseUrl
+    && cached.credentialType === auth.credential.type
+    && cached.credentialValue === auth.credential.value
+    && cached.expiresAt > now) {
+    return cached.promise;
+  }
+
+  const promise = fetchProtectedSmartSources(auth.credential, baseUrl);
+  protectedSourceCache = {
+    baseUrl: normalizedBaseUrl,
+    credentialType: auth.credential.type,
+    credentialValue: auth.credential.value,
+    expiresAt: now + PROTECTED_SOURCE_CACHE_TTL_MS,
+    promise
+  };
+  try {
+    return await promise;
+  } catch (error) {
+    if (protectedSourceCache?.promise === promise) protectedSourceCache = undefined;
+    throw error;
+  }
+}
+
+async function fetchProtectedSmartSources(auth: AuthCredential, baseUrl?: string): Promise<ProtectedSourceBundle> {
   const protect = loadProtectModule();
   const verified = createVerifiedCode(protect);
-  const encryptedServerKey = encryptServerKey(protect, verified, await fetchClientServerKey({ auth: auth.credential, baseUrl }));
+  const encryptedServerKey = encryptServerKey(protect, verified, await fetchClientServerKey({ auth, baseUrl }));
   const [orz, odc] = await Promise.all([
-    fetchClientSource({ auth: auth.credential as AuthCredential, baseUrl, serverKey: encryptedServerKey, sourceFileName: ORZ_RESOURCE_NAME }),
-    fetchClientSource({ auth: auth.credential as AuthCredential, baseUrl, serverKey: encryptedServerKey, sourceFileName: ODC_RESOURCE_NAME })
+    fetchClientSource({ auth, baseUrl, serverKey: encryptedServerKey, sourceFileName: ORZ_RESOURCE_NAME }),
+    fetchClientSource({ auth, baseUrl, serverKey: encryptedServerKey, sourceFileName: ODC_RESOURCE_NAME })
   ]);
   return {
     smartProxySource: decryptClientSource(protect, verified, orz.encryptedContent),

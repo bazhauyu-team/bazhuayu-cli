@@ -1,13 +1,16 @@
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import prompts from 'prompts';
 import { firstPositionalArg, hasFlag, parsePositiveInt, valueAfter } from '../../cli/args.js';
 import { printEnvelope, printUsageError } from '../../cli/output.js';
 import { createChromeProgressReporter } from '../../runtime/chrome-progress.js';
 import { buildAgentContext, recommendedCandidate } from '../../runtime/detector/agent-context.js';
 import { buildTaskFromApiListCandidate } from '../../runtime/detector/api-list-detector.js';
-import { DetectionLoginRequiredError, detectPage } from '../../runtime/detector/page-detector.js';
+import { DetectionLoginRequiredError, DetectionPageAccessError, detectPage } from '../../runtime/detector/page-detector.js';
+import { terminateActiveDetectorBrowserProcesses } from '../../runtime/detector/page-detector-host.js';
 import type { PageDetectionResult } from '../../runtime/detector/types.js';
 import { buildTaskFromCandidate } from '../../runtime/detector/xml.js';
 import { LINUX_ARM64_UNSUPPORTED_CODE, LINUX_ARM64_UNSUPPORTED_MESSAGE, isLocalChromeRuntimeSupported } from '../../runtime/platform-support.js';
@@ -28,6 +31,7 @@ import { applyAgentPlanCommand, previewAgentPlanCommand } from './agent-plan-com
 import { runInlineAgentDetect } from './agent-runner.js';
 import { detailModeLabel, printDetectHuman } from './format.js';
 import { persistGeneratedTask } from './persist.js';
+import { normalizeDetectUrl } from './url.js';
 
 export async function detectCommand(args: string[]): Promise<number> {
   const commandStartedAtMs = Date.now();
@@ -81,6 +85,17 @@ export async function detectCommand(args: string[]): Promise<number> {
       'USAGE_ERROR'
     );
   }
+  let normalizedUrl: string;
+  try {
+    normalizedUrl = normalizeDetectUrl(url);
+  } catch (error) {
+    return printUsageError(
+      json,
+      error instanceof Error ? error.message : String(error),
+      '示例: octopus detect https://example.com/list --auto',
+      'DETECT_URL_INVALID'
+    );
+  }
   if (!isLocalChromeRuntimeSupported()) {
     return printUsageError(json, LINUX_ARM64_UNSUPPORTED_MESSAGE, undefined, LINUX_ARM64_UNSUPPORTED_CODE);
   }
@@ -119,7 +134,7 @@ export async function detectCommand(args: string[]): Promise<number> {
   }
   try {
     const pageDetectionStartedAtMs = Date.now();
-    const result = await runPageDetection(args, url, json, quiet);
+    const result = await runDetectionWithTransientRetry(() => runPageDetection(args, normalizedUrl, json, quiet));
     const pageDetectionMs = Date.now() - pageDetectionStartedAtMs;
     const timings = { commandStartedAtMs, pageDetectionMs };
 
@@ -146,17 +161,134 @@ export async function detectCommand(args: string[]): Promise<number> {
       ? error.code
       : error instanceof DetectionLoginRequiredError
         ? 'LOGIN_SESSION_REQUIRED'
-        : 'DETECT_FAILED';
+        : error instanceof DetectionPageAccessError
+          ? error.code
+          : 'DETECT_FAILED';
     if (json) printEnvelope(
       false,
       undefined,
       code,
       message,
-      error instanceof UserBrowserError ? error.details : undefined
+      error instanceof UserBrowserError || error instanceof DetectionPageAccessError ? error.details : undefined
     );
     else console.error(`检测失败: ${message}`);
     return EXIT_RUNTIME_FAILED;
   }
+}
+
+async function runDetectionWithTransientRetry<T>(run: () => Promise<T>, retryDelayMs = 250): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!isTransientDetectionBrowserError(error)) throw error;
+    if (retryDelayMs > 0) await delay(retryDelayMs);
+    return run();
+  }
+}
+
+function isTransientDetectionBrowserError(error: unknown): boolean {
+  if (
+    error instanceof UserBrowserError
+    || error instanceof DetectionLoginRequiredError
+    || error instanceof DetectionPageAccessError
+  ) return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /(?:detached Frame|frame was detached|Execution context was destroyed|Cannot find context with specified id|Target closed|Session closed)/i.test(message);
+}
+
+export function runDetectionWithTransientRetryForTesting<T>(run: () => Promise<T>): Promise<T> {
+  return runDetectionWithTransientRetry(run, 0);
+}
+
+function missingSelectionFailure(
+  args: string[],
+  result: Pick<PageDetectionResult, 'candidates' | 'searchPlan'>
+): { code: string; message: string; hint?: string } {
+  if (hasFlag(args, '--interactive') || hasFlag(args, '--manual')) {
+    return {
+      code: 'DETECT_SELECT_REQUIRED',
+      message: '没有选中采集对象：请在浏览器里点击一个高亮数据组后继续。'
+    };
+  }
+  if (hasFlag(args, '--auto')) {
+    if (result.searchPlan || result.candidates.some((candidate) => candidate.type === 'form')) {
+      return {
+        code: 'DETECT_INPUT_REQUIRED',
+        message: '当前页面只有搜索/输入入口，尚无可采集结果；请传 --input name=value 后再运行，或直接提供结果页 URL。',
+        hint: '示例: octopus detect https://example.com --auto --input q=keyword'
+      };
+    }
+    return {
+      code: 'DETECT_NO_EXTRACTABLE_DATA',
+      message: '自动识别未找到可生成任务的数据区；请提供包含实际记录的页面 URL，或使用 --manual 选择目标。'
+    };
+  }
+  return {
+    code: 'DETECT_SELECT_REQUIRED',
+    message: '生成任务文件需要 --select candidateId 或 --auto。',
+    hint: '示例: octopus detect https://example.com --manual'
+  };
+}
+
+export const missingSelectionFailureForTesting = missingSelectionFailure;
+
+function descendantProcessIds(psOutput: string, rootPid: number): number[] {
+  const childrenByParent = new Map<number, number[]>();
+  for (const line of psOutput.split(/\r?\n/)) {
+    const match = line.trim().match(/^(\d+)\s+(\d+)$/);
+    if (!match) continue;
+    const pid = Number(match[1]);
+    const parentPid = Number(match[2]);
+    const children = childrenByParent.get(parentPid) ?? [];
+    children.push(pid);
+    childrenByParent.set(parentPid, children);
+  }
+  const descendants: number[] = [];
+  const pending = [...(childrenByParent.get(rootPid) ?? [])];
+  while (pending.length) {
+    const pid = pending.pop()!;
+    descendants.push(pid);
+    pending.push(...(childrenByParent.get(pid) ?? []));
+  }
+  return descendants;
+}
+
+export const descendantProcessIdsForTesting = descendantProcessIds;
+
+function terminateDetectorProcessResources(): void {
+  terminateActiveDetectorBrowserProcesses();
+  if (process.platform !== 'linux') return;
+  let psOutput: string;
+  try {
+    psOutput = execFileSync('ps', ['-eo', 'pid=,ppid='], { encoding: 'utf8' });
+  } catch {
+    return;
+  }
+  const descendants = descendantProcessIds(psOutput, process.pid);
+  for (let index = descendants.length - 1; index >= 0; index -= 1) {
+    try {
+      process.kill(descendants[index], 'SIGKILL');
+    } catch {
+      // The descendant may have exited while the process tree was collected.
+    }
+  }
+}
+
+function installDetectorSignalCleanup(): () => void {
+  const onSigint = () => {
+    terminateDetectorProcessResources();
+    process.exit(130);
+  };
+  const onSigterm = () => {
+    terminateDetectorProcessResources();
+    process.exit(143);
+  };
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
+  return () => {
+    process.removeListener('SIGINT', onSigint);
+    process.removeListener('SIGTERM', onSigterm);
+  };
 }
 
 async function runPageDetection(args: string[], url: string, json: boolean, quiet: boolean): Promise<PageDetectionResult> {
@@ -174,31 +306,36 @@ async function runPageDetection(args: string[], url: string, json: boolean, quie
     enabled: !json && !quiet && !valueAfter(args, '--chrome-path') && browser.browserMode !== 'user',
     write: (message) => originalStderrWrite(message)
   });
-  return detectPage({
-    url,
-    input: parseDetectInput(args),
-    submit: valueAfter(args, '--submit'),
-    goal: valueAfter(args, '--goal'),
-    chromePath: valueAfter(args, '--chrome-path'),
-    browserMode: browser.browserMode,
-    browserId: browser.browserId,
-    browserProfile: browser.browserProfile,
-    forceCloseBrowser,
-    manual: hasFlag(args, '--manual'),
-    interactive: hasFlag(args, '--interactive') || hasFlag(args, '--manual'),
-    waitMs: parsePositiveInt(valueAfter(args, '--wait-ms'), 1500),
-    scrolls: parsePositiveInt(valueAfter(args, '--scrolls'), 10),
-    timeoutMs: parsePositiveInt(valueAfter(args, '--timeout-ms'), 45_000),
-    maxCandidates: parsePositiveInt(valueAfter(args, '--max-candidates'), 8),
-    llmRank: hasFlag(args, '--llm-rank'),
-    legacyDetector: hasFlag(args, '--legacy-detector') || process.env.OCTOPUS_LEGACY_DETECTOR === '1',
-    apiBaseUrl: valueAfter(args, '--api-base-url'),
-    dismissPopups: !hasFlag(args, '--no-dismiss-popups'),
-    saveSession: hasFlag(args, '--save-session'),
-    sessionName: valueAfter(args, '--session-name'),
-    agentScreenshotPath,
-    onChromeStatus: chromeProgress?.onStatus
-  });
+  const removeSignalCleanup = installDetectorSignalCleanup();
+  try {
+    return await detectPage({
+      url,
+      input: parseDetectInput(args),
+      submit: valueAfter(args, '--submit'),
+      goal: valueAfter(args, '--goal'),
+      chromePath: valueAfter(args, '--chrome-path'),
+      browserMode: browser.browserMode,
+      browserId: browser.browserId,
+      browserProfile: browser.browserProfile,
+      forceCloseBrowser,
+      manual: hasFlag(args, '--manual'),
+      interactive: hasFlag(args, '--interactive') || hasFlag(args, '--manual'),
+      waitMs: parsePositiveInt(valueAfter(args, '--wait-ms'), 1500),
+      scrolls: parsePositiveInt(valueAfter(args, '--scrolls'), 10),
+      timeoutMs: parsePositiveInt(valueAfter(args, '--timeout-ms'), 45_000),
+      maxCandidates: parsePositiveInt(valueAfter(args, '--max-candidates'), 8),
+      llmRank: hasFlag(args, '--llm-rank'),
+      legacyDetector: hasFlag(args, '--legacy-detector') || process.env.OCTOPUS_LEGACY_DETECTOR === '1',
+      apiBaseUrl: valueAfter(args, '--api-base-url'),
+      dismissPopups: !hasFlag(args, '--no-dismiss-popups'),
+      saveSession: hasFlag(args, '--save-session'),
+      sessionName: valueAfter(args, '--session-name'),
+      agentScreenshotPath,
+      onChromeStatus: chromeProgress?.onStatus
+    });
+  } finally {
+    removeSignalCleanup();
+  }
 }
 
 async function handleDirectDetectResult(options: {
@@ -237,10 +374,8 @@ async function generateDirectTask(options: {
 }): Promise<number> {
   const { args, result, selectedId, outputFile, json, quiet, timings } = options;
   if (!selectedId) {
-    const message = hasFlag(args, '--interactive') || hasFlag(args, '--manual')
-      ? '没有选中采集对象：请在浏览器里点击一个高亮数据组后继续。'
-      : '生成任务文件需要 --select candidateId 或 --auto。';
-    return printUsageError(json, message, '示例: octopus detect https://example.com --manual', 'DETECT_SELECT_REQUIRED');
+    const failure = missingSelectionFailure(args, result);
+    return printUsageError(json, failure.message, failure.hint, failure.code);
   }
   const apiCandidate = result.apiCandidates?.find((item) => item.id === selectedId);
   if (apiCandidate) {
@@ -330,7 +465,9 @@ function seconds(ms: number): number {
 }
 
 function recommendedApiCandidate(result: PageDetectionResult) {
-  const api = [...(result.apiCandidates ?? [])].sort((a, b) => b.confidence - a.confidence)[0];
+  const api = [...(result.apiCandidates ?? [])]
+    .filter((candidate) => candidate.replayability === 'context_free')
+    .sort((a, b) => b.confidence - a.confidence)[0];
   const dom = recommendedCandidate(result.candidates);
   if (!api) return undefined;
   if (!dom) return api;

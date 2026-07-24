@@ -300,8 +300,8 @@ function loopActionXml(candidate: DetectedCandidate, fields: DetectedField[], lo
     IsRandomWait: 'false',
     PageIndex: '0',
     Url: '',
-    ScrollDown: 'true',
-    ScrollTime: '3',
+    ScrollDown: 'false',
+    ScrollTime: '0',
     ScrollInterval: '1',
     ScrollIntervalUnit: 'Second',
     ScrollScope: '0',
@@ -835,44 +835,68 @@ function popupDismissalActionXml(items: DetectedPopupDismissal[]): string[] {
   return items
     .filter((item) => item.action === 'click' && item.xpath && item.type !== 'captcha' && (item.type !== 'paywall' || item.confirmedByUser))
     .slice(0, 2)
-    .map((item, index) => `<ns0:ClickAction ${attrs({
-      'x:Name': `DismissPopup${index + 1}`,
-      Name: '',
-      WaitSeconds: '1',
-      Caption: `Dismiss ${item.type} popup`,
-      WaitItem: '',
-      UseLoopItem: 'false',
-      LoopItem: '',
-      Description: '',
-      IsRandomWait: 'false',
-      PageIndex: '-1',
-      ElementXPath: actionItemXml(item.xpath || ''),
-      AjaxLoad: 'true',
-      TimeOut: '00:00:10',
-      AjaxTimeout: '2',
-      ScrollDown: 'false',
-      ScrollTime: '0',
-      ScrollInterval: '1',
-      ScrollIntervalUnit: 'Second',
-      ScrollType: '0',
-      ScrollScope: '0',
-      ScrollXPath: '',
-      IfStopScroll: 'true',
-      MaxRetry: '1',
-      EnableRetry: 'false',
-      EnableSwitchIp: 'false',
-      EnableSwitchUserAgent: 'false',
-      AutoRetry: 'false',
-      TextContain: '',
-      UrlContain: '',
-      TextNotContain: '',
-      OpenInNewWindow: 'false',
-      OpenByHref: 'false',
-      TimeInterval: '1',
-      LocateAnchor: 'false',
-      AnchorId: '',
-      IPType: '1'
-    })}><ns0:ClickAction.RetryConditions><x:Array Type="{x:Type p7:RetryCondition}" xmlns:p7="clr-namespace:Octopus.ActionInterface.WebSiteInterface;Assembly=Octopus.ActionInterface, Version=7.4.2.11231, Culture=neutral, PublicKeyToken=null" /></ns0:ClickAction.RetryConditions></ns0:ClickAction>`);
+    .map((item, index) => {
+      const actionIndex = index + 1;
+      const elementXPath = actionItemXml(item.xpath || '');
+      const clickAction = `<ns0:ClickAction ${attrs({
+        'x:Name': `DismissPopup${actionIndex}`,
+        Name: '',
+        WaitSeconds: '1',
+        Caption: `Dismiss ${item.type} popup`,
+        WaitItem: '',
+        UseLoopItem: 'false',
+        LoopItem: '',
+        Description: '',
+        IsRandomWait: 'false',
+        PageIndex: '0',
+        ElementXPath: elementXPath,
+        AjaxLoad: 'true',
+        TimeOut: '00:00:10',
+        AjaxTimeout: '2',
+        ScrollDown: 'false',
+        ScrollTime: '0',
+        ScrollInterval: '1',
+        ScrollIntervalUnit: 'Second',
+        ScrollType: '0',
+        ScrollScope: '0',
+        ScrollXPath: '',
+        IfStopScroll: 'true',
+        MaxRetry: '1',
+        EnableRetry: 'false',
+        EnableSwitchIp: 'false',
+        EnableSwitchUserAgent: 'false',
+        AutoRetry: 'false',
+        TextContain: '',
+        UrlContain: '',
+        TextNotContain: '',
+        OpenInNewWindow: 'false',
+        OpenByHref: 'false',
+        TimeInterval: '1',
+        LocateAnchor: 'false',
+        AnchorId: '',
+        IPType: '1'
+      })}><ns0:ClickAction.RetryConditions><x:Array Type="{x:Type p7:RetryCondition}" xmlns:p7="clr-namespace:Octopus.ActionInterface.WebSiteInterface;Assembly=Octopus.ActionInterface, Version=7.4.2.11231, Culture=neutral, PublicKeyToken=null" /></ns0:ClickAction.RetryConditions></ns0:ClickAction>`;
+      const conditionAttrs = {
+        Name: '',
+        WaitSeconds: '0',
+        Caption: `Dismiss ${item.type} popup if present`,
+        WaitItem: '',
+        UseLoopItem: 'false',
+        LoopItem: '',
+        Description: '',
+        IsRandomWait: 'false',
+        PageIndex: '0'
+      };
+      return `<ns0:ConditionAction ${attrs({
+        'x:Name': `DismissPopupCondition${actionIndex}`,
+        ...conditionAttrs
+      })}><ns0:BranchAction ${attrs({
+        'x:Name': `DismissPopupWhenPresent${actionIndex}`,
+        ...conditionAttrs,
+        CheckType: 'ContainItem',
+        CheckValue: elementXPath
+      })}>${clickAction}</ns0:BranchAction></ns0:ConditionAction>`;
+    });
 }
 
 function extractActionXml(fields: DetectedField[], options: {

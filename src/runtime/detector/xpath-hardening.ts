@@ -161,15 +161,20 @@ function inferredItemXPathScore(item: { xpath: string; support: number; siblingS
 export function hardenRuntimeItemXPath(itemXPath: string, fields: DetectedField[] = []): string | undefined {
   const trimmed = itemXPath.trim();
   if (!trimmed) return undefined;
+  const carouselScoped = scopeGenericCarouselItemXPath(trimmed, fields);
+  if (carouselScoped) return carouselScoped;
   if (!isBrittleAbsoluteXPath(trimmed)) return undefined;
-
   const trailingItemMatch = trimmed.match(/\/((article|li|tr)(?:\[[^\]]+\])?)$/i);
   if (trailingItemMatch) {
     const trailingItem = trailingItemMatch[1];
     const containerXPath = stableSemanticContainerXPath(trimmed, trailingItemMatch[2]);
     if (containerXPath) return `${containerXPath}//${trailingItem}`;
     const withoutMount = stripVolatileMountIds(trimmed);
-    return withoutMount !== trimmed ? withoutMount : `//${trailingItem}`;
+    if (withoutMount !== trimmed) return withoutMount;
+    const broadItem = `//${trailingItem}`;
+    return /^(?:article|li|tr)$/i.test(trailingItem)
+      ? scopeItemXPathByField(broadItem, fields) ?? broadItem
+      : broadItem;
   }
 
   for (const field of fields) {
@@ -184,6 +189,39 @@ export function hardenRuntimeItemXPath(itemXPath: string, fields: DetectedField[
   if (withoutMount && withoutMount !== trimmed) return withoutMount;
 
   return undefined;
+}
+
+function scopeGenericCarouselItemXPath(itemXPath: string, fields: DetectedField[]): string | undefined {
+  if (!/(?:swiper-slide|slick-slide|owl-item|carousel-item)/i.test(itemXPath)) return undefined;
+  return scopeItemXPathByField(itemXPath, fields);
+}
+
+function scopeItemXPathByField(itemXPath: string, fields: DetectedField[]): string | undefined {
+  const predicates = fields
+    .map((field) => ({ field, predicate: fieldPresencePredicate(field, itemXPath) }))
+    .filter((entry): entry is { field: DetectedField; predicate: string } => Boolean(entry.predicate))
+    .sort((a, b) => fieldPresenceScore(b.field, b.predicate) - fieldPresenceScore(a.field, a.predicate));
+  const predicate = predicates[0]?.predicate;
+  if (!predicate || itemXPath.includes(predicate)) return undefined;
+  return `${itemXPath}[${predicate}]`;
+}
+
+function fieldPresencePredicate(field: DetectedField, itemXPath: string): string | undefined {
+  const relative = (field.relativeXPath || relativeXPathFromBase(itemXPath, field.xpath)).trim();
+  if (!relative || relative === '.' || relative.includes('|') || /(?:following|preceding)-sibling::/i.test(relative)) return undefined;
+  if (/^\/descendant-or-self::/i.test(relative)) return relative.slice(1);
+  if (/^descendant-or-self::/i.test(relative)) return relative;
+  if (/^\.\/\//.test(relative)) return `descendant::${relative.slice(3)}`;
+  if (/^\/\//.test(relative)) return `descendant::${relative.slice(2)}`;
+  return undefined;
+}
+
+function fieldPresenceScore(field: DetectedField, predicate: string): number {
+  const populatedSamples = field.samples.filter((sample) => String(sample ?? '').trim()).length;
+  const kindScore = field.kind === 'href' ? 50 : field.kind === 'text' ? 30 : field.kind === 'src' ? 10 : 0;
+  const semanticScore = /contains\(@class|@(?:itemprop|data-)/i.test(predicate) ? 60 : 0;
+  const genericLinkPenalty = /^descendant(?:-or-self)?::a(?:\[1\])?$/i.test(predicate) ? 20 : 0;
+  return populatedSamples * 10 + kindScore + semanticScore - genericLinkPenalty - Math.min(predicate.length, 300) / 1_000;
 }
 
 export function hardenRuntimeField(field: DetectedField, itemXPath: string): DetectedField {
@@ -275,6 +313,7 @@ function stableContainerXPathFromItemXPath(itemXPath: string): string | undefine
 export function isBrittleAbsoluteXPath(xpath: string): boolean {
   if (!xpath) return false;
   if (hasVolatileMountRoot(xpath)) return true;
+  if (hasVolatileGeneratedId(xpath)) return true;
   const depth = (xpath.match(/\//g) || []).length;
   if (depth >= 12 && /\[\d+\]/.test(xpath)) return true;
   return false;
@@ -284,6 +323,20 @@ function hasVolatileMountRoot(xpath: string): boolean {
   return /@id=["']mount_0_0_[^"']+["']/i.test(xpath)
     || /@id=["'][^"']*(?:react-root|mount)[^"']*["']/i.test(xpath);
 }
+function hasVolatileGeneratedId(xpath: string): boolean {
+  const matches = xpath.matchAll(/@id=["']([^"']+)["']/gi);
+  for (const match of matches) {
+    if (isVolatileGeneratedIdValue(match[1])) return true;
+  }
+  return false;
+}
+
+function isVolatileGeneratedIdValue(value: string): boolean {
+  if (value.length < 64) return false;
+  const digitGroups = value.match(/\d+/g)?.length ?? 0;
+  return digitGroups >= 6 || /[\[\]@]/.test(value);
+}
+
 
 export function isBrittleClassSoupRelativeXPath(xpath: string): boolean {
   if (!xpath) return false;
@@ -299,6 +352,9 @@ export function stripVolatileMountIds(xpath: string): string {
     .replace(/\/div\[@id=["']mount_0_0_[^"']+["']\]/gi, '/div')
     .replace(/\/\/(?:div|main)\[@id=["'](?:react-root|app|root)["']\]/gi, (value) => (
       value.startsWith('//main') ? '//main' : '//div'
+    ))
+    .replace(/([A-Za-z][\w:-]*)\[@id=(["'])([^"']+)\2\]/g, (value, tag: string, _quote: string, id: string) => (
+      isVolatileGeneratedIdValue(id) ? tag : value
     ));
 }
 
