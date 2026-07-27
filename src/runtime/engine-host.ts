@@ -14,7 +14,8 @@
  * disable enforcement mechanisms, replicate restricted runtime behavior, or run
  * proprietary runtime components without authorization.
  */
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
+import type { ChildProcess } from 'node:child_process';
 import { createRequire } from 'node:module';
 import type { CaptchaRequest, RunOptions, RunSummary, TaskDefinition } from '../types.js';
 import { BridgeHub } from './bridge-hub.js';
@@ -58,6 +59,7 @@ export interface WorkflowAgentLike {
   close(): void;
   capthcaToken(payload: Record<string, unknown>): void;
   sendProxy(payload: unknown): void;
+  chromeProcess?: { process?: ChildProcess };
 }
 
 export type WorkflowAgentConstructor = new (options: Record<string, unknown>) => WorkflowAgentLike;
@@ -73,7 +75,7 @@ export interface EngineModuleLike {
 export interface BridgeHubLike extends EventEmitter {
   createSessionBridge(runId: string): Promise<unknown>;
   waitForSessionConnected(runId: string, timeoutMs: number): Promise<void>;
-  close(): void;
+  close(): Promise<void> | void;
 }
 
 export type BridgeHubFactory = () => BridgeHubLike;
@@ -177,6 +179,8 @@ export class EngineHost extends EventEmitter {
   private bridgeHub: BridgeHubLike | null = null;
   private virtualDisplay: VirtualDisplayHandle | null = null;
   private bootstrapPage: BootstrapPageServer | null = null;
+  private browserProcess: ChildProcess | null = null;
+  private browserMode: RunOptions['browserMode'] | null = null;
 
   constructor(
     private readonly engineModule: EngineModuleLike = defaultEngineModule,
@@ -198,6 +202,7 @@ export class EngineHost extends EventEmitter {
     const runtimeTaskName = safeTaskName(task.taskName || task.taskId);
     this.emit('run.started', { runId, lotId, taskId: task.taskId, taskName: runtimeTaskName });
 
+    this.browserMode = options.browserMode;
     this.bridgeHub = this.bridgeHubFactory();
     // User browser mode needs a real desktop session and the user's Chrome/Edge profile.
     // Independent mode may still use Xvfb on headless Linux servers.
@@ -367,6 +372,7 @@ export class EngineHost extends EventEmitter {
           }
         : {})
     });
+    this.browserProcess = workflow.chromeProcess?.process ?? null;
 
     void this.bridgeHub.waitForSessionConnected(runId, options.extensionTimeoutMs)
       .then(() => {
@@ -401,15 +407,22 @@ export class EngineHost extends EventEmitter {
   }
 
   async close(): Promise<void> {
-    // browser-runtime owns ChromeProcess lifecycle inside WorkflowAgent.close().
+    const browserProcess = this.browserProcess;
+    const browserMode = this.browserMode;
+    // browser-runtime starts cleanup asynchronously; retain the child handle so
+    // independent Chrome cannot keep the CLI alive if its graceful close stalls.
     this.workflow?.close();
-    this.bridgeHub?.close();
+    await this.bridgeHub?.close();
     await this.bootstrapPage?.close().catch(() => undefined);
     await this.virtualDisplay?.close();
+    if (browserMode === 'user') browserProcess?.unref();
+    else await terminateWorkflowBrowserProcess(browserProcess);
     this.workflow = null;
     this.bridgeHub = null;
     this.bootstrapPage = null;
     this.virtualDisplay = null;
+    this.browserProcess = null;
+    this.browserMode = null;
   }
 
   private emitUserBrowserLogs(runId: string, userBrowser: UserBrowserLaunchPlan): void {
@@ -822,4 +835,31 @@ function mergePlain<T extends Record<string, unknown>>(base: T, patch: unknown):
     }
   }
   return base;
+}
+
+async function terminateWorkflowBrowserProcess(child: ChildProcess | null): Promise<void> {
+  if (!child || await waitForWorkflowBrowserExit(child, 250)) return;
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    // Continue to the hard-kill fallback.
+  }
+  if (await waitForWorkflowBrowserExit(child, 750)) return;
+  try {
+    child.kill('SIGKILL');
+  } catch {
+    // The process may have exited between checks.
+  }
+  if (!await waitForWorkflowBrowserExit(child, 500)) child.unref();
+}
+
+async function waitForWorkflowBrowserExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+  if (child.exitCode !== null || child.signalCode !== null) return true;
+  try {
+    await once(child, 'exit', { signal: AbortSignal.timeout(timeoutMs) });
+    return true;
+  } catch (error) {
+    if ((error as Error).name === 'AbortError') return false;
+    throw error;
+  }
 }

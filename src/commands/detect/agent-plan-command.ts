@@ -12,7 +12,7 @@ import { defaultDetectedTaskName, resolveAvailableDetectedTaskFile } from './arg
 
 export async function applyAgentPlanCommand(args: string[], json: boolean, quiet: boolean): Promise<number> {
   const planFile = valueAfter(args, '--apply-agent-plan');
-  if (!planFile) return printUsageError(json, '缺少 Agent plan 文件。', '用法: octopus detect --apply-agent-plan plan.json --agent-context context.json --output task.json', 'USAGE_ERROR');
+  if (!planFile) return printUsageError(json, '缺少 Agent plan 文件。', '用法: bazhuayu detect --apply-agent-plan plan.json --agent-context context.json --output task.json', 'USAGE_ERROR');
   try {
     const planPath = resolve(planFile);
     const plan = JSON.parse(await readFile(planPath, 'utf8')) as AgentPlan;
@@ -39,8 +39,8 @@ export async function applyAgentPlanCommand(args: string[], json: boolean, quiet
     else if (!quiet) {
       console.log(`Generated task: ${file}`);
       console.log(`Agent plan: ${planPath}`);
-      console.log(`Validate: octopus task validate ${taskId} --task-file ${file}`);
-      console.log(`Run: octopus run ${taskId} --task-file ${file}`);
+      console.log(`Validate: bazhuayu task validate ${taskId} --task-file ${file}`);
+      console.log(`Run: bazhuayu run ${taskId} --task-file ${file}`);
     }
     return EXIT_OK;
   } catch (error) {
@@ -57,7 +57,7 @@ function hasApiListTask(task: unknown): boolean {
 
 export async function previewAgentPlanCommand(args: string[], json: boolean, quiet: boolean): Promise<number> {
   const planFile = valueAfter(args, '--preview-agent-plan');
-  if (!planFile) return printUsageError(json, '缺少 Agent plan 文件。', '用法: octopus detect --preview-agent-plan plan.json --agent-context context.json --json', 'USAGE_ERROR');
+  if (!planFile) return printUsageError(json, '缺少 Agent plan 文件。', '用法: bazhuayu detect --preview-agent-plan plan.json --agent-context context.json --json', 'USAGE_ERROR');
   try {
     const planPath = resolve(planFile);
     const plan = JSON.parse(await readFile(planPath, 'utf8')) as AgentPlan;

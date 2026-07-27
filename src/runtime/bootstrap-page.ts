@@ -1,3 +1,4 @@
+import { once } from 'node:events';
 import { createServer, type Server } from 'node:http';
 
 export type BootstrapPageMode = 'run' | 'detect';
@@ -82,12 +83,12 @@ function listenLoopback(server: Server): Promise<void> {
   });
 }
 
-function closeServer(server: Server): Promise<void> {
-  return new Promise((resolve) => {
-    server.close(() => resolve());
-    // Force-resolve if already closed / no connections.
-    setTimeout(resolve, 250).unref?.();
-  });
+async function closeServer(server: Server): Promise<void> {
+  if (!server.listening) return;
+  const closed = once(server, 'close');
+  server.close();
+  server.closeAllConnections();
+  await closed;
 }
 
 function escapeHtml(value: string): string {

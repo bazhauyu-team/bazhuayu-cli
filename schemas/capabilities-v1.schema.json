@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://octopus.local/schemas/capabilities-v1.schema.json",
   "title": "Octopus Capabilities Response v1",
-  "description": "Full response shape for octopus capabilities --json.",
+  "description": "Full response shape for bazhuayu capabilities --json.",
   "type": "object",
   "required": ["ok", "data"],
   "properties": {
@@ -25,14 +25,14 @@
         "env"
       ],
       "properties": {
-        "name": { "const": "octopus" },
+        "name": { "const": "bazhuayu" },
         "packageName": { "const": "bazhuayu-cli" },
-        "primaryBinary": { "const": "octopus" },
+        "primaryBinary": { "const": "bazhuayu" },
         "invocation": {
           "type": "object",
           "required": ["installed", "npmExec", "note"],
           "properties": {
-            "installed": { "const": "octopus" },
+            "installed": { "const": "bazhuayu" },
             "npmExec": { "const": "npx bazhuayu-cli" },
             "note": { "type": "string" }
           },
@@ -97,7 +97,7 @@
               "type": "object",
               "required": ["firstCommand", "packageFirstCommand", "rule", "acceptedUserRequestExamples"],
               "properties": {
-                "firstCommand": { "const": "octopus capabilities --json" },
+                "firstCommand": { "const": "bazhuayu capabilities --json" },
                 "packageFirstCommand": { "const": "npx bazhuayu-cli capabilities --json" },
                 "rule": { "type": "string" },
                 "agentInvocationPolicy": {

@@ -16,7 +16,7 @@ export async function persistGeneratedTask(options: {
 
   const auth = await resolveAuth();
   if (!auth.credential) {
-    console.warn('[warn] 任务已保存到本地，但云端同步需要登录。请运行 "octopus auth login"。');
+    console.warn('[warn] 任务已保存到本地，但云端同步需要登录。请运行 "bazhuayu auth login"。');
     return;
   }
 

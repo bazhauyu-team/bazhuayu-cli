@@ -52,7 +52,7 @@ export async function templateCommand(subcommand: string | undefined, args: stri
   return printUsageError(
     json,
     '错误: template 子命令无效',
-    '用法: octopus template <search|view|version> [--json]'
+    '用法: bazhuayu template <search|view|version> [--json]'
   );
 }
 
@@ -64,7 +64,7 @@ export async function templateTaskCommand(subcommand: string | undefined, args: 
   return printUsageError(
     json,
     '错误: template-task 子命令无效',
-    '用法: octopus template-task <create|update> [--json]'
+    '用法: bazhuayu template-task <create|update> [--json]'
   );
 }
 
@@ -108,7 +108,7 @@ async function templateView(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const templateRegistrationId = firstPositionalArg(args, ['--api-base-url']);
   if (!templateRegistrationId) {
-    return printUsageError(json, '错误: 缺少 templateRegistrationId', '用法: octopus template view <templateRegistrationId> [--json]');
+    return printUsageError(json, '错误: 缺少 templateRegistrationId', '用法: bazhuayu template view <templateRegistrationId> [--json]');
   }
 
   const auth = await resolveAuth();
@@ -146,7 +146,7 @@ async function templateVersion(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const templateRegistrationId = firstPositionalArg(args, ['--api-base-url']);
   if (!templateRegistrationId) {
-    return printUsageError(json, '错误: 缺少 templateRegistrationId', '用法: octopus template version <templateRegistrationId> [--json]');
+    return printUsageError(json, '错误: 缺少 templateRegistrationId', '用法: bazhuayu template version <templateRegistrationId> [--json]');
   }
 
   const auth = await resolveAuth();
@@ -183,7 +183,7 @@ async function templateTaskCreate(args: string[]): Promise<number> {
     return printUsageError(
       json,
       '错误: 缺少 templateRegistrationId',
-      '用法: octopus template-task create <templateRegistrationId> [--name <taskName>] [--task-group <groupId>] [--param key=value]... [--params <json>|--params-file <file>] [--dry-run] [--json]'
+      '用法: bazhuayu template-task create <templateRegistrationId> [--name <taskName>] [--task-group <groupId>] [--param key=value]... [--params <json>|--params-file <file>] [--dry-run] [--json]'
     );
   }
 
@@ -232,7 +232,7 @@ async function templateTaskUpdate(args: string[]): Promise<number> {
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      '用法: octopus template-task update <taskId> [--params <json>] --yes [--json]'
+      '用法: bazhuayu template-task update <taskId> [--params <json>] --yes [--json]'
     );
   }
   const guard = requireExplicitYes(args, json, '更新模板任务参数', `taskId=${taskId}`);
@@ -253,7 +253,7 @@ async function templateTaskUpdate(args: string[]): Promise<number> {
       return printUsageError(
         json,
         '错误: 无法确定任务组，请传 --task-group <groupId>',
-        '用法: octopus template-task update <taskId> [--task-group <groupId>] [--params <json>] --yes [--json]'
+        '用法: bazhuayu template-task update <taskId> [--task-group <groupId>] [--params <json>] --yes [--json]'
       );
     }
     const result = await updateTemplateTaskMapping({ auth: auth.credential, baseUrl, taskId, body });
@@ -521,14 +521,14 @@ function buildParameterExample(parameters: InternalTemplateParameter[]): Record<
 function buildTemplateCreateExamples(templateRegistrationId: string, normalized: NormalizedTemplateParameters): Record<string, string> {
   const firstRequired = normalized.parameters.find((parameter) => parameter.required) ?? normalized.parameters[0];
   const simple = firstRequired
-    ? `octopus template-task create ${templateRegistrationId} --param ${firstRequired.name}=${shellExampleValue(firstRequired)} --json`
-    : `octopus template-task create ${templateRegistrationId} --json`;
+    ? `bazhuayu template-task create ${templateRegistrationId} --param ${firstRequired.name}=${shellExampleValue(firstRequired)} --json`
+    : `bazhuayu template-task create ${templateRegistrationId} --json`;
   return {
     simple,
-    file: `octopus template-task create ${templateRegistrationId} --params-file params.json --json`,
+    file: `bazhuayu template-task create ${templateRegistrationId} --params-file params.json --json`,
     dryRun: firstRequired
-      ? `octopus template-task create ${templateRegistrationId} --param ${firstRequired.name}=${shellExampleValue(firstRequired)} --dry-run --json`
-      : `octopus template-task create ${templateRegistrationId} --dry-run --json`
+      ? `bazhuayu template-task create ${templateRegistrationId} --param ${firstRequired.name}=${shellExampleValue(firstRequired)} --dry-run --json`
+      : `bazhuayu template-task create ${templateRegistrationId} --dry-run --json`
   };
 }
 

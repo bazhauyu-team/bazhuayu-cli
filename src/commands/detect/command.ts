@@ -41,7 +41,7 @@ export async function detectCommand(args: string[]): Promise<number> {
     return printUsageError(
       json,
       'detect 已默认为 Agent/LLM 工作流生成全页长截图，不再支持 --screenshot 或 --agent-screenshot。',
-      '用法: octopus detect URL --prepare-agent --json --goal "采集目标" --output context.json',
+      '用法: bazhuayu detect URL --prepare-agent --json --goal "采集目标" --output context.json',
       'USAGE_ERROR'
     );
   }
@@ -81,7 +81,7 @@ export async function detectCommand(args: string[]): Promise<number> {
     return printUsageError(
       json,
       '错误: 缺少 URL',
-      '用法: octopus detect URL --auto|--manual [--goal "列表"] [--output task.json] [--json]',
+      '用法: bazhuayu detect URL --auto|--manual [--goal "列表"] [--output task.json] [--json]',
       'USAGE_ERROR'
     );
   }
@@ -92,7 +92,7 @@ export async function detectCommand(args: string[]): Promise<number> {
     return printUsageError(
       json,
       error instanceof Error ? error.message : String(error),
-      '示例: octopus detect https://example.com/list --auto',
+      '示例: bazhuayu detect https://example.com/list --auto',
       'DETECT_URL_INVALID'
     );
   }
@@ -103,7 +103,7 @@ export async function detectCommand(args: string[]): Promise<number> {
     return printUsageError(
       json,
       'detect 只能选择一种模式：--auto 全自动，--manual 全手动。',
-      '用法: octopus detect URL --auto|--manual [--goal "列表"]',
+      '用法: bazhuayu detect URL --auto|--manual [--goal "列表"]',
       'USAGE_ERROR'
     );
   }
@@ -111,7 +111,7 @@ export async function detectCommand(args: string[]): Promise<number> {
     return printUsageError(
       json,
       '缺少 Agent 命令：请传 --agent-command，或设置 OCTOPUS_AGENT_COMMAND。',
-      '示例: octopus detect URL --agent --agent-command "node make-plan.mjs" --output task.json',
+      '示例: bazhuayu detect URL --agent --agent-command "node make-plan.mjs" --output task.json',
       'USAGE_ERROR'
     );
   }
@@ -119,7 +119,7 @@ export async function detectCommand(args: string[]): Promise<number> {
     return printUsageError(
       json,
       '--run-sample 只支持 detect --agent 工作流。',
-      '示例: octopus detect URL --agent --agent-command "node make-plan.mjs" --run-sample 5 --json',
+      '示例: bazhuayu detect URL --agent --agent-command "node make-plan.mjs" --run-sample 5 --json',
       'USAGE_ERROR'
     );
   }
@@ -128,7 +128,7 @@ export async function detectCommand(args: string[]): Promise<number> {
     return printUsageError(
       json,
       runSampleError,
-      '用法: octopus detect URL --agent --agent-command <cmd> --run-sample <正整数> [--json]',
+      '用法: bazhuayu detect URL --agent --agent-command <cmd> --run-sample <正整数> [--json]',
       'RUN_SAMPLE_INVALID'
     );
   }
@@ -215,7 +215,7 @@ function missingSelectionFailure(
       return {
         code: 'DETECT_INPUT_REQUIRED',
         message: '当前页面只有搜索/输入入口，尚无可采集结果；请传 --input name=value 后再运行，或直接提供结果页 URL。',
-        hint: '示例: octopus detect https://example.com --auto --input q=keyword'
+        hint: '示例: bazhuayu detect https://example.com --auto --input q=keyword'
       };
     }
     return {
@@ -226,7 +226,7 @@ function missingSelectionFailure(
   return {
     code: 'DETECT_SELECT_REQUIRED',
     message: '生成任务文件需要 --select candidateId 或 --auto。',
-    hint: '示例: octopus detect https://example.com --manual'
+    hint: '示例: bazhuayu detect https://example.com --manual'
   };
 }
 
@@ -391,8 +391,8 @@ async function generateDirectTask(options: {
       console.log('');
       console.log(`Generated API task: ${file}`);
       console.log('Mode: api_list (local run only)');
-      console.log(`Validate: octopus task validate ${taskId} --task-file ${file}`);
-      console.log(`Run: octopus run ${taskId} --task-file ${file}`);
+      console.log(`Validate: bazhuayu task validate ${taskId} --task-file ${file}`);
+      console.log(`Run: bazhuayu run ${taskId} --task-file ${file}`);
     }
     return EXIT_OK;
   }
@@ -426,8 +426,8 @@ async function generateDirectTask(options: {
     if (task.detection.detailPlan) {
       console.log(`Detail plan: ${detailModeLabel(task.detection.detailPlan.mode)} (${task.detection.detailPlan.fields.map((field) => field.name).join(', ') || 'no fields'})`);
     }
-    console.log(`Validate: octopus task validate ${taskId} --task-file ${file}`);
-    console.log(`Run: octopus run ${taskId} --task-file ${file}`);
+    console.log(`Validate: bazhuayu task validate ${taskId} --task-file ${file}`);
+    console.log(`Run: bazhuayu run ${taskId} --task-file ${file}`);
   }
   return EXIT_OK;
 }

@@ -17,7 +17,7 @@ export async function taskGroupCommand(subcommand: string | undefined, args: str
   return printUsageError(
     json,
     '错误: task-group 子命令无效',
-    '用法: octopus task-group <list|create|update|delete|set-default> [--json]'
+    '用法: bazhuayu task-group <list|create|update|delete|set-default> [--json]'
   );
 }
 
@@ -52,7 +52,7 @@ async function taskGroupCreate(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const name = valueAfter(args, '--name') ?? firstPositionalArg(args, ['--api-base-url']);
   if (!name) {
-    return printUsageError(json, '错误: 缺少任务组名称', '用法: octopus task-group create <name> [--json]');
+    return printUsageError(json, '错误: 缺少任务组名称', '用法: bazhuayu task-group create <name> [--json]');
   }
 
   const auth = await resolveAuth();
@@ -73,7 +73,7 @@ async function taskGroupUpdate(args: string[]): Promise<number> {
   const groupId = firstPositionalArg(args, ['--api-base-url', '--name']);
   const name = valueAfter(args, '--name');
   if (!groupId || !name) {
-    return printUsageError(json, '错误: 缺少 groupId 或 --name', '用法: octopus task-group update <groupId> --name <name> --yes [--json]');
+    return printUsageError(json, '错误: 缺少 groupId 或 --name', '用法: bazhuayu task-group update <groupId> --name <name> --yes [--json]');
   }
   const guard = requireExplicitYes(args, json, '更新任务组', `groupId=${groupId}`);
   if (guard !== null) return guard;
@@ -95,7 +95,7 @@ async function taskGroupDelete(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const groupId = firstPositionalArg(args, ['--api-base-url']);
   if (!groupId) {
-    return printUsageError(json, '错误: 缺少 groupId', '用法: octopus task-group delete <groupId> --yes [--json]');
+    return printUsageError(json, '错误: 缺少 groupId', '用法: bazhuayu task-group delete <groupId> --yes [--json]');
   }
   const guard = requireExplicitYes(args, json, '删除任务组', `groupId=${groupId}`);
   if (guard !== null) return guard;
@@ -117,7 +117,7 @@ async function taskGroupSetDefault(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const groupId = firstPositionalArg(args, ['--api-base-url']);
   if (!groupId) {
-    return printUsageError(json, '错误: 缺少 groupId', '用法: octopus task-group set-default <groupId> --yes [--json]');
+    return printUsageError(json, '错误: 缺少 groupId', '用法: bazhuayu task-group set-default <groupId> --yes [--json]');
   }
   const guard = requireExplicitYes(args, json, '设置默认任务组', `groupId=${groupId}`);
   if (guard !== null) return guard;

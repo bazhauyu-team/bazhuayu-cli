@@ -73,7 +73,7 @@ function loadReleaseNotesUrl(): string {
 async function main(argv: string[]): Promise<number> {
   await maybePrintUpdateNotice({
     args: argv,
-    cliName: 'octopus',
+    cliName: 'bazhuayu',
     packageName: PACKAGE_NAME,
     currentVersion: VERSION,
     releaseNotesUrl: RELEASE_NOTES_URL
@@ -225,7 +225,7 @@ async function main(argv: string[]): Promise<number> {
     return printUsageError(
       hasFlag(argv, '--json'),
       'runs export 不是用户导出入口；请使用 taskId/lotId 导出数据。',
-      '用法: octopus data export <taskId> [--source local|cloud] [--lot-id <lotId>] [--file <result.xlsx>] [--format xlsx|csv|html|json|xml]',
+      '用法: bazhuayu data export <taskId> [--source local|cloud] [--lot-id <lotId>] [--file <result.xlsx>] [--format xlsx|csv|html|json|xml]',
       'USAGE_ERROR'
     );
   }

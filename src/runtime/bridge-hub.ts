@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter, on, once } from 'node:events';
 import { WebSocket, WebSocketServer } from 'ws';
 import { SessionExtensionBridge } from '@octopus/browser-runtime';
 import type {
@@ -29,6 +29,8 @@ export class BridgeHub extends EventEmitter {
   private readonly sessions = new Map<string, HubSessionEntry>();
   private readonly wss: WebSocketServer;
   private readonly ready: Promise<string>;
+  private closePromise: Promise<void> | null = null;
+  private closed = false;
 
   constructor() {
     super();
@@ -57,7 +59,9 @@ export class BridgeHub extends EventEmitter {
   }
 
   async createSessionBridge(runId: string): Promise<SessionExtensionBridge> {
+    if (this.closed) throw new Error('Bridge hub is closed');
     const wsUrl = await this.ready;
+    if (this.closed) throw new Error('Bridge hub is closed');
     const runtimeConfig: ExtensionRuntimeConfig = { sessionId: runId, wsUrl };
     const bridge = new SessionExtensionBridge({
       runtimeConfig,
@@ -77,35 +81,49 @@ export class BridgeHub extends EventEmitter {
     return Boolean(this.sessions.get(sessionId)?.connected);
   }
 
-  waitForSessionConnected(sessionId: string, timeoutMs: number): Promise<void> {
-    if (this.isSessionConnected(sessionId)) return Promise.resolve();
+  async waitForSessionConnected(sessionId: string, timeoutMs: number): Promise<void> {
+    if (this.closed) throw new Error('Bridge hub is closed');
+    if (this.isSessionConnected(sessionId)) return;
 
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        cleanup();
-        reject(new Error(`Extension did not register within ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      const handleRegistered = (event: { sessionId: string; success: boolean }) => {
-        if (event.sessionId !== sessionId) return;
-        cleanup();
-        event.success ? resolve() : reject(new Error('Extension registration failed'));
-      };
-
-      const cleanup = () => {
-        clearTimeout(timeout);
-        this.off('bridge.registered', handleRegistered);
-      };
-
-      this.on('bridge.registered', handleRegistered);
-    });
+    const controller = new AbortController();
+    const handleClosed = () => controller.abort(new Error('Bridge hub closed before extension registration'));
+    const timeout = setTimeout(
+      () => controller.abort(new Error(`Extension did not register within ${timeoutMs}ms`)),
+      timeoutMs
+    );
+    this.once('bridge.closed', handleClosed);
+    try {
+      for await (const [value] of on(this, 'bridge.registered', { signal: controller.signal })) {
+        const event = value as { sessionId: string; success: boolean };
+        if (event.sessionId !== sessionId) continue;
+        if (!event.success) throw new Error('Extension registration failed');
+        return;
+      }
+    } catch (error) {
+      if (controller.signal.aborted) throw controller.signal.reason;
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      this.off('bridge.closed', handleClosed);
+      controller.abort();
+    }
   }
 
-  close(): void {
-    for (const sessionId of this.sessions.keys()) {
-      this.removeSession(sessionId);
+  close(): Promise<void> {
+    if (!this.closePromise) this.closePromise = this.closeInternal();
+    return this.closePromise;
+  }
+
+  private async closeInternal(): Promise<void> {
+    this.closed = true;
+    this.emit('bridge.closed', {});
+    for (const entry of [...this.sessions.values()]) {
+      entry.bridge.handleHubDisconnected();
+      entry.bridge.close();
     }
-    this.wss.close();
+    this.sessions.clear();
+    for (const socket of this.wss.clients) terminateWebSocket(socket);
+    await closeWebSocketServer(this.wss);
   }
 
   private getWsUrl(): string {
@@ -148,7 +166,7 @@ export class BridgeHub extends EventEmitter {
         }
 
         if (entry.ws && entry.ws !== ws) {
-          entry.ws.close();
+          terminateWebSocket(entry.ws);
         }
 
         entry.ws = ws;
@@ -198,7 +216,28 @@ export class BridgeHub extends EventEmitter {
   private removeSession(sessionId: string): void {
     const entry = this.sessions.get(sessionId);
     if (!entry) return;
-    entry.ws?.close();
+    entry.bridge.handleHubDisconnected();
+    if (entry.ws) terminateWebSocket(entry.ws);
     this.sessions.delete(sessionId);
   }
+}
+
+function terminateWebSocket(socket: WebSocket): void {
+  if (socket.readyState === WebSocket.CLOSED) return;
+  try {
+    socket.terminate();
+  } catch {
+    // The socket may have closed between the readyState check and terminate().
+  }
+}
+
+async function closeWebSocketServer(server: WebSocketServer): Promise<void> {
+  const closed = once(server, 'close');
+  try {
+    server.close();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ERR_SERVER_NOT_RUNNING') return;
+    throw error;
+  }
+  await closed;
 }

@@ -351,8 +351,8 @@ export async function installUserBrowserExtension(options: {
       before.installGuide.extensionsPageUrl
         ? `Confirm the extension is enabled at ${before.installGuide.extensionsPageUrl}`
         : 'Confirm the extension is enabled on the browser extensions page.',
-      `Then set default: octopus browser use user --browser-id ${browserId}${installProfileName ? ` --profile ${JSON.stringify(installProfileName)}` : ''}`,
-      `Or run once with: octopus run <taskId> --browser user --browser-id ${browserId}${installProfileName ? ` --profile ${JSON.stringify(installProfileName)}` : ''}`
+      `Then set default: bazhuayu browser use user --browser-id ${browserId}${installProfileName ? ` --profile ${JSON.stringify(installProfileName)}` : ''}`,
+      `Or run once with: bazhuayu run <taskId> --browser user --browser-id ${browserId}${installProfileName ? ` --profile ${JSON.stringify(installProfileName)}` : ''}`
     ]
   };
 }
@@ -420,7 +420,7 @@ export function resolveUserBrowserLaunchPlan(options: {
         `Octopus browser extension is not ready in ${inspection.browser.name}.`,
         `bundled=${inspection.extensionStatus.bundledVersion ?? 'unknown'}`,
         `installed=${inspection.extensionStatus.installedVersion ?? 'none'}`,
-        'Run: octopus browser install',
+        'Run: bazhuayu browser install',
         // Install (not run/detect) needs the browser closed so prefs/CRX can be written.
         inspection.launch.requiresClose ? '(close the browser first, or use --force-close with browser install)' : ''
       ].filter(Boolean).join(' '),

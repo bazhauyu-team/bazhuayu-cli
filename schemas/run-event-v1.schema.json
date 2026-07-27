@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://octopus.local/schemas/run-event-v1.schema.json",
   "title": "Octopus Run JSONL Event v1",
-  "description": "One line from octopus run <taskId> --jsonl. The event field is stable; additional fields may be added.",
+  "description": "One line from bazhuayu run <taskId> --jsonl. The event field is stable; additional fields may be added.",
   "type": "object",
   "required": ["event"],
   "properties": {

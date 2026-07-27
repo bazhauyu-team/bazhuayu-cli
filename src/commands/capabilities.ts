@@ -9,13 +9,13 @@ import { EXIT_OK } from '../types.js';
 
 export async function capabilitiesCommand(version: string, json: boolean): Promise<number> {
   const data = {
-    name: 'octopus',
+    name: 'bazhuayu',
     packageName: 'bazhuayu-cli',
-    primaryBinary: 'octopus',
+    primaryBinary: 'bazhuayu',
     invocation: {
-      installed: 'octopus',
+      installed: 'bazhuayu',
       npmExec: 'npx bazhuayu-cli',
-      note: 'bazhuayu-cli is the npm package name; octopus is the CLI binary exposed by the package.'
+      note: 'bazhuayu-cli is the npm package name; bazhuayu is the CLI binary exposed by the package.'
     },
     version,
     agentContractVersion: 1,
@@ -41,9 +41,9 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
       browser: 'Chrome for Testing',
       localExecutionRequiresBrowser: true,
       defaultSelection: {
-        order: ['--browser flag', 'OCTOPUS_BROWSER env', 'octopus browser use (config)', 'independent'],
+        order: ['--browser flag', 'OCTOPUS_BROWSER env', 'bazhuayu browser use (config)', 'independent'],
         configFile: join(homedir(), '.octopus', 'config.json'),
-        setCommand: 'octopus browser use independent|user',
+        setCommand: 'bazhuayu browser use independent|user',
         env: ['OCTOPUS_BROWSER', 'OCTOPUS_BROWSER_ID', 'OCTOPUS_BROWSER_PROFILE']
       },
       modes: {
@@ -58,11 +58,11 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           platforms: ['darwin', 'win32'],
           unsupportedNote: userBrowserPlatformNote(),
           setupCommands: [
-            'octopus browser status --browser-id chrome --json',
-            'octopus browser profiles --browser-id chrome --json',
-            'octopus browser install --browser-id chrome [--profile <name>] [--force-close] --json',
-            'octopus browser status --browser-id chrome [--profile <name>] --json',
-            'octopus browser use user --browser-id chrome [--profile <name>] --json'
+            'bazhuayu browser status --browser-id chrome --json',
+            'bazhuayu browser profiles --browser-id chrome --json',
+            'bazhuayu browser install --browser-id chrome [--profile <name>] [--force-close] --json',
+            'bazhuayu browser status --browser-id chrome [--profile <name>] --json',
+            'bazhuayu browser use user --browser-id chrome [--profile <name>] --json'
           ],
           setupRecipe: {
             rule: 'Follow steps in order. Use nextActions from each JSON response. Do not persist user mode until status reports readyForUserBrowserRun=true.',
@@ -70,19 +70,19 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
             steps: [
               {
                 step: 'inspect',
-                command: 'octopus browser status --browser-id <chrome|edge> --json',
+                command: 'bazhuayu browser status --browser-id <chrome|edge> --json',
                 action: 'Read supported, readyForUserBrowserRun, selectedProfileName, profiles, and nextActions.',
                 requiresHuman: false
               },
               {
                 step: 'select-profile',
-                command: 'octopus browser profiles --browser-id <chrome|edge> --json',
+                command: 'bazhuayu browser profiles --browser-id <chrome|edge> --json',
                 action: 'Choose an existing profileName when the user needs a specific signed-in profile.',
                 requiresHuman: false
               },
               {
                 step: 'install-extension',
-                command: 'octopus browser install --browser-id <chrome|edge> [--profile <name>] [--force-close] --json',
+                command: 'bazhuayu browser install --browser-id <chrome|edge> [--profile <name>] [--force-close] --json',
                 action: 'Install into the selected profile. Retry the returned install_extension nextAction when the browser is running.',
                 requiresHuman: false
               },
@@ -93,19 +93,19 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
               },
               {
                 step: 'verify',
-                command: 'octopus browser status --browser-id <chrome|edge> [--profile <name>] --json',
+                command: 'bazhuayu browser status --browser-id <chrome|edge> [--profile <name>] --json',
                 action: 'Continue only when readyForUserBrowserRun is true; otherwise follow nextActions.',
                 requiresHuman: false
               },
               {
                 step: 'persist',
-                command: 'octopus browser use user --browser-id <chrome|edge> [--profile <name>] --json',
+                command: 'bazhuayu browser use user --browser-id <chrome|edge> [--profile <name>] --json',
                 action: 'Set the verified user browser as the default for run and detect.',
                 requiresHuman: false
               }
             ],
-            switchBackCommand: 'octopus browser use independent --json',
-            oneShotOverride: 'octopus run <taskId> --browser independent|user [--browser-id chrome|edge] [--profile <name>]'
+            switchBackCommand: 'bazhuayu browser use independent --json',
+            oneShotOverride: 'bazhuayu run <taskId> --browser independent|user [--browser-id chrome|edge] [--profile <name>]'
           },
           runFlags: ['--browser user', '--browser-id chrome|edge', '--profile <name>', '--force-close-browser (optional)'],
           detectFlags: ['--browser user', '--browser-id chrome|edge', '--profile <name>', '--force-close-browser (optional)'],
@@ -126,9 +126,9 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
       stable: true,
       defaultOutput: 'human',
       agentEntrypoint: {
-        firstCommand: 'octopus capabilities --json',
+        firstCommand: 'bazhuayu capabilities --json',
         packageFirstCommand: 'npx bazhuayu-cli capabilities --json',
-        rule: 'When a user asks an LLM/agent to use bazhuayu-cli or octopus for a scraping task, inspect this capabilities payload first and follow machineContract.recipes instead of guessing a detect mode from help examples.',
+        rule: 'When a user asks an LLM/agent to use bazhuayu-cli or bazhuayu for a scraping task, inspect this capabilities payload first and follow machineContract.recipes instead of guessing a detect mode from help examples.',
         agentInvocationPolicy: {
           shouldUseCliForUserTaskCreationRequests: true,
           preferredRecipe: 'machineContract.recipes.createTaskFromUrlWithAgent',
@@ -137,19 +137,19 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           doNotUseAutoForAgentTaskCreationRequests: true,
           doNotFallbackToHandwrittenTaskJson: true,
           doNotAskUserForInternalFlags: true,
-          routingRule: 'If the user asks an LLM/agent to create, build, generate, run, or validate a scraping/collection task from a URL using bazhuayu-cli/octopus, call capabilities --json, then use detect --agent with a trusted agent runner. Add --run-sample <n> when the user wants fast evidence rows. If the user asks to reuse their signed-in Chrome/Edge profile, first follow browserRuntime.modes.user.setupRecipe and its JSON nextActions; do not ask the user to choose internal flags. Use the lower-level prepare/preview/apply workflow for audit, repair, or custom orchestration. Do not use detect --auto as the default agent path; --auto is only for direct CLI-only task generation when the user explicitly asks for automatic CLI selection. Use manual detect only when the user explicitly asks to choose elements themselves or when login/verification requires user action.'
+          routingRule: 'If the user asks an LLM/agent to create, build, generate, run, or validate a scraping/collection task from a URL using bazhuayu-cli/bazhuayu, call capabilities --json, then use detect --agent with a trusted agent runner. Add --run-sample <n> when the user wants fast evidence rows. If the user asks to reuse their signed-in Chrome/Edge profile, first follow browserRuntime.modes.user.setupRecipe and its JSON nextActions; do not ask the user to choose internal flags. Use the lower-level prepare/preview/apply workflow for audit, repair, or custom orchestration. Do not use detect --auto as the default agent path; --auto is only for direct CLI-only task generation when the user explicitly asks for automatic CLI selection. Use manual detect only when the user explicitly asks to choose elements themselves or when login/verification requires user action.'
         },
         intentAliases: [
           'create scraping task from url',
           'generate collection task',
-          'build octopus task',
+          'build bazhuayu task',
           '用 bazhuayu-cli 创建采集任务',
           '用八爪鱼 CLI 创建采集任务',
-          '让 Agent/LLM 用 octopus 生成任务'
+          '让 Agent/LLM 用 bazhuayu 生成任务'
         ],
         acceptedUserRequestExamples: [
           '请用 bazhuayu-cli 给这个网页创建一个采集任务: <url>',
-          'Use octopus to create a scraping task for <url>',
+          'Use bazhuayu to create a scraping task for <url>',
           'Create and validate a local task file from this page with bazhuayu-cli: <url>'
         ]
       },
@@ -279,23 +279,23 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
       },
       recipes: {
         createTaskFromUrlWithAgent: {
-          intent: 'When the user asks an LLM/agent to create a scraping or collection task from a URL with bazhuayu-cli/octopus, use this workflow unless the user explicitly asks for manual selection. This is the default agent path; detect --auto is not the default for LLM/agent task creation.',
+          intent: 'When the user asks an LLM/agent to create a scraping or collection task from a URL with bazhuayu-cli/bazhuayu, use this workflow unless the user explicitly asks for manual selection. This is the default agent path; detect --auto is not the default for LLM/agent task creation.',
           summary: 'Use protected SmartProxy detection to emit deterministic candidates, let a trusted agent runner write a small plan, preview it, apply it, and optionally run sample rows in one command.',
           agentShouldChooseThisRecipeWhen: [
             'The user asks the assistant/agent to create, build, generate, or validate a task from a URL.',
-            'The user mentions bazhuayu-cli, octopus, 八爪鱼 CLI, scraping task, collection task, or local task file.',
+            'The user mentions bazhuayu-cli, bazhuayu, 八爪鱼 CLI, scraping task, collection task, or local task file.',
             'The user provides a URL plus a target goal such as search results, list data, detail pages, titles, prices, articles, or links.'
           ],
           searchWorkflow: {
             trigger: 'If the user asks to search/query/find a keyword on an entry page, pass --query <keyword> or --input <name=value> to the prepare-agent step before preparing/applying a task.',
             examples: [
-              'octopus detect https://www.baidu.com/ --prepare-agent --query 李小龙 --json --goal "搜索李小龙并采集结果标题和链接" --output context.json'
+              'bazhuayu detect https://www.baidu.com/ --prepare-agent --query 李小龙 --json --goal "搜索李小龙并采集结果标题和链接" --output context.json'
             ],
             taskBehavior: 'Generated tasks preserve the detected search input XPath and submit action before extracting the result page.'
           },
           loginWorkflow: {
             trigger: 'If detect returns LOGIN_SESSION_REQUIRED or detects a login/captcha/paywall page, ask the user to run manual detect, complete login in the browser, and save a session.',
-            command: 'octopus detect <url> --manual --query <keyword> --save-session --session-name <name> --output <task.json>',
+            command: 'bazhuayu detect <url> --manual --query <keyword> --save-session --session-name <name> --output <task.json>',
             note: 'The generated task stores both detection.session and detection.search so local runs inject cookies before opening the search entry page.'
           },
           agentResponsibilities: [
@@ -318,7 +318,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           ],
           quickWorkflow: {
             whenToUse: 'Use when the user wants the agent to create a task quickly and a trusted local agent runner is available.',
-            command: 'octopus detect <url> --agent --agent-command <trusted-agent-runner> --goal <user task description> --output <task.json> --run-sample 5 --json',
+            command: 'bazhuayu detect <url> --agent --agent-command <trusted-agent-runner> --goal <user task description> --output <task.json> --run-sample 5 --json',
             output: 'One JSON envelope containing generatedTask, preview, optional agentFiles, and sampleRun. sampleRun.envelope.data includes the local run summary when the sample run succeeds.',
             notes: [
               '--agent-command executes a local shell command; only pass a trusted runner.',
@@ -332,7 +332,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
           preferredWorkflow: [
             {
               step: 'detect',
-              command: 'octopus detect <url> --prepare-agent --json --goal <user task description> --output <context.json>',
+              command: 'bazhuayu detect <url> --prepare-agent --json --goal <user task description> --output <context.json>',
               output: 'agent context JSON containing decisionSummary, visualArtifacts, recommendedCandidateId, decisionPolicy, resultValidationPolicy, candidates, fields, visualElements, pageVisualElements, sampleRows, XPath, diagnostics, pagination, goal, and screenshot metadata. Full-page and annotated screenshots plus top candidate crops are generated by default for agent workflows when diagnostics provide boxes; screenshots may include V* labels for source=visible_dom visualElements and pageVisualElements provide a fallback DOM inventory when candidates miss the correct target.'
             },
             {
@@ -381,17 +381,17 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
             },
             {
               step: 'preview',
-              command: 'octopus detect --preview-agent-plan <plan.json> --agent-context <context.json> --json',
+              command: 'bazhuayu detect --preview-agent-plan <plan.json> --agent-context <context.json> --json',
               requiredAction: 'If ok=false or data.pass=false, revise plan fields before applying unless the user explicitly accepts risk.'
             },
             {
               step: 'apply',
-              command: 'octopus detect --apply-agent-plan <plan.json> --agent-context <context.json> --output <task.json> --json',
+              command: 'bazhuayu detect --apply-agent-plan <plan.json> --agent-context <context.json> --output <task.json> --json',
               output: 'task JSON file'
             },
             {
               step: 'validate',
-              command: 'octopus task validate <taskId> --task-file <task.json> --json',
+              command: 'bazhuayu task validate <taskId> --task-file <task.json> --json',
               postRunJudgment: [
                 'After running sample data, follow context.resultValidationPolicy before deciding whether to revise the task.',
                 'Do not recreate a task just because one row or a small minority of rows has missing optional fields.',
@@ -401,7 +401,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
             }
           ],
           oneShotWrapper: {
-            command: 'octopus detect <url> --agent --agent-command <cmd> --output <task.json> [--run-sample <n>]',
+            command: 'bazhuayu detect <url> --agent --agent-command <cmd> --output <task.json> [--run-sample <n>]',
             note: 'Use this only when a trusted agent runner command is available. --agent-command executes a local shell command. The runner receives OCTOPUS_AGENT_CONTEXT and must write OCTOPUS_AGENT_PLAN. Passing preview automatically writes the task; use --confirm-agent-plan only when an interactive confirmation is desired. --run-sample runs the generated task with --max-rows and embeds the run result in the same JSON envelope.'
           },
           nonGoals: [

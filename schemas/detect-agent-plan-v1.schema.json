@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://octopus.local/schemas/detect-agent-plan-v1.schema.json",
   "title": "Octopus Detect Agent Plan v1",
-  "description": "Plan written by a trusted agent runner for octopus detect --agent.",
+  "description": "Plan written by a trusted agent runner for bazhuayu detect --agent.",
   "type": "object",
   "required": ["schemaVersion", "visualReview", "selection"],
   "properties": {

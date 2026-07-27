@@ -28,7 +28,7 @@ export async function hiddenEnvCommand(subcommand: string | undefined, args: str
 
   const next = resolveEnvTarget(subcommand);
   if (!next) {
-    const message = '用法: octopus env <prod|online|status> [--json]';
+    const message = '用法: bazhuayu env <prod|online|status> [--json]';
     if (json) printEnvelope(false, undefined, 'INVALID_ENV', message);
     else console.error(message);
     return EXIT_OPERATION_FAILED;

@@ -26,7 +26,7 @@ interface BrowserNextAction {
   requiresHuman: boolean;
 }
 
-const USAGE = '用法: octopus browser <status|use|install|close|profiles> [options] [--json]';
+const USAGE = '用法: bazhuayu browser <status|use|install|close|profiles> [options] [--json]';
 
 export async function browserCommand(subcommand: string | undefined, args: string[]): Promise<number> {
   const json = hasFlag([subcommand ?? '', ...args], '--json');
@@ -105,9 +105,9 @@ async function browserStatus(args: string[], json: boolean): Promise<number> {
 
 /**
  * Set the default browser for run/detect:
- *   octopus browser use independent
- *   octopus browser use user [--browser-id chrome|edge] [--profile Default]
- *   octopus browser use status
+ *   bazhuayu browser use independent
+ *   bazhuayu browser use user [--browser-id chrome|edge] [--profile Default]
+ *   bazhuayu browser use status
  */
 async function browserUse(args: string[], json: boolean): Promise<number> {
   const modeArg = args.find((arg) => !arg.startsWith('-'));
@@ -125,7 +125,7 @@ async function browserUse(args: string[], json: boolean): Promise<number> {
     return printUsageError(
       json,
       `错误: 未知浏览器模式: ${modeArg}`,
-      '用法: octopus browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]'
+      '用法: bazhuayu browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]'
     );
   }
 
@@ -153,7 +153,7 @@ async function browserUse(args: string[], json: boolean): Promise<number> {
         availableProfiles: inspection.profiles.map((item) => item.profileName),
         nextActions: [{
           action: 'list_profiles',
-          command: `octopus browser profiles --browser-id ${selectedBrowserId} --json`,
+          command: `bazhuayu browser profiles --browser-id ${selectedBrowserId} --json`,
           reason: 'Choose an existing browser profile before enabling user mode.',
           requiresHuman: false
         } satisfies BrowserNextAction]
@@ -198,10 +198,10 @@ async function browserUse(args: string[], json: boolean): Promise<number> {
   if (preference.mode === 'user') {
     console.log(`Browser: ${preference.browserId ?? 'chrome'}`);
     if (preference.profile) console.log(`Profile: ${preference.profile}`);
-    console.log('Tip: if extension is not ready, run: octopus browser install');
+    console.log('Tip: if extension is not ready, run: bazhuayu browser install');
   }
   console.log(`Saved to: ${preference.configFile}`);
-  console.log('Applies to: octopus run / octopus detect (override with --browser independent|user)');
+  console.log('Applies to: bazhuayu run / bazhuayu detect (override with --browser independent|user)');
   return EXIT_OK;
 }
 
@@ -270,7 +270,7 @@ async function browserClose(args: string[], json: boolean): Promise<number> {
       profileName: profileName ?? null,
       nextActions: [{
         action: 'verify_extension',
-        command: `octopus browser status --browser-id ${browserId}${profileArg(profileName)} --json`,
+        command: `bazhuayu browser status --browser-id ${browserId}${profileArg(profileName)} --json`,
         reason: 'Inspect the browser lock and profile state before retrying.',
         requiresHuman: false
       } satisfies BrowserNextAction]
@@ -367,7 +367,7 @@ function printDefaultBrowserPreference(preference: {
     if (preference.profile) console.log(`User profile: ${preference.profile}`);
   }
   console.log(`Config: ${preference.configFile}`);
-  console.log('Change with: octopus browser use independent|user');
+  console.log('Change with: bazhuayu browser use independent|user');
 }
 
 function parseBrowserIdArg(args: string[]): UserBrowserId {
@@ -408,19 +408,19 @@ function buildStatusHints(
   }
   if (inspection.extensionStatus.needsInstallOrUpdate) {
     hints.push(inspection.launch.requiresClose
-      ? 'Close the browser, then run: octopus browser install'
-      : 'Run: octopus browser install');
+      ? 'Close the browser, then run: bazhuayu browser install'
+      : 'Run: bazhuayu browser install');
   } else if (inspection.launch.requiresClose) {
     hints.push('Browser is running. User-mode run/detect can reuse it (opens a new session window).');
   }
   if (defaultMode === 'independent') {
-    hints.push('Default is independent. Switch with: octopus browser use user');
+    hints.push('Default is independent. Switch with: bazhuayu browser use user');
   } else {
-    hints.push('Default is user browser. Switch back with: octopus browser use independent');
+    hints.push('Default is user browser. Switch back with: bazhuayu browser use independent');
   }
   if (isReadyForUserBrowserRun(inspection, selectedProfileName)) {
-    hints.push('Ready for user mode. Example: octopus run <taskId>   (uses saved default)');
-    hints.push('Or override once: octopus run <taskId> --browser independent');
+    hints.push('Ready for user mode. Example: bazhuayu run <taskId>   (uses saved default)');
+    hints.push('Or override once: bazhuayu run <taskId> --browser independent');
   }
   return hints;
 }
@@ -445,7 +445,7 @@ function buildStatusNextActions(
   if (selectedProfileName && inspection.profiles.length > 0 && !selectedProfile) {
     return [{
       action: 'list_profiles',
-      command: `octopus browser profiles --browser-id ${browserId} --json`,
+      command: `bazhuayu browser profiles --browser-id ${browserId} --json`,
       reason: `Profile ${selectedProfileName} was not found. Choose an available profile.`,
       requiresHuman: false
     }];
@@ -454,7 +454,7 @@ function buildStatusNextActions(
   const extensionReady = !inspection.extensionStatus.needsInstallOrUpdate
     && (inspection.profiles.length === 0 || Boolean(selectedProfile?.plugin.installed));
   if (!extensionReady) {
-    const installCommand = `octopus browser install --browser-id ${browserId}${profileArg(selectedProfileName)}${inspection.launch.requiresClose ? ' --force-close' : ''} --json`;
+    const installCommand = `bazhuayu browser install --browser-id ${browserId}${profileArg(selectedProfileName)}${inspection.launch.requiresClose ? ' --force-close' : ''} --json`;
     return [
       {
         action: 'install_extension',
@@ -469,7 +469,7 @@ function buildStatusNextActions(
   if (defaultMode !== 'user') {
     return [{
       action: 'set_default',
-      command: `octopus browser use user --browser-id ${browserId}${profileArg(selectedProfileName)} --json`,
+      command: `bazhuayu browser use user --browser-id ${browserId}${profileArg(selectedProfileName)} --json`,
       reason: 'Persist user-browser mode as the default for run and detect.',
       requiresHuman: false
     }];
@@ -477,7 +477,7 @@ function buildStatusNextActions(
 
   return [{
     action: 'run',
-    command: 'octopus run <taskId> --json',
+    command: 'bazhuayu run <taskId> --json',
     reason: 'User-browser mode is ready and selected as the default.',
     requiresHuman: false
   }];
@@ -491,7 +491,7 @@ function buildInstallFailureNextActions(
   if (errorCode === 'BROWSER_RUNNING' || errorCode === 'PROFILE_RUNNING') {
     return [{
       action: 'install_extension',
-      command: `octopus browser install --browser-id ${browserId}${profileArg(profileName)} --force-close --json`,
+      command: `bazhuayu browser install --browser-id ${browserId}${profileArg(profileName)} --force-close --json`,
       reason: 'Retry extension installation after allowing the CLI to close the running browser.',
       requiresHuman: false
     }];
@@ -499,7 +499,7 @@ function buildInstallFailureNextActions(
   if (errorCode === 'PROFILE_NOT_FOUND') {
     return [{
       action: 'list_profiles',
-      command: `octopus browser profiles --browser-id ${browserId} --json`,
+      command: `bazhuayu browser profiles --browser-id ${browserId} --json`,
       reason: 'Choose an existing browser profile before installing the extension.',
       requiresHuman: false
     }];
@@ -520,7 +520,7 @@ function buildInstallNextActions(
   installed: boolean
 ): BrowserNextAction[] {
   if (!installed) return [];
-  const statusCommand = `octopus browser status --browser-id ${browserId}${profileArg(profileName)} --json`;
+  const statusCommand = `bazhuayu browser status --browser-id ${browserId}${profileArg(profileName)} --json`;
   return [
     {
       action: 'reopen_browser',
@@ -535,7 +535,7 @@ function buildInstallNextActions(
     },
     {
       action: 'set_default',
-      command: `octopus browser use user --browser-id ${browserId}${profileArg(profileName)} --json`,
+      command: `bazhuayu browser use user --browser-id ${browserId}${profileArg(profileName)} --json`,
       reason: 'Persist the verified user browser and profile.',
       requiresHuman: false
     }

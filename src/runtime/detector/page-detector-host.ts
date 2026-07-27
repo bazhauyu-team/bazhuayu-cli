@@ -139,7 +139,7 @@ export class ExtensionDetectorHost {
   async close(): Promise<void> {
     if (this.modeState.mode === 'user') {
       await closeUserBrowserDetectorHost(this.extensionBridge, this.tabId, this.modeState);
-      this.bridgeHub.close();
+      await this.bridgeHub.close();
       await this.modeState.bootstrapPage?.close().catch(() => undefined);
       await this.virtualDisplay.close();
       return;
@@ -154,7 +154,7 @@ export class ExtensionDetectorHost {
     }
     await terminateBrowserProcess(browserProcess);
     if (browserProcess) activeIndependentBrowserProcesses.delete(browserProcess);
-    this.bridgeHub.close();
+    await this.bridgeHub.close();
     if (this.runtimeExtensionPath) await rm(this.runtimeExtensionPath, { recursive: true, force: true }).catch(() => undefined);
     await this.modeState.bootstrapPage?.close().catch(() => undefined);
     await this.virtualDisplay.close();
@@ -210,7 +210,7 @@ async function startIndependentDetectorHost(
     if (browserProcess) activeIndependentBrowserProcesses.delete(browserProcess);
     if (runtimeExtensionPath) await rm(runtimeExtensionPath, { recursive: true, force: true }).catch(() => undefined);
     await bootstrapPage?.close().catch(() => undefined);
-    bridgeHub.close();
+    await bridgeHub.close();
     await virtualDisplay.close();
     throw error;
   }
@@ -304,7 +304,7 @@ async function startUserBrowserDetectorHost(
       chromeProcess.close();
     }
     await bootstrapPage?.close().catch(() => undefined);
-    bridgeHub.close();
+    await bridgeHub.close();
     await virtualDisplay.close();
     throw error;
   }

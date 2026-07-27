@@ -31,7 +31,7 @@ export async function scheduleCommand(domain: string | undefined, args: string[]
   return printUsageError(
     json,
     '错误: schedule 子命令无效',
-    '用法: octopus schedule cloud <get|update|start|stop|next> [--json]'
+    '用法: bazhuayu schedule cloud <get|update|start|stop|next> [--json]'
   );
 }
 
@@ -47,7 +47,7 @@ async function cloudScheduleCommand(args: string[]): Promise<number> {
   return printUsageError(
     json,
     '错误: schedule cloud 子命令无效',
-    '用法: octopus schedule cloud <get|update|start|stop|next> [--json]'
+    '用法: bazhuayu schedule cloud <get|update|start|stop|next> [--json]'
   );
 }
 
@@ -55,7 +55,7 @@ async function cloudScheduleGet(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const taskId = firstPositionalArg(args, scheduleValueFlags());
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus schedule cloud get <taskId> [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: bazhuayu schedule cloud get <taskId> [--json]');
   }
 
   const auth = await resolveAuth();
@@ -78,7 +78,7 @@ async function cloudScheduleUpdate(args: string[]): Promise<number> {
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      '用法: octopus schedule cloud update <taskId> --type <type> --date <value> --time <value> --yes [--json]'
+      '用法: bazhuayu schedule cloud update <taskId> --type <type> --date <value> --time <value> --yes [--json]'
     );
   }
   const guard = requireExplicitYes(args, json, '更新云定时配置', `taskId=${taskId}`);
@@ -93,7 +93,7 @@ async function cloudScheduleUpdate(args: string[]): Promise<number> {
     const bodyResult = await buildTaskScheduleBody(args, json, { ...current.data, taskId });
     if (typeof bodyResult === 'number') return bodyResult;
     const body = bodyResult;
-    const validation = validateScheduleBody(body, json, 'octopus schedule cloud update <taskId> --type <type> --date <value> --time <value> --yes [--json]');
+    const validation = validateScheduleBody(body, json, 'bazhuayu schedule cloud update <taskId> --type <type> --date <value> --time <value> --yes [--json]');
     if (validation !== null) return validation;
 
     const result = await updateCloudSchedule({
@@ -124,7 +124,7 @@ async function cloudScheduleStateChange(action: 'start' | 'stop', args: string[]
   const json = hasFlag(args, '--json');
   const taskId = firstPositionalArg(args, scheduleValueFlags());
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', `用法: octopus schedule cloud ${action} <taskId> --yes [--json]`);
+    return printUsageError(json, '错误: 缺少 taskId', `用法: bazhuayu schedule cloud ${action} <taskId> --yes [--json]`);
   }
   const guard = requireExplicitYes(args, json, `${action === 'start' ? '启动' : '停止'}云定时`, `taskId=${taskId}`);
   if (guard !== null) return guard;
@@ -153,7 +153,7 @@ async function cloudScheduleNext(args: string[]): Promise<number> {
   try {
     const bodyResult = await buildTaskScheduleBody(args, json, {});
     if (typeof bodyResult === 'number') return bodyResult;
-    const validation = validateScheduleBody(bodyResult, json, 'octopus schedule cloud next --type <type> --date <value> --time <value> [--json]');
+    const validation = validateScheduleBody(bodyResult, json, 'bazhuayu schedule cloud next --type <type> --date <value> --time <value> [--json]');
     if (validation !== null) return validation;
     const result = await fetchCloudScheduleNextTimes({
       auth: auth.credential,

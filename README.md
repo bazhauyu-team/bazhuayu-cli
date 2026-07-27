@@ -4,7 +4,7 @@ Command-line runner for Bazhuayu collection tasks.
 
 English | [中文](README_CN.md)
 
-`octopus` can list cloud tasks, run tasks locally, control active local
+`bazhuayu` can list cloud tasks, run tasks locally, control active local
 runs, and export collected data.
 
 ## Requirements
@@ -25,14 +25,14 @@ npm install -g bazhuayu-cli
 The installed command is:
 
 ```bash
-octopus
+bazhuayu
 ```
 
 Check the installation:
 
 ```bash
-octopus --version
-octopus doctor
+bazhuayu --version
+bazhuayu doctor
 ```
 
 ### 2. Log in
@@ -40,14 +40,14 @@ octopus doctor
 Most commands require Bazhuayu credentials. Run:
 
 ```bash
-octopus auth login
+bazhuayu auth login
 ```
 
 Interactive login lets you choose OAuth browser login or API key login.
 To force OAuth:
 
 ```bash
-octopus auth login --oauth
+bazhuayu auth login --oauth
 ```
 
 API key login opens the API key page automatically in a browser when possible,
@@ -62,19 +62,19 @@ https://www.bazhuayu.com/console/account-center/api-keys
 If you already copied the key, you can save time and pass it directly:
 
 ```bash
-octopus auth login XXXXX
+bazhuayu auth login XXXXX
 ```
 
 For CI or scripts, set the key with an environment variable instead:
 
 ```bash
-OCTOPUS_API_KEY=xxx octopus task list --json
+OCTOPUS_API_KEY=xxx bazhuayu task list --json
 ```
 
 CI can also provide a bearer access token:
 
 ```bash
-OCTOPUS_ACCESS_TOKEN=xxx octopus task list --json
+OCTOPUS_ACCESS_TOKEN=xxx bazhuayu task list --json
 ```
 
 ### 3. Use the CLI
@@ -82,20 +82,20 @@ OCTOPUS_ACCESS_TOKEN=xxx octopus task list --json
 Query the task list:
 
 ```bash
-octopus task list
-octopus task list --page 2 --page-size 20
+bazhuayu task list
+bazhuayu task list --page 2 --page-size 20
 ```
 
 Query a single task:
 
 ```bash
-octopus task inspect <taskId>
+bazhuayu task inspect <taskId>
 ```
 
 Run a task locally:
 
 ```bash
-octopus run <taskId>
+bazhuayu run <taskId>
 ```
 
 Local Chrome execution is supported on macOS x64/arm64, Windows x64, and
@@ -110,17 +110,17 @@ and login state. It is supported on Windows and macOS. Set it up in this order:
 
 ```bash
 # Inspect Chrome or use --browser-id edge.
-octopus browser status --browser-id chrome --json
-octopus browser profiles --browser-id chrome --json
+bazhuayu browser status --browser-id chrome --json
+bazhuayu browser profiles --browser-id chrome --json
 
 # Close the browser first, or let the CLI close it with --force-close.
-octopus browser install --browser-id chrome --profile "Default" --force-close --json
+bazhuayu browser install --browser-id chrome --profile "Default" --force-close --json
 
 # Reopen Chrome once, confirm the Octopus extension is enabled, then verify:
-octopus browser status --browser-id chrome --profile "Default" --json
+bazhuayu browser status --browser-id chrome --profile "Default" --json
 
 # Persist this browser/profile for both run and detect:
-octopus browser use user --browser-id chrome --profile "Default" --json
+bazhuayu browser use user --browser-id chrome --profile "Default" --json
 ```
 
 `browser status --json` must report `data.readyForUserBrowserRun=true` before
@@ -128,21 +128,21 @@ the profile is ready. Machine clients should follow `data.nextActions` or
 `error.details.nextActions`. Switch back at any time:
 
 ```bash
-octopus browser use independent --json
+bazhuayu browser use independent --json
 ```
 
 The saved mode applies to `run` and `detect`. Override one invocation with
 `--browser independent|user`, plus optional `--browser-id chrome|edge` and
 `--profile <name>`. User-browser mode cannot run headless. Agents should read
-`browserRuntime.modes.user.setupRecipe` from `octopus capabilities --json` and
+`browserRuntime.modes.user.setupRecipe` from `bazhuayu capabilities --json` and
 perform every machine step themselves; reopening/enabling the extension remains
 an explicit user action.
 
 Create a local task from a URL directly with CLI-only selection:
 
 ```bash
-octopus detect 'https://example.com/list' --auto --output task.json
-octopus detect 'https://example.com/search' --manual --query keyword --save-session --output task.json
+bazhuayu detect 'https://example.com/list' --auto --output task.json
+bazhuayu detect 'https://example.com/search' --manual --query keyword --save-session --output task.json
 ```
 
 `detect` uses the protected SmartProxy detector by default and requires
@@ -152,7 +152,7 @@ that command executes a local shell command and should only point to a trusted
 agent runner.
 
 If an LLM/agent is helping a user create a task with bazhuayu-cli, it should run
-`octopus capabilities --json` first and follow
+`bazhuayu capabilities --json` first and follow
 `machineContract.recipes.createTaskFromUrlWithAgent`. That recipe tells the
 agent to prepare deterministic context, write a plan, preview it, apply it, and
 validate the generated task instead of asking the user to explain internal
@@ -170,20 +170,20 @@ instead of repeatedly recreating the task.
 Stop automatically after saving a fixed number of rows:
 
 ```bash
-octopus run <taskId> --max-rows 100
+bazhuayu run <taskId> --max-rows 100
 ```
 
 Run in the background:
 
 ```bash
-octopus run <taskId> --detach
+bazhuayu run <taskId> --detach
 ```
 
 Query the local run status, or stop the local process running a task:
 
 ```bash
-octopus local status <taskId>
-octopus local stop <taskId>
+bazhuayu local status <taskId>
+bazhuayu local stop <taskId>
 ```
 
 Note: local run status is tracked by this CLI only and is not synchronized with
@@ -192,50 +192,50 @@ the Bazhuayu desktop client status.
 Export data:
 
 ```bash
-octopus data export <taskId> --source local --format xlsx
-octopus data export <taskId> --source cloud --format csv
+bazhuayu data export <taskId> --source local --format xlsx
+bazhuayu data export <taskId> --source cloud --format csv
 ```
 
 ## Common commands
 
 ```bash
 # Help and diagnostics
-octopus --help
-octopus doctor
+bazhuayu --help
+bazhuayu doctor
 
 # Authentication
-octopus auth login
-octopus auth login XXXXX
-octopus auth status
-octopus auth logout
+bazhuayu auth login
+bazhuayu auth login XXXXX
+bazhuayu auth status
+bazhuayu auth logout
 
 # Task discovery
-octopus task list
-octopus task list --page 2 --page-size 20
-octopus task list --keyword news --page 2 --page-size 10
-octopus task inspect <taskId>
+bazhuayu task list
+bazhuayu task list --page 2 --page-size 20
+bazhuayu task list --keyword news --page 2 --page-size 10
+bazhuayu task inspect <taskId>
 
 # Local collection
-octopus run <taskId>
-octopus run <taskId> --max-rows 100
-octopus run <taskId> --jsonl
-octopus run <taskId> --detach
-octopus local status <taskId>
-octopus local pause <taskId>
-octopus local resume <taskId>
-octopus local stop <taskId>
+bazhuayu run <taskId>
+bazhuayu run <taskId> --max-rows 100
+bazhuayu run <taskId> --jsonl
+bazhuayu run <taskId> --detach
+bazhuayu local status <taskId>
+bazhuayu local pause <taskId>
+bazhuayu local resume <taskId>
+bazhuayu local stop <taskId>
 
 # Cloud collection
-octopus cloud start <taskId>
-octopus cloud stop <taskId>
-octopus cloud status <taskId>
-octopus cloud history <taskId>
+bazhuayu cloud start <taskId>
+bazhuayu cloud stop <taskId>
+bazhuayu cloud status <taskId>
+bazhuayu cloud history <taskId>
 
 # Data
-octopus data history <taskId> --source local
-octopus data history <taskId> --source cloud
-octopus data export <taskId> --source local --format xlsx
-octopus data export <taskId> --source cloud --format csv
+bazhuayu data history <taskId> --source local
+bazhuayu data history <taskId> --source cloud
+bazhuayu data export <taskId> --source local --format xlsx
+bazhuayu data export <taskId> --source cloud --format csv
 ```
 
 By default, local run artifacts are stored in `~/.octopus/runs`. If you
@@ -243,9 +243,9 @@ customize the run artifact directory with `--output`, use the same `--output`
 again when reading local history or exporting local data:
 
 ```bash
-octopus run <taskId> --output ./runs
-octopus data history <taskId> --source local --output ./runs
-octopus data export <taskId> --source local --output ./runs --format xlsx
+bazhuayu run <taskId> --output ./runs
+bazhuayu data history <taskId> --source local --output ./runs
+bazhuayu data export <taskId> --source local --output ./runs --format xlsx
 ```
 
 ## Authentication
@@ -263,37 +263,37 @@ https://www.bazhuayu.com/console/account-center/api-keys
 For interactive use:
 
 ```bash
-octopus auth login
+bazhuayu auth login
 ```
 
 Force OAuth browser login:
 
 ```bash
-octopus auth login --oauth
+bazhuayu auth login --oauth
 ```
 
 If the API key is already copied:
 
 ```bash
-octopus auth login XXXXX
+bazhuayu auth login XXXXX
 ```
 
 Use `--no-open` if you want to copy the URL manually:
 
 ```bash
-octopus auth login --no-open
+bazhuayu auth login --no-open
 ```
 
 For CI or scripts:
 
 ```bash
-OCTOPUS_API_KEY=xxx octopus task list --json
+OCTOPUS_API_KEY=xxx bazhuayu task list --json
 ```
 
 Or:
 
 ```bash
-OCTOPUS_ACCESS_TOKEN=xxx octopus task list --json
+OCTOPUS_ACCESS_TOKEN=xxx bazhuayu task list --json
 ```
 
 Credential precedence:
@@ -309,9 +309,9 @@ Credential precedence:
 You can run or validate a local task definition file:
 
 ```bash
-octopus task validate <taskId> --task-file ./task.json
-octopus run <taskId> --task-file ./task.json
-octopus run baidu --task-file ./百度一下，你就知道.otd
+bazhuayu task validate <taskId> --task-file ./task.json
+bazhuayu run <taskId> --task-file ./task.json
+bazhuayu run baidu --task-file ./百度一下，你就知道.otd
 ```
 
 Supported local task file types:
@@ -327,14 +327,14 @@ Kernel browser tasks are not supported in this CLI.
 Use `--json` for one JSON response:
 
 ```bash
-octopus task list --json
-octopus local status <taskId> --json
+bazhuayu task list --json
+bazhuayu local status <taskId> --json
 ```
 
 Use `--jsonl` for local run event streams:
 
 ```bash
-octopus run <taskId> --jsonl
+bazhuayu run <taskId> --jsonl
 ```
 
 The stream includes `captcha` and `proxy` events when the runtime asks the CLI
@@ -344,14 +344,14 @@ to resolve CAPTCHA or proxy resources automatically.
 
 Some task features can consume paid account balance or resource packages:
 
-- Paid templates can block `octopus run` before startup when the account cannot
+- Paid templates can block `bazhuayu run` before startup when the account cannot
   start the template or the balance is below the required charging granularity.
-- Premium proxy IP can block `octopus run` before startup when the task is
+- Premium proxy IP can block `bazhuayu run` before startup when the task is
   configured to use premium proxy IP and the balance is below the client
   threshold.
 - CAPTCHA solving can emit a low-balance warning before startup, and can fail
   during the run if the CAPTCHA service reports no balance or a daily limit.
-- `octopus cloud start` maps cloud startup status codes to readable JSON errors
+- `bazhuayu cloud start` maps cloud startup status codes to readable JSON errors
   such as `CLOUD_BALANCE_NOT_ENOUGH` and `CLOUD_PROXY_BALANCE_NOT_ENOUGH`.
 
 Foreground `--jsonl` runs emit structured billing events:
@@ -378,13 +378,13 @@ the selected `--output` directory when configured:
 Check the local environment:
 
 ```bash
-octopus doctor
+bazhuayu doctor
 ```
 
 If the browser is not detected automatically, pass its path:
 
 ```bash
-octopus run <taskId> --chrome-path "/path/to/chrome"
+bazhuayu run <taskId> --chrome-path "/path/to/chrome"
 ```
 
 Linux arm64 local execution is not supported, even with `--chrome-path`,
@@ -394,6 +394,6 @@ support.
 Clean stale local control state:
 
 ```bash
-octopus local cleanup
-octopus runs cleanup
+bazhuayu local cleanup
+bazhuayu runs cleanup
 ```

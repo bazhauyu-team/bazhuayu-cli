@@ -2,7 +2,7 @@
 
 Last updated: 2026-06-05
 
-This document summarizes the current state of the `octopus detect` workstream. The immediate product goal is to let users create runnable local collection tasks from a webpage, especially search-result tasks, with a browser-first manual flow that feels close to the desktop client.
+This document summarizes the current state of the `bazhuayu detect` workstream. The immediate product goal is to let users create runnable local collection tasks from a webpage, especially search-result tasks, with a browser-first manual flow that feels close to the desktop client.
 
 ## Current Product Shape
 
@@ -13,7 +13,7 @@ There are three task-creation paths.
 Command:
 
 ```bash
-octopus detect "https://www.csdn.net/" --manual --query openai --output task.json
+bazhuayu detect "https://www.csdn.net/" --manual --query openai --output task.json
 ```
 
 Equivalent local dev command:
@@ -48,13 +48,13 @@ Design decisions:
 Command:
 
 ```bash
-octopus detect "https://news.qq.com/" --auto --output task.json
+bazhuayu detect "https://news.qq.com/" --auto --output task.json
 ```
 
 Optional goal:
 
 ```bash
-octopus detect "https://news.qq.com/" --auto --goal "采集新闻标题、链接和详情正文" --output task.json
+bazhuayu detect "https://news.qq.com/" --auto --goal "采集新闻标题、链接和详情正文" --output task.json
 ```
 
 Behavior:
@@ -77,7 +77,7 @@ The CLI does not embed an LLM. It exposes deterministic context for an external 
 Preferred agent discovery:
 
 ```bash
-octopus capabilities --json
+bazhuayu capabilities --json
 ```
 
 The machine-readable contract is:
@@ -99,16 +99,16 @@ Agent result validation should follow `context.resultValidationPolicy`: isolated
 Low-level workflow:
 
 ```bash
-octopus detect "<url>" --prepare-agent --json --goal "<user task description>" --output context.json
-octopus detect --preview-agent-plan plan.json --agent-context context.json --json
-octopus detect --apply-agent-plan plan.json --agent-context context.json --output task.json --json
-octopus task validate <taskId> --task-file task.json --json
+bazhuayu detect "<url>" --prepare-agent --json --goal "<user task description>" --output context.json
+bazhuayu detect --preview-agent-plan plan.json --agent-context context.json --json
+bazhuayu detect --apply-agent-plan plan.json --agent-context context.json --output task.json --json
+bazhuayu task validate <taskId> --task-file task.json --json
 ```
 
 One-shot wrapper:
 
 ```bash
-octopus detect "<url>" --agent --agent-command "<cmd>" --output task.json
+bazhuayu detect "<url>" --agent --agent-command "<cmd>" --output task.json
 ```
 
 Notes:

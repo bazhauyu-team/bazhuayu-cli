@@ -18,7 +18,7 @@ export async function detectUrlCommand(url: string | undefined, args: string[]):
     return printUsageError(
       json,
       'run-url 已默认为 Agent/LLM 工作流生成全页长截图，不再支持 --screenshot 或 --agent-screenshot。',
-      '用法: octopus run-url <url> --auto|--select <candidateId> [--goal <text>] [--input <name=value>] [--max-rows <n>]',
+      '用法: bazhuayu run-url <url> --auto|--select <candidateId> [--goal <text>] [--input <name=value>] [--max-rows <n>]',
       'USAGE_ERROR'
     );
   }
@@ -26,7 +26,7 @@ export async function detectUrlCommand(url: string | undefined, args: string[]):
     return printUsageError(
       json,
       '错误: 缺少 URL',
-      '用法: octopus run-url <url> --goal <text>|--auto [--input <name=value>] [--max-rows <n>] [--json|--jsonl]',
+      '用法: bazhuayu run-url <url> --goal <text>|--auto [--input <name=value>] [--max-rows <n>] [--json|--jsonl]',
       'USAGE_ERROR'
     );
   }
@@ -37,7 +37,7 @@ export async function detectUrlCommand(url: string | undefined, args: string[]):
     return printUsageError(
       json,
       error instanceof Error ? error.message : String(error),
-      '示例: octopus run-url https://example.com/list --auto',
+      '示例: bazhuayu run-url https://example.com/list --auto',
       'DETECT_URL_INVALID'
     );
   }
@@ -49,7 +49,7 @@ export async function detectUrlCommand(url: string | undefined, args: string[]):
     return printUsageError(
       json,
       'run-url 需要 --auto 或 --select <candidateId>，避免猜错采集目标。',
-      '先运行: octopus detect <url>',
+      '先运行: bazhuayu detect <url>',
       'DETECT_SELECT_REQUIRED'
     );
   }

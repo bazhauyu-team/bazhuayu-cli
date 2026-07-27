@@ -1141,7 +1141,7 @@ function trimBody(body: string): string {
 function httpApiError(prefix: string, status: number, statusText: string, baseUrl: string, endpoint: string, body: string): ApiRequestError {
   if (status === 401 || status === 403) {
     return new ApiRequestError(
-      `Authentication is invalid, expired, or not accepted by the current API environment. Run "octopus auth login" again or check ${API_BASE_URL_ENV}.`,
+      `Authentication is invalid, expired, or not accepted by the current API environment. Run "bazhuayu auth login" again or check ${API_BASE_URL_ENV}.`,
       'AUTH_INVALID',
       status,
       trimBody(body)
@@ -1158,7 +1158,7 @@ function httpApiError(prefix: string, status: number, statusText: string, baseUr
 function requireAuthCredential(options: { apiKey?: string; auth?: AuthCredential }): AuthCredential {
   if (options.auth?.value) return options.auth;
   if (options.apiKey) return { type: 'apiKey', value: options.apiKey };
-  throw new ApiRequestError('Authentication required. Run "octopus auth login".', 'AUTH_REQUIRED');
+  throw new ApiRequestError('Authentication required. Run "bazhuayu auth login".', 'AUTH_REQUIRED');
 }
 
 function authHeaders(credential: AuthCredential): Record<string, string> {

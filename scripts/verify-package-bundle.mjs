@@ -30,6 +30,11 @@ try {
 
   const globalRoot = capture('npm', ['root', '--global', '--prefix', prefix], tempRoot).trim();
   const installedRoot = join(globalRoot, ...packageJson.name.split('/'));
+  const installedPackage = readJson(join(installedRoot, 'package.json'));
+  const installedBins = Object.entries(installedPackage.bin ?? {});
+  if (installedBins.length !== 1 || installedBins[0]?.[0] !== 'bazhuayu' || installedBins[0]?.[1] !== 'dist/index.js') {
+    throw new Error(`Packed CLI bin mismatch: ${JSON.stringify(installedPackage.bin ?? {})}`);
+  }
   const workflowRoot = join(installedRoot, 'node_modules', '@octopus', 'workflow-core');
   const workflowPackage = readJson(join(workflowRoot, 'package.json'));
   if (!workflowPackage.dependencies?.axios || !workflowPackage.dependencies?.jsonpath) {
@@ -53,16 +58,36 @@ try {
   }
 
   const binary = process.platform === 'win32'
-    ? join(prefix, 'octopus.cmd')
-    : join(prefix, 'bin', 'octopus');
+    ? join(prefix, 'bazhuayu.cmd')
+    : join(prefix, 'bin', 'bazhuayu');
+  const legacyBinaries = process.platform === 'win32'
+    ? [join(prefix, 'octopus'), join(prefix, 'octopus.cmd'), join(prefix, 'octopus.ps1')]
+    : [join(prefix, 'bin', 'octopus')];
+  if (!existsSync(binary)) {
+    throw new Error(`Packed CLI binary is missing: ${binary}`);
+  }
+  if (legacyBinaries.some((legacyBinary) => existsSync(legacyBinary))) {
+    throw new Error('Packed CLI unexpectedly exposes the legacy octopus binary.');
+  }
+
   const binaryOptions = { shell: process.platform === 'win32' };
   const version = capture(binary, ['--version'], tempRoot, binaryOptions).trim();
   if (version !== packageJson.version) {
     throw new Error(`Packed CLI version mismatch: expected ${packageJson.version}, got ${version || '<empty>'}`);
   }
 
+  const help = capture(binary, ['--help'], tempRoot, binaryOptions);
+  if (!help.trimStart().startsWith(`bazhuayu ${packageJson.version}`) || /\boctopus\s/.test(help)) {
+    throw new Error('Packed CLI help does not consistently expose the bazhuayu binary.');
+  }
+
   const capabilities = JSON.parse(capture(binary, ['capabilities', '--json'], tempRoot, binaryOptions));
-  if (!capabilities.ok || capabilities.data?.version !== packageJson.version) {
+  if (!capabilities.ok
+    || capabilities.data?.version !== packageJson.version
+    || capabilities.data?.name !== 'bazhuayu'
+    || capabilities.data?.primaryBinary !== 'bazhuayu'
+    || capabilities.data?.invocation?.installed !== 'bazhuayu'
+    || capabilities.data?.machineContract?.agentEntrypoint?.firstCommand !== 'bazhuayu capabilities --json') {
     throw new Error('Packed CLI capabilities check failed.');
   }
 

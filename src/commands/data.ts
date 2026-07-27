@@ -17,7 +17,7 @@ export async function localHistory(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const outputDir = resolve(valueAfter(args, '--output') ?? defaultRunsDir());
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus local history <taskId> [--output <dir>] [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: bazhuayu local history <taskId> [--output <dir>] [--json]');
   }
 
   const lots = await listLocalLots(outputDir, taskId);
@@ -49,7 +49,7 @@ export async function localExport(args: string[]): Promise<number> {
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      '用法: octopus local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]'
+      '用法: bazhuayu local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]'
     );
   }
 
@@ -124,7 +124,7 @@ async function cloudDataExport(args: string[]): Promise<number> {
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      '用法: octopus data export <taskId> --source cloud [--file <result.xlsx>] [--lot-id <lotId>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]'
+      '用法: bazhuayu data export <taskId> --source cloud [--file <result.xlsx>] [--lot-id <lotId>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]'
     );
   }
 
@@ -182,7 +182,7 @@ async function localDataCount(args: string[]): Promise<number> {
   const lotId = valueAfter(args, '--lot-id') ?? valueAfter(args, '--lot');
 
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus data count <taskId> [--source local|cloud] [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: bazhuayu data count <taskId> [--source local|cloud] [--json]');
   }
 
   const lot = await findLocalLot(outputDir, taskId, lotId);
@@ -213,7 +213,7 @@ async function cloudDataCount(args: string[]): Promise<number> {
   const unexported = hasFlag(args, '--unexported');
 
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus data count <taskId> --source cloud [--unexported] [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: bazhuayu data count <taskId> --source cloud [--unexported] [--json]');
   }
 
   const auth = await resolveAuth();
@@ -250,7 +250,7 @@ async function localDataPreview(args: string[]): Promise<number> {
   const offsetArg = valueAfter(args, '--offset');
 
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus data preview <taskId> [--source local|cloud] [--limit <n>] [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: bazhuayu data preview <taskId> [--source local|cloud] [--limit <n>] [--json]');
   }
 
   const lot = await findLocalLot(outputDir, taskId, lotId);
@@ -289,7 +289,7 @@ async function cloudDataPreview(args: string[]): Promise<number> {
   const offsetArg = valueAfter(args, '--offset');
 
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus data preview <taskId> --source cloud [--limit <n>] [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: bazhuayu data preview <taskId> --source cloud [--limit <n>] [--json]');
   }
 
   const auth = await resolveAuth();

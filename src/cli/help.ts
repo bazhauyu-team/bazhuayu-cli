@@ -6,7 +6,7 @@ export function printCommandHelp(command: string, subcommand?: string): void {
   const key = subcommand && !subcommand.startsWith('-') ? `${command} ${subcommand}` : command;
   const help: Record<string, string> = {
     capabilities: `Usage:
-  octopus capabilities [--json]
+  bazhuayu capabilities [--json]
 
 Purpose:
   Print machine-readable CLI capabilities for agents.
@@ -18,7 +18,7 @@ Purpose:
   and run the CLI workflow themselves.
   Agent task creation context includes the user goal and a full-page screenshot
   by default.
-  bazhuayu-cli is the npm package name; octopus is the installed binary.
+  bazhuayu-cli is the npm package name; bazhuayu is the installed binary.
   If a user says "use bazhuayu-cli to create a task for this URL", agents should
   inspect this command and then execute the recipe without asking the user to
   explain internal detect flags.
@@ -27,13 +27,13 @@ Authentication:
   Does not require login. Functional commands do.
 `,
   auth: `Usage:
-  octopus auth login [--oauth] [--no-open] [--json]
-  octopus auth login --api-key <apiKey> [--api-base-url <url>] [--json]
-  octopus auth login <apiKey> [--api-base-url <url>] [--json]
-  octopus auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
-  octopus auth status [--json]
-  octopus auth info [--json]
-  octopus auth logout [--json]
+  bazhuayu auth login [--oauth] [--no-open] [--json]
+  bazhuayu auth login --api-key <apiKey> [--api-base-url <url>] [--json]
+  bazhuayu auth login <apiKey> [--api-base-url <url>] [--json]
+  bazhuayu auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
+  bazhuayu auth status [--json]
+  bazhuayu auth info [--json]
+  bazhuayu auth logout [--json]
 
 Login methods:
   Interactive login lets you choose OAuth or API key.
@@ -52,28 +52,28 @@ Agent notes:
   Functional commands require configured credentials, including local task-file and OTD runs.
 `,
     env: `Usage:
-  octopus env prod [--json]
-  octopus env online [--json]
-  octopus env status [--json]
+  bazhuayu env prod [--json]
+  bazhuayu env online [--json]
+  bazhuayu env status [--json]
 
 Purpose:
   Hidden internal command for switching API environment.
 `,
     task: `Usage:
-  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
-  octopus task show <taskId> [--json]
-  octopus task copy <taskId> [--task-group <groupId>] [--json]
-  octopus task rename <taskId> --name <name> --yes [--json]
-  octopus task move <taskId> --task-group <groupId> --yes [--json]
-  octopus task delete <taskId> --yes [--json]
-  octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
-  octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+  bazhuayu task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
+  bazhuayu task show <taskId> [--json]
+  bazhuayu task copy <taskId> [--task-group <groupId>] [--json]
+  bazhuayu task rename <taskId> --name <name> --yes [--json]
+  bazhuayu task move <taskId> --task-group <groupId> --yes [--json]
+  bazhuayu task delete <taskId> --yes [--json]
+  bazhuayu task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+  bazhuayu task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
 
 Notes:
   rename/move/delete modify remote tasks and require --yes.
 `,
     'task list': `Usage:
-  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
+  bazhuayu task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
 
 Options:
   --page <n>                    Page number to fetch. Defaults to 1.
@@ -91,50 +91,50 @@ Options:
   --json                        Print a machine-readable JSON envelope.
 
 Examples:
-  octopus task list
-  octopus task list --page 2 --page-size 20
-  octopus task list --keyword news --page 2 --page-size 10
-  octopus task list --template-id template-123 --json
+  bazhuayu task list
+  bazhuayu task list --page 2 --page-size 20
+  bazhuayu task list --keyword news --page 2 --page-size 10
+  bazhuayu task list --template-id template-123 --json
 `,
     'task inspect': `Usage:
-  octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+  bazhuayu task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
 `,
     'task validate': `Usage:
-  octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+  bazhuayu task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
 `,
     'task-group': `Usage:
-  octopus task-group list [--json]
-  octopus task-group create <name> [--json]
-  octopus task-group update <groupId> --name <name> --yes [--json]
-  octopus task-group delete <groupId> --yes [--json]
-  octopus task-group set-default <groupId> --yes [--json]
+  bazhuayu task-group list [--json]
+  bazhuayu task-group create <name> [--json]
+  bazhuayu task-group update <groupId> --name <name> --yes [--json]
+  bazhuayu task-group delete <groupId> --yes [--json]
+  bazhuayu task-group set-default <groupId> --yes [--json]
 
 Notes:
   update/delete/set-default modify remote task group state and require --yes.
 `,
     template: `Usage:
-  octopus template search <keyword> [--page <n>] [--page-size <n>] [--json]
-  octopus template view <templateRegistrationId> [--json]
-  octopus template version <templateRegistrationId> [--json]
+  bazhuayu template search <keyword> [--page <n>] [--page-size <n>] [--json]
+  bazhuayu template view <templateRegistrationId> [--json]
+  bazhuayu template version <templateRegistrationId> [--json]
 
 Notes:
   Domestic template APIs use templateRegistrationId for catalog detail lookup.
 `,
     'template search': `Usage:
-  octopus template search <keyword> [--page <n>] [--page-size <n>] [--kind-id <id>] [--free true|false] [--run-on <n>] [--scope <n>] [--json]
+  bazhuayu template search <keyword> [--page <n>] [--page-size <n>] [--kind-id <id>] [--free true|false] [--run-on <n>] [--scope <n>] [--json]
 `,
     'template view': `Usage:
-  octopus template view <templateRegistrationId> [--json]
+  bazhuayu template view <templateRegistrationId> [--json]
 
 JSON output includes normalized parameters, parameterExample, parameterSource, and
 createExamples for agent/template-task creation workflows.
 `,
     'template version': `Usage:
-  octopus template version <templateRegistrationId> [--json]
+  bazhuayu template version <templateRegistrationId> [--json]
 `,
     'template-task': `Usage:
-  octopus template-task create <templateRegistrationId> [--name <taskName>] [--task-group <groupId>] [--param key=value]... [--params <json>|--params-file <file>] [--dry-run] [--json]
-  octopus template-task update <taskId> [--params <json>|--params-file <file>] --yes [--json]
+  bazhuayu template-task create <templateRegistrationId> [--name <taskName>] [--task-group <groupId>] [--param key=value]... [--params <json>|--params-file <file>] [--dry-run] [--json]
+  bazhuayu template-task update <taskId> [--params <json>|--params-file <file>] --yes [--json]
 
 Notes:
   Prefer --param key=value for agent-friendly template creation when template view
@@ -144,11 +144,11 @@ Notes:
   update modifies remote template task mapping and requires --yes.
 `,
     schedule: `Usage:
-  octopus schedule cloud get <taskId> [--json]
-  octopus schedule cloud update <taskId> --type <type> --date <value> --time <value> [--month <value>] [--enabled true|false] --yes [--json]
-  octopus schedule cloud start <taskId> --yes [--json]
-  octopus schedule cloud stop <taskId> --yes [--json]
-  octopus schedule cloud next --type <type> --date <value> --time <value> [--month <value>] [--json]
+  bazhuayu schedule cloud get <taskId> [--json]
+  bazhuayu schedule cloud update <taskId> --type <type> --date <value> --time <value> [--month <value>] [--enabled true|false] --yes [--json]
+  bazhuayu schedule cloud start <taskId> --yes [--json]
+  bazhuayu schedule cloud stop <taskId> --yes [--json]
+  bazhuayu schedule cloud next --type <type> --date <value> --time <value> [--month <value>] [--json]
 
 Schedule types:
   1=date/once, 2=weekly, 3=monthly, 4=interval-minute, 5=every-hour, 6=daily.
@@ -160,22 +160,22 @@ Notes:
   local SQLite/node-schedule queue.
 `,
     'schedule cloud': `Usage:
-  octopus schedule cloud get <taskId> [--json]
-  octopus schedule cloud update <taskId> --type <type> --date <value> --time <value> [--month <value>] [--enabled true|false] --yes [--json]
-  octopus schedule cloud start <taskId> --yes [--json]
-  octopus schedule cloud stop <taskId> --yes [--json]
-  octopus schedule cloud next --type <type> --date <value> --time <value> [--month <value>] [--json]
+  bazhuayu schedule cloud get <taskId> [--json]
+  bazhuayu schedule cloud update <taskId> --type <type> --date <value> --time <value> [--month <value>] [--enabled true|false] --yes [--json]
+  bazhuayu schedule cloud start <taskId> --yes [--json]
+  bazhuayu schedule cloud stop <taskId> --yes [--json]
+  bazhuayu schedule cloud next --type <type> --date <value> --time <value> [--month <value>] [--json]
 
 Schedule types:
   1=date/once, 2=weekly, 3=monthly, 4=interval-minute, 5=every-hour, 6=daily.
 `,
     browser: `Usage:
-  octopus browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]
-  octopus browser use status [--json]
-  octopus browser status [--browser-id chrome|edge] [--profile <name>] [--json]
-  octopus browser install [--browser-id chrome|edge] [--profile <name>] [--force-close] [--json]
-  octopus browser close [--browser-id chrome|edge] [--profile <name>] [--json]
-  octopus browser profiles [--browser-id chrome|edge] [--json]
+  bazhuayu browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]
+  bazhuayu browser use status [--json]
+  bazhuayu browser status [--browser-id chrome|edge] [--profile <name>] [--json]
+  bazhuayu browser install [--browser-id chrome|edge] [--profile <name>] [--force-close] [--json]
+  bazhuayu browser close [--browser-id chrome|edge] [--profile <name>] [--json]
+  bazhuayu browser profiles [--browser-id chrome|edge] [--json]
 
 Purpose:
   Choose the default browser for run/detect, and manage the permanently installed
@@ -186,23 +186,23 @@ Browser modes:
   user         System Chrome/Edge + permanently installed extension (Windows/macOS).
 
 Examples:
-  octopus browser status --browser-id chrome --json
-  octopus browser profiles --browser-id chrome --json
-  octopus browser install --browser-id chrome --profile "Default" --force-close --json
+  bazhuayu browser status --browser-id chrome --json
+  bazhuayu browser profiles --browser-id chrome --json
+  bazhuayu browser install --browser-id chrome --profile "Default" --force-close --json
   # Reopen Chrome once and confirm the extension is enabled, then verify status.
-  octopus browser status --browser-id chrome --profile "Default" --json
-  octopus browser use user --browser-id chrome --profile "Default" --json
-  octopus browser use user                 # default run/detect to user browser
-  octopus browser use user --profile "Profile 1"
-  octopus browser use independent          # switch back to Chrome for Testing
-  octopus browser use status               # show saved default
+  bazhuayu browser status --browser-id chrome --profile "Default" --json
+  bazhuayu browser use user --browser-id chrome --profile "Default" --json
+  bazhuayu browser use user                 # default run/detect to user browser
+  bazhuayu browser use user --profile "Profile 1"
+  bazhuayu browser use independent          # switch back to Chrome for Testing
+  bazhuayu browser use status               # show saved default
 
 Notes:
   Recommended order: status -> profiles -> install -> reopen/enable -> status -> use user.
   In --json mode, follow data.nextActions (or error.details.nextActions) until
   status reports readyForUserBrowserRun=true; only then persist user mode.
   Saved default lives in ~/.octopus/config.json and applies to both run and detect.
-  Override once with: octopus run|detect ... --browser independent|user
+  Override once with: bazhuayu run|detect ... --browser independent|user
   Env override: OCTOPUS_BROWSER=user|independent (optional OCTOPUS_BROWSER_ID / OCTOPUS_BROWSER_PROFILE)
   User browser mode reuses your real Chrome/Edge profile (cookies/login state).
   Installing the extension requires the browser to be fully closed.
@@ -212,7 +212,7 @@ Notes:
   After install, reopen the browser once and confirm the extension is enabled.
 `,
     run: `Usage:
-  octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
+  bazhuayu run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
 
 Agent notes:
   Requires configured credentials even when --task-file points to a local JSON, XML, or OTD file.
@@ -223,22 +223,22 @@ Agent notes:
   run only starts local collection. Use data export <taskId> --lot-id <lotId> for files.
   Local Chrome execution supports macOS x64/arm64, Windows x64, and Linux x64.
   Linux arm64 is not supported because Chrome for Testing has no Linux arm64 browser package.
-  Browser selection (priority): --browser flag > OCTOPUS_BROWSER env > octopus browser use > independent.
-  Set default once: octopus browser use user|independent
+  Browser selection (priority): --browser flag > OCTOPUS_BROWSER env > bazhuayu browser use > independent.
+  Set default once: bazhuayu browser use user|independent
   --browser independent launches a temporary Chrome for Testing profile.
   --browser user reuses system Chrome/Edge with the permanently installed extension.
-  User browser setup includes: octopus browser install (full verified flow: octopus browser --help)
+  User browser setup includes: bazhuayu browser install (full verified flow: bazhuayu browser --help)
   Agents should follow browserRuntime.modes.user.setupRecipe from capabilities --json.
   User browser mode does not support --headless.
 `,
     detect: `Usage:
-  octopus detect <url> --prepare-agent --json [--goal <text>] [--output context.json]
-  octopus detect --preview-agent-plan plan.json --agent-context context.json [--json]
-  octopus detect --apply-agent-plan plan.json --agent-context context.json --output task.json [--json]
-  octopus detect <url> --agent --agent-command <cmd> [--goal <text>] [--output task.json] [--run-sample <n>]
-  octopus detect <url> --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
-  octopus detect <url> --manual [--goal <text>] [--llm-rank] [--no-dismiss-popups]
-  octopus detect <url> --browser independent|user [--browser-id chrome|edge] [--profile <name>] [--force-close-browser] --auto|--manual|--agent ...
+  bazhuayu detect <url> --prepare-agent --json [--goal <text>] [--output context.json]
+  bazhuayu detect --preview-agent-plan plan.json --agent-context context.json [--json]
+  bazhuayu detect --apply-agent-plan plan.json --agent-context context.json --output task.json [--json]
+  bazhuayu detect <url> --agent --agent-command <cmd> [--goal <text>] [--output task.json] [--run-sample <n>]
+  bazhuayu detect <url> --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
+  bazhuayu detect <url> --manual [--goal <text>] [--llm-rank] [--no-dismiss-popups]
+  bazhuayu detect <url> --browser independent|user [--browser-id chrome|edge] [--profile <name>] [--force-close-browser] --auto|--manual|--agent ...
 
 Purpose:
   Open the Octopus extension browser, inspect the page, and list candidate data regions
@@ -246,18 +246,18 @@ Purpose:
 
 Notes:
   Quote URLs that contain '&', '?' or other shell metacharacters, for example:
-  octopus detect 'https://example.com/page?a=1&b=2' --manual
+  bazhuayu detect 'https://example.com/page?a=1&b=2' --manual
   The first pass is deterministic and does not require an LLM. For direct
   CLI-only use, --auto chooses the best candidate and generates a task.
   --manual opens a guided flow for login,
   popup handling, choosing the highlighted data region, optional session save,
   and task-file generation.
   Browser selection matches run: --browser flag > OCTOPUS_BROWSER env >
-  octopus browser use default > independent.
-  Set default once: octopus browser use user|independent
+  bazhuayu browser use default > independent.
+  Set default once: bazhuayu browser use user|independent
   --browser independent launches temporary Chrome for Testing.
   --browser user reuses system Chrome/Edge + permanently installed extension
-  (Windows/macOS). Setup includes octopus browser install; see: octopus browser --help
+  (Windows/macOS). Setup includes bazhuayu browser install; see: bazhuayu browser --help
   Agents should follow browserRuntime.modes.user.setupRecipe and JSON nextActions.
   User-browser detect/run does not require closing an already-open Chrome;
   it opens a dedicated session window and closes only that window when finished.
@@ -283,7 +283,7 @@ Notes:
   a session reference in generated task files; later local runs load that session automatically.
   Cookie sessions do not cover every site, especially pages that require localStorage,
   device binding, or fresh verification.
-  Agents should discover this workflow via "octopus capabilities --json" and
+  Agents should discover this workflow via "bazhuayu capabilities --json" and
   machineContract.recipes.createTaskFromUrlWithAgent; users should not need to
   explain the prepare/plan/preview/apply sequence manually.
   If an LLM/agent is helping the user create a scraping task, prefer that recipe
@@ -334,28 +334,28 @@ Notes:
   verification.
 `,
     cloud: `Usage:
-  octopus cloud start <taskId> [--json]
-  octopus cloud stop <taskId> [--json]
-  octopus cloud status <taskId> [--json]
-  octopus cloud history <taskId> [--json]
+  bazhuayu cloud start <taskId> [--json]
+  bazhuayu cloud stop <taskId> [--json]
+  bazhuayu cloud status <taskId> [--json]
+  bazhuayu cloud history <taskId> [--json]
 
 Notes:
   Cloud collection only supports start/stop. There is no cloud pause/resume.
 `,
     local: `Usage:
-  octopus local status <taskId> [--output <dir>] [--json]
-  octopus local pause <taskId> [--json]
-  octopus local resume <taskId> [--json]
-  octopus local stop <taskId> [--json]
-  octopus local history <taskId> [--output <dir>] [--json]
-  octopus local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]
-  octopus local cleanup [--json]
+  bazhuayu local status <taskId> [--output <dir>] [--json]
+  bazhuayu local pause <taskId> [--json]
+  bazhuayu local resume <taskId> [--json]
+  bazhuayu local stop <taskId> [--json]
+  bazhuayu local history <taskId> [--output <dir>] [--json]
+  bazhuayu local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]
+  bazhuayu local cleanup [--json]
 `,
     data: `Usage:
-  octopus data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
-  octopus data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
-  octopus data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
-  octopus data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
+  bazhuayu data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
+  bazhuayu data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
+  bazhuayu data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
+  bazhuayu data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
 
 Defaults:
   --source local
@@ -365,35 +365,35 @@ Defaults:
   --file task-name.<format>, with Windows-style duplicate suffixes
 `,
     'data history': `Usage:
-  octopus data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
+  bazhuayu data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
 `,
     'data count': `Usage:
-  octopus data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
+  bazhuayu data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
 `,
     'data preview': `Usage:
-  octopus data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
+  bazhuayu data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
 `,
     'data export': `Usage:
-  octopus data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
+  bazhuayu data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
 
 Notes:
   --unexported reads cloud unexported rows but does not mark them as exported.
 `,
     runs: `Usage:
-  octopus runs list [--output <dir>] [--json]
-  octopus runs status <runId> [--output <dir>] [--json]
-  octopus runs logs <runId> [--output <dir>] [--limit 100] [--json]
-  octopus runs data <runId> [--output <dir>] [--limit 100] [--json]
-  octopus runs cleanup [--output <dir>] [--json]
+  bazhuayu runs list [--output <dir>] [--json]
+  bazhuayu runs status <runId> [--output <dir>] [--json]
+  bazhuayu runs logs <runId> [--output <dir>] [--limit 100] [--json]
+  bazhuayu runs data <runId> [--output <dir>] [--limit 100] [--json]
+  bazhuayu runs cleanup [--output <dir>] [--json]
 
 Purpose:
   Internal local artifact inspection. User workflows should use taskId/lotId commands:
-  octopus data history <taskId> --source local
-  octopus data export <taskId> --source local --lot-id <lotId>
+  bazhuayu data history <taskId> --source local
+  bazhuayu data export <taskId> --source local --lot-id <lotId>
   cleanup removes stale control files whose local control socket is gone.
 `,
     doctor: `Usage:
-  octopus doctor [--chrome-path <path>] [--output <runsDir>] [--api-base-url <url>] [--json]
+  bazhuayu doctor [--chrome-path <path>] [--output <runsDir>] [--api-base-url <url>] [--json]
 
 Purpose:
   Check the full local CLI environment: Node.js, bundled engine files, protected
@@ -403,59 +403,59 @@ Purpose:
 `
   };
 
-  console.log(help[key] ?? help[command] ?? '使用 octopus --help 查看可用命令');
+  console.log(help[key] ?? help[command] ?? '使用 bazhuayu --help 查看可用命令');
 }
 
 export function printRootHelp(version: string): void {
-  console.log(`octopus ${version}
+  console.log(`bazhuayu ${version}
 
 Standalone Octoparse engine CLI.
 
 Usage:
-  octopus capabilities [--json]
-  octopus doctor [--chrome-path <path>] [--output <runsDir>] [--api-base-url <url>] [--json]
-  octopus browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]
-  octopus browser status|install|close|profiles [--browser-id chrome|edge] [--profile <name>] [--json]
-  octopus auth login <apiKey> [--api-base-url <url>] [--json]
-  octopus auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
-  octopus auth status [--json]
-  octopus auth info [--json]
-  octopus auth logout [--json]
-  octopus task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
-  octopus task show <taskId> [--json]
-  octopus task copy <taskId> [--task-group <groupId>] [--json]
-  octopus task rename <taskId> --name <name> --yes [--json]
-  octopus task move <taskId> --task-group <groupId> --yes [--json]
-  octopus task delete <taskId> --yes [--json]
-  octopus task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
-  octopus task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
-  octopus task-group list/create/update/delete/set-default [--json]
-  octopus template search/view/version [--json]
-  octopus template-task create/update [--json]
-  octopus schedule cloud get/update/start/stop/next [--json]
-  octopus detect URL --prepare-agent --json --goal <text> --output context.json
-  octopus detect --preview-agent-plan plan.json --agent-context context.json [--json]
-  octopus detect --apply-agent-plan plan.json --agent-context context.json --output task.json
-  octopus detect URL --agent --agent-command <cmd> [--output task.json] [--run-sample <n>]
-  octopus detect URL --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
-  octopus detect URL --manual [--goal <text>] [--llm-rank] [--no-dismiss-popups]
-  octopus detect URL --browser user [--profile <name>] --auto|--manual|--agent ...
-  octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
-  octopus cloud start <taskId> [--json]
-  octopus cloud stop <taskId> [--json]
-  octopus cloud status <taskId> [--json]
-  octopus cloud history <taskId> [--json]
-  octopus local status <taskId> [--output <dir>] [--json]
-  octopus local pause <taskId> [--json]
-  octopus local resume <taskId> [--json]
-  octopus local stop <taskId> [--json]
-  octopus local history <taskId> [--output <dir>] [--json]
-  octopus local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]
-  octopus local cleanup [--json]
-  octopus data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
-  octopus data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
-  octopus data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
-  octopus data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
+  bazhuayu capabilities [--json]
+  bazhuayu doctor [--chrome-path <path>] [--output <runsDir>] [--api-base-url <url>] [--json]
+  bazhuayu browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]
+  bazhuayu browser status|install|close|profiles [--browser-id chrome|edge] [--profile <name>] [--json]
+  bazhuayu auth login <apiKey> [--api-base-url <url>] [--json]
+  bazhuayu auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
+  bazhuayu auth status [--json]
+  bazhuayu auth info [--json]
+  bazhuayu auth logout [--json]
+  bazhuayu task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
+  bazhuayu task show <taskId> [--json]
+  bazhuayu task copy <taskId> [--task-group <groupId>] [--json]
+  bazhuayu task rename <taskId> --name <name> --yes [--json]
+  bazhuayu task move <taskId> --task-group <groupId> --yes [--json]
+  bazhuayu task delete <taskId> --yes [--json]
+  bazhuayu task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+  bazhuayu task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+  bazhuayu task-group list/create/update/delete/set-default [--json]
+  bazhuayu template search/view/version [--json]
+  bazhuayu template-task create/update [--json]
+  bazhuayu schedule cloud get/update/start/stop/next [--json]
+  bazhuayu detect URL --prepare-agent --json --goal <text> --output context.json
+  bazhuayu detect --preview-agent-plan plan.json --agent-context context.json [--json]
+  bazhuayu detect --apply-agent-plan plan.json --agent-context context.json --output task.json
+  bazhuayu detect URL --agent --agent-command <cmd> [--output task.json] [--run-sample <n>]
+  bazhuayu detect URL --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
+  bazhuayu detect URL --manual [--goal <text>] [--llm-rank] [--no-dismiss-popups]
+  bazhuayu detect URL --browser user [--profile <name>] --auto|--manual|--agent ...
+  bazhuayu run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
+  bazhuayu cloud start <taskId> [--json]
+  bazhuayu cloud stop <taskId> [--json]
+  bazhuayu cloud status <taskId> [--json]
+  bazhuayu cloud history <taskId> [--json]
+  bazhuayu local status <taskId> [--output <dir>] [--json]
+  bazhuayu local pause <taskId> [--json]
+  bazhuayu local resume <taskId> [--json]
+  bazhuayu local stop <taskId> [--json]
+  bazhuayu local history <taskId> [--output <dir>] [--json]
+  bazhuayu local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]
+  bazhuayu local cleanup [--json]
+  bazhuayu data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
+  bazhuayu data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
+  bazhuayu data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
+  bazhuayu data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
 
 Task file format:
   {
@@ -472,7 +472,7 @@ Task file format:
 
 Design:
   - Runs embedded @octopus/browser-runtime directly.
-  - Default local mode uses independent Chrome for Testing (override with octopus browser use user).
+  - Default local mode uses independent Chrome for Testing (override with bazhuayu browser use user).
   - Optional --browser user reuses system Chrome/Edge + permanently installed extension (Windows/macOS).
   - Supports local Chrome execution on macOS x64/arm64, Windows x64, and Linux x64.
   - Does not support Linux arm64 local execution because Chrome for Testing has no Linux arm64 browser package.
@@ -484,11 +484,11 @@ Authentication:
   OAuth or API key credentials are required for all functional commands, including local --task-file and .otd runs.
   Only setup/diagnostic commands can run without it: --help, --version, capabilities, doctor, browser, auth, env.
   API key page:                   ${API_KEYS_URL}
-  octopus auth login --oauth   open browser OAuth login and store tokens
-  octopus auth login <key>     verify and store a copied API key directly
-  octopus auth login          choose OAuth or API key interactively
-  octopus auth login --stdin  read API key from stdin, verify it, then store it
-  octopus auth login --no-open do not open the browser during interactive login
+  bazhuayu auth login --oauth   open browser OAuth login and store tokens
+  bazhuayu auth login <key>     verify and store a copied API key directly
+  bazhuayu auth login          choose OAuth or API key interactively
+  bazhuayu auth login --stdin  read API key from stdin, verify it, then store it
+  bazhuayu auth login --no-open do not open the browser during interactive login
   ${API_KEY_ENV}                  overrides stored credentials
   ${ACCESS_TOKEN_ENV}             uses a bearer access token instead of stored credentials
   ${API_BASE_URL_ENV}             overrides API base URL; default is the production API
@@ -501,7 +501,7 @@ Run diagnostics:
   --browser-id chrome|edge     target browser for --browser user
   --profile <name>             Chromium profile directory for --browser user
   --force-close-browser        optional: force-close user browser before user-mode launch (not required; default reuses running browser)
-  octopus browser use ...      set default browser for run/detect (saved in ~/.octopus/config.json)
+  bazhuayu browser use ...      set default browser for run/detect (saved in ~/.octopus/config.json)
   --debug-bridge              include extension bridge command/response logs
 
 Agent contract:

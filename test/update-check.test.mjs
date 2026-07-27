@@ -39,14 +39,14 @@ test('isUpdateCheckDue uses a 24 hour interval', () => {
 
 test('renderUpdatePrompt matches the interactive update menu', () => {
   const prompt = renderUpdatePrompt({
-    cliName: 'octopus',
+    cliName: 'bazhuayu',
     packageName: 'bazhuayu-cli',
     currentVersion: '0.1.15',
     latestVersion: '0.1.16',
     releaseNotesUrl: 'https://github.com/bazhauyu-team/bazhuayu-cli/releases/latest'
   });
 
-  assert.match(prompt, /octopus/);
+  assert.match(prompt, /bazhuayu/);
   assert.match(prompt, /Update available! 0\.1\.15 -> 0\.1\.16/);
   assert.match(prompt, /Release notes: https:\/\/github\.com\/bazhauyu-team\/bazhuayu-cli\/releases\/latest/);
   assert.doesNotMatch(prompt, /Update now/);
@@ -70,7 +70,7 @@ test('maybePrintUpdateNotice prompts and updates when user chooses option 1', as
 
   await maybePrintUpdateNotice({
     args: ['task', 'list'],
-    cliName: 'octopus',
+    cliName: 'bazhuayu',
     packageName: 'bazhuayu-cli',
     currentVersion: '0.1.15',
     now: new Date('2026-05-18T12:00:00.000Z'),
@@ -106,7 +106,7 @@ test('maybePrintUpdateNotice does not fetch or print while cache is fresh', asyn
   const cacheFile = join(dir, 'update-check.json');
   await maybePrintUpdateNotice({
     args: ['task', 'list'],
-    cliName: 'octopus',
+    cliName: 'bazhuayu',
     packageName: 'bazhuayu-cli',
     currentVersion: '0.1.15',
     now: new Date('2026-05-18T12:00:00.000Z'),
@@ -122,7 +122,7 @@ test('maybePrintUpdateNotice does not fetch or print while cache is fresh', asyn
   let fetchCount = 0;
   await maybePrintUpdateNotice({
     args: ['task', 'list'],
-    cliName: 'octopus',
+    cliName: 'bazhuayu',
     packageName: 'bazhuayu-cli',
     currentVersion: '0.1.15',
     now: new Date('2026-05-18T12:30:00.000Z'),

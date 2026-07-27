@@ -101,7 +101,7 @@ export async function doctorCommand(args: string[]): Promise<number> {
     runtime: {
       supported: ['chrome', 'user-chrome', 'user-edge'],
       unsupported: ['kernel', 'legacy-workflow'],
-      browserMode: 'configurable: independent Chrome (default) or user Chrome/Edge via octopus browser use',
+      browserMode: 'configurable: independent Chrome (default) or user Chrome/Edge via bazhuayu browser use',
       electronClient: 'not required'
     }
   };
@@ -159,8 +159,8 @@ function checkUserBrowserReadiness(): { check: DoctorCheck; summary: Record<stri
       ? `${inspection.browser.name} was not found for user-browser mode.`
       : inspection.extensionStatus.needsInstallOrUpdate
         ? inspection.launch.requiresClose
-          ? `Octopus extension needs install/update in ${inspection.browser.name}. Close it first, then: octopus browser install`
-          : `Octopus extension needs install/update in ${inspection.browser.name}. Run: octopus browser install`
+          ? `Octopus extension needs install/update in ${inspection.browser.name}. Close it first, then: bazhuayu browser install`
+          : `Octopus extension needs install/update in ${inspection.browser.name}. Run: bazhuayu browser install`
         : inspection.launch.requiresClose
           ? `User browser mode ready (${inspection.browser.name} is running; run/detect will open a new session window).`
           : `User browser mode ready (${inspection.browser.name}, profile=${inspection.defaultProfileName ?? 'Default'}).`;
@@ -404,7 +404,7 @@ async function authCheck(baseUrlArg: string | undefined): Promise<DoctorCheck> {
     return warningCheck('auth', auth.error, { baseUrl });
   }
   if (!auth.authenticated || !auth.credential) {
-    return warningCheck('auth', 'not logged in; run "octopus auth login" before functional commands', {
+    return warningCheck('auth', 'not logged in; run "bazhuayu auth login" before functional commands', {
       baseUrl,
       credentialsFile: auth.credentialsFile
     });

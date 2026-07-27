@@ -143,9 +143,9 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
     const issue = await timed('pageAccessCheckMs', () => detectPageAccessIssue(page));
     if (issue) throw new DetectionPageAccessError(issue);
   };
+  let apiCapture: ApiResponseCapture | null = null;
   try {
     options = { ...options, onPhaseTiming: recordPhaseTiming };
-    let apiCapture: ApiResponseCapture | null = null;
     host = await timed('hostStartMs', () => ExtensionDetectorHost.start(options, {
       onTargetPageReady(page) {
         apiCapture = startApiResponseCapture(page);
@@ -342,6 +342,7 @@ export async function detectPage(options: DetectOptions): Promise<PageDetectionR
       ...(popupDismissals.length ? { popupDismissals: dedupePopupDismissals(popupDismissals) } : {})
     };
   } finally {
+    apiCapture?.stop();
     try {
       await host?.close();
     } finally {

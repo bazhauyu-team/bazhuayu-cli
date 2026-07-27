@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { connect } from 'node:net';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
@@ -206,8 +208,8 @@ test('run help documents --browser user flags', async () => {
   const result = await runCli(['run', '--help']);
   assert.equal(result.code, 0, result.stdout || result.stderr);
   assert.match(result.stdout, /--browser independent\|user/);
-  assert.match(result.stdout, /octopus browser use/);
-  assert.match(result.stdout, /octopus browser install/);
+  assert.match(result.stdout, /bazhuayu browser use/);
+  assert.match(result.stdout, /bazhuayu browser install/);
   assert.match(result.stdout, /setupRecipe/);
 });
 
@@ -215,8 +217,8 @@ test('detect help documents --browser user flags', async () => {
   const result = await runCli(['detect', '--help']);
   assert.equal(result.code, 0, result.stdout || result.stderr);
   assert.match(result.stdout, /--browser user/);
-  assert.match(result.stdout, /octopus browser use/);
-  assert.match(result.stdout, /octopus browser install/);
+  assert.match(result.stdout, /bazhuayu browser use/);
+  assert.match(result.stdout, /bazhuayu browser install/);
   assert.match(result.stdout, /setupRecipe/);
   assert.match(result.stdout, /session window/i);
 });
@@ -258,6 +260,25 @@ test('bootstrap page server serves a friendly splash page', async () => {
     assert.match(body, /news\.example/);
     assert.match(body, /不是采集目标网站/);
   } finally {
+    await server.close();
+  }
+});
+
+test('bootstrap page server closes active keep-alive connections', async () => {
+  const { startBootstrapPageServer } = await import('../dist/runtime/bootstrap-page.js');
+  const server = await startBootstrapPageServer({ mode: 'detect' });
+  const origin = new URL(server.origin);
+  const socket = connect(Number(origin.port), origin.hostname);
+  try {
+    await once(socket, 'connect');
+    socket.write(`GET / HTTP/1.1\r\nHost: ${origin.host}\r\nConnection: keep-alive\r\n\r\n`);
+    await once(socket, 'data');
+    const socketClosed = once(socket, 'close', { signal: AbortSignal.timeout(2_000) });
+    await server.close();
+    await socketClosed;
+    assert.equal(socket.destroyed, true);
+  } finally {
+    socket.destroy();
     await server.close();
   }
 });
@@ -372,12 +393,12 @@ test('capabilities documents user browser mode for run and detect', async () => 
   assert.ok(payload.data.authentication.diagnosticCommandsWithoutAuth.includes('browser'));
   assert.ok(payload.data.browserRuntime.modes.independent.default);
   assert.equal(payload.data.browserRuntime.modes.user.default, false);
-  assert.equal(payload.data.browserRuntime.defaultSelection.setCommand, 'octopus browser use independent|user');
+  assert.equal(payload.data.browserRuntime.defaultSelection.setCommand, 'bazhuayu browser use independent|user');
   assert.ok(payload.data.browserRuntime.defaultSelection.order.includes('--browser flag'));
   assert.ok(payload.data.browserRuntime.modes.user.runFlags.includes('--browser user'));
   assert.ok(payload.data.browserRuntime.modes.user.detectFlags.includes('--browser user'));
   assert.ok(payload.data.browserRuntime.modes.user.affectedCommands.includes('detect'));
-  assert.ok(payload.data.browserRuntime.modes.user.setupCommands.some((command) => command.startsWith('octopus browser use user')));
+  assert.ok(payload.data.browserRuntime.modes.user.setupCommands.some((command) => command.startsWith('bazhuayu browser use user')));
   const setupRecipe = payload.data.browserRuntime.modes.user.setupRecipe;
   assert.equal(setupRecipe.steps[0].step, 'inspect');
   assert.equal(setupRecipe.steps.at(-1).step, 'persist');

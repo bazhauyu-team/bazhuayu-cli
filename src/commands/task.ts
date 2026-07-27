@@ -11,7 +11,7 @@ export async function taskList(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const auth = await resolveAuth();
   if (!auth.authenticated || !auth.credential) {
-    const message = `Authentication required. Run "octopus auth login" or set ${API_KEY_ENV}.`;
+    const message = `Authentication required. Run "bazhuayu auth login" or set ${API_KEY_ENV}.`;
     if (json) printEnvelope(false, undefined, 'AUTH_REQUIRED', message);
     else console.error(`认证失败: ${message}`);
     return EXIT_OPERATION_FAILED;
@@ -68,7 +68,7 @@ export async function taskShow(args: string[]): Promise<number> {
   const taskId = firstPositionalArg(args, ['--api-base-url']);
   const json = hasFlag(args, '--json');
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus task show <taskId> [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: bazhuayu task show <taskId> [--json]');
   }
 
   const auth = await resolveAuth();
@@ -92,7 +92,7 @@ export async function taskCopy(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const groupId = valueAfter(args, '--task-group') ?? valueAfter(args, '--group-id');
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus task copy <taskId> [--task-group <groupId>] [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: bazhuayu task copy <taskId> [--task-group <groupId>] [--json]');
   }
 
   const auth = await resolveAuth();
@@ -113,7 +113,7 @@ export async function taskRename(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const name = valueAfter(args, '--name');
   if (!taskId || !name) {
-    return printUsageError(json, '错误: 缺少 taskId 或 --name', '用法: octopus task rename <taskId> --name <name> --yes [--json]');
+    return printUsageError(json, '错误: 缺少 taskId 或 --name', '用法: bazhuayu task rename <taskId> --name <name> --yes [--json]');
   }
   const guard = requireExplicitYes(args, json, '重命名任务', `taskId=${taskId}`);
   if (guard !== null) return guard;
@@ -136,7 +136,7 @@ export async function taskMove(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const groupId = valueAfter(args, '--task-group') ?? valueAfter(args, '--group-id');
   if (!taskId || !groupId) {
-    return printUsageError(json, '错误: 缺少 taskId 或 --task-group', '用法: octopus task move <taskId> --task-group <groupId> --yes [--json]');
+    return printUsageError(json, '错误: 缺少 taskId 或 --task-group', '用法: bazhuayu task move <taskId> --task-group <groupId> --yes [--json]');
   }
   const guard = requireExplicitYes(args, json, '移动任务', `taskId=${taskId}, groupId=${groupId}`);
   if (guard !== null) return guard;
@@ -158,7 +158,7 @@ export async function taskDelete(args: string[]): Promise<number> {
   const taskId = firstPositionalArg(args, ['--api-base-url']);
   const json = hasFlag(args, '--json');
   if (!taskId) {
-    return printUsageError(json, '错误: 缺少 taskId', '用法: octopus task delete <taskId> --yes [--json]');
+    return printUsageError(json, '错误: 缺少 taskId', '用法: bazhuayu task delete <taskId> --yes [--json]');
   }
   const guard = requireExplicitYes(args, json, '删除任务', `taskId=${taskId}`);
   if (guard !== null) return guard;
@@ -192,7 +192,7 @@ export async function taskInspect(command: string, args: string[]): Promise<numb
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      `用法: octopus task ${command} <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]`
+      `用法: bazhuayu task ${command} <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]`
     );
   }
 

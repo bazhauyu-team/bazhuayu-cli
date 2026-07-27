@@ -35,7 +35,7 @@ export function printDetectHuman(result: PageDetectionResult): void {
     console.log('  这个页面主要是搜索/输入入口。先在浏览器打开搜索结果页，再对结果页运行 detect。');
   } else {
     console.log(`  优先看 [${recommended.id}] ${candidateTypeLabel(recommended.type)}。`);
-    console.log(`  生成任务: octopus detect ${shellArg(result.finalUrl)} --select ${recommended.id} --output task.json`);
+    console.log(`  生成任务: bazhuayu detect ${shellArg(result.finalUrl)} --select ${recommended.id} --output task.json`);
     console.log('  注意: task.json 是实际文件名，不要输入尖括号。');
   }
   for (const candidate of visibleCandidates) {
@@ -56,9 +56,9 @@ export function printDetectHuman(result: PageDetectionResult): void {
     const sample = candidate.sampleRows[0];
     if (sample) console.log(`    样例=${formatSample(sample)}`);
     if (candidate.type === 'form') {
-      console.log('    下一步: octopus detect <url> --input wd=关键词');
+      console.log('    下一步: bazhuayu detect <url> --input wd=关键词');
     } else {
-      console.log(`    生成: octopus detect ${shellArg(result.finalUrl)} --select ${candidate.id} --output task.json`);
+      console.log(`    生成: bazhuayu detect ${shellArg(result.finalUrl)} --select ${candidate.id} --output task.json`);
     }
   }
 }

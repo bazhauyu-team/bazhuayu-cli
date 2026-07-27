@@ -1,21 +1,21 @@
 # Agent Usage
 
-`octopus` exposes stable machine-oriented surfaces for automation. Agents should prefer those surfaces and avoid parsing human-readable output.
+`bazhuayu` exposes stable machine-oriented surfaces for automation. Agents should prefer those surfaces and avoid parsing human-readable output.
 
 ## Discovery
 
 Use `capabilities --json` as the canonical discovery entrypoint:
 
 ```bash
-octopus capabilities --json
+bazhuayu capabilities --json
 ```
 
 Helpful read-only help commands:
 
 ```bash
-octopus --help
-octopus run --help
-octopus data export --help
+bazhuayu --help
+bazhuayu run --help
+bazhuayu data export --help
 ```
 
 `capabilities --json` publishes the current machine contract, including:
@@ -52,7 +52,7 @@ Failures use the same envelope:
 When `--json` is present, usage failures also use the same envelope. Common error codes are discoverable from:
 
 ```bash
-octopus capabilities --json
+bazhuayu capabilities --json
 ```
 
 Path:
@@ -64,7 +64,7 @@ data.machineContract.json.commonErrorCodes
 Use `--jsonl` for foreground local runs:
 
 ```bash
-octopus run <taskId> --jsonl
+bazhuayu run <taskId> --jsonl
 ```
 
 Each line is one event object. Agents should switch on the stable `event` field. Stable lifecycle events are published by `capabilities --json`. Runtime-specific operational events such as `captcha` and `proxy` can also appear when the engine requests them.
@@ -119,7 +119,7 @@ Commands available before authentication:
 Non-interactive setup:
 
 ```bash
-printf '%s' "$API_KEY" | octopus auth login --stdin --json
+printf '%s' "$API_KEY" | bazhuayu auth login --stdin --json
 ```
 
 `auth login` verifies the key before saving `~/.octopus/credentials.json`. Invalid or environment-mismatched keys fail with `AUTH_INVALID` and are not saved.
@@ -141,10 +141,10 @@ When the user asks to reuse their signed-in Chrome or Edge profile, read:
 data.browserRuntime.modes.user.setupRecipe
 ```
 
-from `octopus capabilities --json`. Do not guess flags or persist user mode
+from `bazhuayu capabilities --json`. Do not guess flags or persist user mode
 before verification. The required state machine is:
 
-1. Run `octopus browser status --browser-id <chrome|edge> --json`.
+1. Run `bazhuayu browser status --browser-id <chrome|edge> --json`.
 2. Follow `data.nextActions`. Use `browser profiles --json` to select an existing
    `profileName` when a specific signed-in profile is required.
 3. Run `browser install` for that same browser/profile. On
@@ -160,7 +160,7 @@ before verification. The required state machine is:
 Switch back with:
 
 ```bash
-octopus browser use independent --json
+bazhuayu browser use independent --json
 ```
 
 Selection priority is CLI flags, then `OCTOPUS_BROWSER*` environment variables,
@@ -194,20 +194,20 @@ npm run test:cli-contract
 List tasks:
 
 ```bash
-octopus task list --json
+bazhuayu task list --json
 ```
 
 Inspect or validate a task before running:
 
 ```bash
-octopus task inspect <taskId> --json
-octopus task validate <taskId> --task-file ./task.json --json
+bazhuayu task inspect <taskId> --json
+bazhuayu task validate <taskId> --task-file ./task.json --json
 ```
 
 Start local collection in the background:
 
 ```bash
-octopus run <taskId> --detach --json
+bazhuayu run <taskId> --detach --json
 ```
 
 Detached startup returns machine-readable bootstrap details including:
@@ -221,11 +221,11 @@ If the child exits before the local control channel becomes ready, the command f
 Control local collection:
 
 ```bash
-octopus local status <taskId> --json
-octopus local pause <taskId> --json
-octopus local resume <taskId> --json
-octopus local stop <taskId> --json
-octopus local cleanup --json
+bazhuayu local status <taskId> --json
+bazhuayu local pause <taskId> --json
+bazhuayu local resume <taskId> --json
+bazhuayu local stop <taskId> --json
+bazhuayu local cleanup --json
 ```
 
 If a previous local owner process exits without cleaning its control file, `local status` returns `active: false`, `status: "not_running"`, and stale-state metadata such as `cleanedStaleState`, `lastStatus`, and `lastRunId`. `local cleanup` removes stale task-level control files in bulk.
@@ -233,11 +233,11 @@ If a previous local owner process exits without cleaning its control file, `loca
 Inspect or export collected data through task-oriented commands:
 
 ```bash
-octopus data history <taskId> --source local --json
-octopus data history <taskId> --source cloud --json
-octopus data export <taskId> --source local --format xlsx --json
-octopus data export <taskId> --source cloud --format csv --json
-octopus data export <taskId> --source cloud --lot-id <lotId> --file result.csv --json
+bazhuayu data history <taskId> --source local --json
+bazhuayu data history <taskId> --source cloud --json
+bazhuayu data export <taskId> --source local --format xlsx --json
+bazhuayu data export <taskId> --source cloud --format csv --json
+bazhuayu data export <taskId> --source cloud --lot-id <lotId> --file result.csv --json
 ```
 
 If `--file` is omitted, the CLI creates a filename from the task name. Existing files are not overwritten; the CLI appends Windows-style suffixes such as ` (1)` and ` (2)`.
@@ -245,20 +245,20 @@ If `--file` is omitted, the CLI creates a filename from the task name. Existing 
 Control cloud collection:
 
 ```bash
-octopus cloud start <taskId> --json
-octopus cloud stop <taskId> --json
-octopus cloud status <taskId> --json
-octopus cloud history <taskId> --json
+bazhuayu cloud start <taskId> --json
+bazhuayu cloud stop <taskId> --json
+bazhuayu cloud status <taskId> --json
+bazhuayu cloud history <taskId> --json
 ```
 
 For low-level local artifact inspection, internal `runs` commands remain available:
 
 ```bash
-octopus runs list --json
-octopus runs status <runId> --json
-octopus runs logs <runId> --json
-octopus runs data <runId> --json
-octopus runs cleanup --json
+bazhuayu runs list --json
+bazhuayu runs status <runId> --json
+bazhuayu runs logs <runId> --json
+bazhuayu runs data <runId> --json
+bazhuayu runs cleanup --json
 ```
 
 Prefer task-oriented commands for normal user or agent flows. Use `runs` only when you need direct access to local artifact state by `runId`.

@@ -1,6 +1,7 @@
 import { createCipheriv, randomUUID } from 'node:crypto';
 import { hostname, platform, release } from 'node:os';
 import { clientVersion } from './client-headers.js';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { AuthSource } from './auth.js';
 import type { RunOptions, RunStatus, TaskDefinition } from '../types.js';
 
@@ -48,6 +49,9 @@ export interface TrackingRunContext {
 
 export class TrackingClient {
   private readonly launchId = randomUUID();
+  private readonly pendingUploads = new Set<Promise<void>>();
+  private readonly uploadControllers = new Set<AbortController>();
+  private closed = false;
 
   constructor(
     private readonly context: CliTrackingContext = {},
@@ -59,16 +63,39 @@ export class TrackingClient {
   }
 
   sendMany(events: TrackingEvent[]): void {
-    if (!isTrackingEnabled()) return;
-    if (!events.length) return;
-    void this.upload(events).catch((error) => {
-      if (process.env[TRACKING_DEBUG_ENV] === '1') {
-        console.error(`tracking upload failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    });
+    if (this.closed || !isTrackingEnabled() || !events.length) return;
+    const controller = new AbortController();
+    const upload = this.upload(events, controller.signal)
+      .catch((error) => {
+        if (process.env[TRACKING_DEBUG_ENV] === '1') {
+          console.error(`tracking upload failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      })
+      .finally(() => {
+        this.pendingUploads.delete(upload);
+        this.uploadControllers.delete(controller);
+      });
+    this.uploadControllers.add(controller);
+    this.pendingUploads.add(upload);
   }
 
-  private async upload(events: TrackingEvent[]): Promise<void> {
+  async close(timeoutMs = 500): Promise<void> {
+    this.closed = true;
+    if (!this.pendingUploads.size) return;
+    const timeoutController = new AbortController();
+    const completed = await Promise.race([
+      Promise.allSettled([...this.pendingUploads]).then(() => true),
+      delay(timeoutMs, undefined, { signal: timeoutController.signal }).then(() => false)
+    ]);
+    timeoutController.abort();
+    if (completed) return;
+    for (const controller of this.uploadControllers) {
+      controller.abort(new Error('CLI tracking shutdown'));
+    }
+    await Promise.allSettled([...this.pendingUploads]);
+  }
+
+  private async upload(events: TrackingEvent[], signal: AbortSignal): Promise<void> {
     const payload = {
       product: 'Bazhuayu',
       channel: 'Cli',
@@ -96,7 +123,8 @@ export class TrackingClient {
       },
       body: JSON.stringify({
         data: encryptTrackingPayload(JSON.stringify(payload))
-      })
+      }),
+      signal
     });
     if (!response.ok) {
       throw new Error(`tracking HTTP ${response.status}`);

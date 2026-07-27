@@ -71,7 +71,7 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      '用法: octopus run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--max-rows <n>] [--detach] [--json|--jsonl]'
+      '用法: bazhuayu run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--max-rows <n>] [--detach] [--json|--jsonl]'
     );
   }
 
@@ -79,7 +79,7 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
     return printUsageError(
       json,
       'run 没有 export 子命令；run 只负责启动本地采集。',
-      '导出数据请使用: octopus data export <taskId> [--source local|cloud] [--lot-id <lotId>] [--file <result.xlsx>] [--format xlsx|csv|html|json|xml]'
+      '导出数据请使用: bazhuayu data export <taskId> [--source local|cloud] [--lot-id <lotId>] [--file <result.xlsx>] [--format xlsx|csv|html|json|xml]'
     );
   }
 
@@ -121,7 +121,7 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
     return printUsageError(
       options.json || options.jsonl,
       maxRowsError,
-      '用法: octopus run <taskId> [--max-rows <正整数>] [--json|--jsonl]',
+      '用法: bazhuayu run <taskId> [--max-rows <正整数>] [--json|--jsonl]',
       'RUN_MAX_ROWS_INVALID'
     );
   }
@@ -172,7 +172,7 @@ export function buildLocalRunResourceWarning(
       `starting this task will bring the total to ${projectedLocalRuns}. `,
       'Each task starts an independent Chrome process. Too many local runs can consume significant memory and CPU, ',
       'slow collection, crash browser pages, or make the system unresponsive. ',
-      'Consider stopping tasks you no longer need with octopus local status and octopus local stop.'
+      'Consider stopping tasks you no longer need with bazhuayu local status and bazhuayu local stop.'
     ].join('')
   };
 }
@@ -270,7 +270,7 @@ async function startDetachedRun(
     console.log(`Status: ${data.status}`);
     if (data.outputDir) console.log(`Output: ${data.outputDir}`);
     console.log(`Bootstrap: ${bootstrap.dir}`);
-    console.log(`Control: octopus local status ${taskId}`);
+    console.log(`Control: bazhuayu local status ${taskId}`);
   }
   return EXIT_OK;
 }
@@ -661,6 +661,7 @@ async function executeTask(
       useCaptchaCount: captchaRequests,
       useProxyCount: proxyRequests
     }));
+    await tracking.close();
     if (detachedBootstrapDir) {
       await writeDetachedBootstrap(detachedBootstrapDir, {
         status: finalSummary.status,
@@ -731,6 +732,7 @@ async function executeTask(
       useCaptchaCount: captchaRequests,
       useProxyCount: proxyRequests
     }));
+    await tracking.close();
     if (detachedBootstrapDir) {
       await writeDetachedBootstrap(detachedBootstrapDir, {
         status: 'failed',
@@ -824,7 +826,7 @@ function runErrorCode(error: unknown): string {
 }
 
 export function localDataExportCommand(summary: Pick<RunSummary, 'taskId' | 'lotId'>): string {
-  return `octopus data export ${summary.taskId} --source local --lot-id ${summary.lotId}`;
+  return `bazhuayu data export ${summary.taskId} --source local --lot-id ${summary.lotId}`;
 }
 
 async function parseRunOptions(taskId: string, args: string[]): Promise<RunOptions> {

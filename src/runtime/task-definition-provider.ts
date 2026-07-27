@@ -67,7 +67,7 @@ export class TaskDefinitionProvider {
 async function getRemoteTaskDefinition(taskId: string): Promise<TaskDefinition> {
   const auth = await resolveAuth();
   if (!auth.credential) {
-    throw new Error(`Authentication required. Run "octopus auth login" or set ${API_KEY_ENV}.`);
+    throw new Error(`Authentication required. Run "bazhuayu auth login" or set ${API_KEY_ENV}.`);
   }
 
   let info: RemoteTaskInfo;
@@ -92,12 +92,12 @@ async function getRemoteTaskDefinition(taskId: string): Promise<TaskDefinition> 
 async function taskNotFoundMessage(taskId: string, auth: Awaited<ReturnType<typeof resolveAuth>>['credential']): Promise<string> {
   const suggestion = auth ? await findTaskIdSuggestion(taskId, auth).catch(() => null) : null;
   if (!suggestion) {
-    return `云端任务未找到或响应无效: ${taskId}。请用 "octopus task list" 复制完整 taskId 后重试。`;
+    return `云端任务未找到或响应无效: ${taskId}。请用 "bazhuayu task list" 复制完整 taskId 后重试。`;
   }
   return [
     `云端任务未找到或响应无效: ${taskId}。`,
     `你是不是想运行: ${suggestion.taskId}${suggestion.taskName ? ` (${suggestion.taskName})` : ''}`,
-    `命令: octopus run ${suggestion.taskId}`
+    `命令: bazhuayu run ${suggestion.taskId}`
   ].join('\n');
 }
 

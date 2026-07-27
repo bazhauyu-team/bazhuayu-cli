@@ -1,6 +1,6 @@
 {
   "name": "bazhuayu-cli",
-  "version": "0.1.30",
+  "version": "0.1.32",
   "description": "Standalone Bazhuayu engine CLI that runs local collection without the Electron client.",
   "private": false,
   "type": "module",
@@ -21,12 +21,12 @@
     "RUNTIME_SECURITY_NOTICE.txt"
   ],
   "bin": {
-    "octopus": "dist/index.js"
+    "bazhuayu": "dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/build.mjs",
     "dev": "tsx src/index.ts",
-    "prepack": "node scripts/prepare-package-bundle.mjs",
+    "prepack": "npm run build && node scripts/prepare-package-bundle.mjs",
     "postpack": "node scripts/restore-package-after-pack.mjs",
     "release": "node scripts/release.mjs",
     "start": "node dist/index.js",

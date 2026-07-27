@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import { createServer } from 'node:http';
 import { access, chmod, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { mock, test } from 'node:test';
 import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import { authCommand, createWindowsUrlLauncherFile } from '../dist/commands/auth.js';
 import { doctorCommand } from '../dist/commands/doctor.js';
 import { cloudCommand, cloudHistory } from '../dist/commands/cloud.js';
@@ -71,6 +72,40 @@ async function runCliWithStdin(args, input, options = {}) {
     child.stdin.end(input);
   });
 }
+async function runNodeUntilNaturalExit(entry, timeoutMs = 4_000) {
+  return await new Promise((resolveResult, reject) => {
+    const child = spawn(process.execPath, [entry], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeoutMs);
+    child.once('error', (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.once('close', (code, signal) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (timedOut) {
+        reject(new Error(`child did not exit naturally within ${timeoutMs}ms; stdout=${stdout}; stderr=${stderr}`));
+        return;
+      }
+      resolveResult({ code: code ?? 1, signal, stdout, stderr });
+    });
+  });
+}
+
 
 function parseJson(stdout) {
   return JSON.parse(stdout);
@@ -112,8 +147,8 @@ async function fakeHealthyChrome() {
 }
 
 function assertDetectHelpPrefersAgentWorkflow(stdout) {
-  const prepareMatch = stdout.match(/octopus detect (?:URL|<url>) --prepare-agent/);
-  const autoMatch = stdout.match(/octopus detect (?:URL|<url>) --auto/);
+  const prepareMatch = stdout.match(/bazhuayu detect (?:URL|<url>) --prepare-agent/);
+  const autoMatch = stdout.match(/bazhuayu detect (?:URL|<url>) --auto/);
   const prepareIndex = prepareMatch?.index ?? -1;
   const autoIndex = autoMatch?.index ?? -1;
   assert.ok(prepareIndex >= 0, stdout);
@@ -121,6 +156,59 @@ function assertDetectHelpPrefersAgentWorkflow(stdout) {
   assert.ok(prepareIndex < autoIndex, stdout);
   assert.match(stdout, /Do not treat --auto examples as the default\s+LLM\/agent workflow/);
 }
+
+test('package exposes only the bazhuayu executable', async () => {
+  const [packageJson, packageLock] = await Promise.all([
+    readFile(resolve('package.json'), 'utf8').then(JSON.parse),
+    readFile(resolve('package-lock.json'), 'utf8').then(JSON.parse)
+  ]);
+  assert.deepEqual(packageJson.bin, { bazhuayu: 'dist/index.js' });
+  assert.deepEqual(packageLock.packages[''].bin, packageJson.bin);
+});
+test('bridge shutdown lets a completed command process exit naturally', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'bazhuayu-bridge-exit-'));
+  const fixture = join(dir, 'bridge-exit.mjs');
+  const bridgeHubUrl = pathToFileURL(resolve('dist/runtime/bridge-hub.js')).href;
+  const wsModule = resolve('node_modules/ws');
+  await writeFile(fixture, `
+    import { createRequire } from 'node:module';
+    import { BridgeHub } from ${JSON.stringify(bridgeHubUrl)};
+    const require = createRequire(import.meta.url);
+    const { WebSocket } = require(${JSON.stringify(wsModule)});
+    const hub = new BridgeHub();
+    const bridge = await hub.createSessionBridge('exit-fixture');
+    await hub.createSessionBridge('pending-fixture');
+    const pendingRegistration = hub.waitForSessionConnected('pending-fixture', 30_000)
+      .then(() => 'unexpected-registration')
+      .catch((error) => error.message);
+    const client = new WebSocket(bridge.runtimeConfig.wsUrl);
+    await new Promise((resolveRegistered, rejectRegistered) => {
+      client.once('error', rejectRegistered);
+      client.once('open', () => {
+        client.send(JSON.stringify({ type: 'register', sessionId: 'exit-fixture' }));
+      });
+      client.on('message', (raw) => {
+        const message = JSON.parse(raw.toString());
+        if (message.type === 'registered' && message.success) resolveRegistered();
+      });
+    });
+    client._socket.pause();
+    console.log('Generated task: fixture.json');
+    console.log('Validate: bazhuayu task validate exit-fixture --task-file fixture.json');
+    console.log('Run: bazhuayu run exit-fixture --task-file fixture.json');
+    await hub.close();
+    console.log(await pendingRegistration);
+    console.log('bridge-closed');
+  `);
+
+  const result = await runNodeUntilNaturalExit(fixture);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.signal, null);
+  assert.match(result.stdout, /Generated task: fixture\.json/);
+  assert.match(result.stdout, /Bridge hub closed before extension registration/);
+  assert.match(result.stdout, /bridge-closed/);
+});
+
 
 test('run supports apiList task files with page pagination', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'octopus-api-list-run-'));
@@ -350,7 +438,7 @@ test('functional commands require API key even for local task files', async () =
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, 'AUTH_REQUIRED');
   assert.match(payload.error.message, /bazhuayu\.com\/console\/account-center\/api-keys/);
-  assert.match(payload.error.message, /octopus auth login/);
+  assert.match(payload.error.message, /bazhuayu auth login/);
 });
 
 test('capabilities is available before authentication and documents API key contract', async () => {
@@ -364,8 +452,8 @@ test('capabilities is available before authentication and documents API key cont
   assert.equal(payload.data.authentication.env, 'OCTOPUS_API_KEY');
   assert.ok(payload.data.authentication.diagnosticCommandsWithoutAuth.includes('capabilities'));
   assert.equal(payload.data.packageName, 'bazhuayu-cli');
-  assert.equal(payload.data.primaryBinary, 'octopus');
-  assert.equal(payload.data.machineContract.agentEntrypoint.firstCommand, 'octopus capabilities --json');
+  assert.equal(payload.data.primaryBinary, 'bazhuayu');
+  assert.equal(payload.data.machineContract.agentEntrypoint.firstCommand, 'bazhuayu capabilities --json');
   assert.match(payload.data.machineContract.agentEntrypoint.rule, /bazhuayu-cli/);
   assert.equal(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.shouldUseCliForUserTaskCreationRequests, true);
   assert.equal(payload.data.machineContract.agentEntrypoint.agentInvocationPolicy.preferredRecipe, 'machineContract.recipes.createTaskFromUrlWithAgent');
@@ -487,7 +575,7 @@ test('auth login verifies API key before saving', async () => {
 test('auth status fails when no API key is configured', async () => {
   const result = await runCli(['auth', 'status', '--json']);
   const payload = assertJsonFailure(result, 'AUTH_REQUIRED');
-  assert.match(payload.error.message, /octopus auth login/);
+  assert.match(payload.error.message, /bazhuayu auth login/);
 });
 
 test('auth status fails when configured API key is invalid', async () => {
@@ -2208,7 +2296,7 @@ test('remote task not found suggests a nearby listed task id', async () => {
       (error) => {
         assert.match(error.message, /你是不是想运行/);
         assert.match(error.message, /6aeabf8f73ef/);
-        assert.match(error.message, /octopus run 2dca8f7d-c689-c5dd-a0d4-6aeabf8f73ef/);
+        assert.match(error.message, /bazhuayu run 2dca8f7d-c689-c5dd-a0d4-6aeabf8f73ef/);
         return true;
       }
     );
@@ -3314,7 +3402,7 @@ test('local run emits Chrome resolve progress as runtime log events', async () =
 test('run completion prints a copyable local data export command', () => {
   assert.equal(
     localDataExportCommand({ taskId: 'task-1', lotId: '1778123456789' }),
-    'octopus data export task-1 --source local --lot-id 1778123456789'
+    'bazhuayu data export task-1 --source local --lot-id 1778123456789'
   );
 });
 
@@ -3475,6 +3563,12 @@ test('max rows completes when the runtime never settles its start promise after 
   assert.equal(result.jsonl.some((item) => item.event === 'run.failed'), false);
 });
 
+test('engine host terminates a stubborn independent browser child', async () => {
+  const result = await runWithFakeRuntimeEvent('stubborn-browser', { stubbornBrowserProcess: true });
+  assert.equal(result.code, 0);
+  assert.equal(result.browserProcessExitCode !== null || result.browserProcessSignalCode !== null, true);
+});
+
 async function runWithFakeRuntimeEvent(scenario, options = {}) {
   const originalFetch = globalThis.fetch;
   const originalApiKey = process.env.OCTOPUS_API_KEY;
@@ -3508,6 +3602,7 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
 
   let workflowInstance;
   let workflowTask;
+  let browserChild;
   const workflowEvents = {
     ExtraData: 'extraData',
     Log: 'log',
@@ -3525,6 +3620,7 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
     closeCalls = 0;
     sentProxy = [];
     captchaTokens = [];
+    chromeProcess;
 
     constructor(task) {
       super();
@@ -3535,6 +3631,14 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
     }
 
     async start() {
+      if (options.stubbornBrowserProcess) {
+        browserChild = spawn(process.execPath, [
+          '-e',
+          "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000);"
+        ], { stdio: ['ignore', 'pipe', 'ignore'] });
+        this.chromeProcess = { process: browserChild };
+        await once(browserChild.stdout, 'data');
+      }
       setImmediate(() => {
         if (options.rowData) {
           this.emit(workflowEvents.ExtraData, {
@@ -3711,9 +3815,14 @@ async function runWithFakeRuntimeEvent(scenario, options = {}) {
       workflowCloseCalls: workflowInstance?.closeCalls ?? 0,
       workflowTask,
       sentProxy: workflowInstance?.sentProxy ?? [],
-      captchaTokens: workflowInstance?.captchaTokens ?? []
+      captchaTokens: workflowInstance?.captchaTokens ?? [],
+      browserProcessExitCode: browserChild?.exitCode ?? null,
+      browserProcessSignalCode: browserChild?.signalCode ?? null
     };
   } finally {
+    if (browserChild && browserChild.exitCode === null && browserChild.signalCode === null) {
+      browserChild.kill('SIGKILL');
+    }
     setEngineHostFactoryForTesting(undefined);
     globalThis.fetch = originalFetch;
     console.log = originalLog;

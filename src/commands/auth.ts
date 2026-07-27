@@ -52,7 +52,7 @@ export async function authCommand(subcommand: string | undefined, args: string[]
     return authLogout(args);
   }
 
-  return printUsageError(json, '错误: auth 子命令无效', '用法: octopus auth <login|status|info|logout> [--json]');
+  return printUsageError(json, '错误: auth 子命令无效', '用法: bazhuayu auth <login|status|info|logout> [--json]');
 }
 
 export async function ensureAuthenticated(json: boolean): Promise<number> {
@@ -65,7 +65,7 @@ export async function ensureAuthenticated(json: boolean): Promise<number> {
 export function printAuthRequired(json: boolean): number {
   const message = [
     'Authentication required.',
-    'Run "octopus auth login" and choose OAuth or API key.',
+    'Run "bazhuayu auth login" and choose OAuth or API key.',
     `API keys can be created at ${API_KEYS_URL}.`,
     `For CI, set ${API_KEY_ENV} or ${ACCESS_TOKEN_ENV}.`
   ].join(' ');
@@ -75,7 +75,7 @@ export function printAuthRequired(json: boolean): number {
     console.error('认证失败: 需要登录后才能继续。');
     console.error('');
     console.error('然后运行:');
-    console.error('  octopus auth login');
+    console.error('  bazhuayu auth login');
     console.error('');
     console.error(`CI / 脚本环境可以设置 ${API_KEY_ENV} 或 ${ACCESS_TOKEN_ENV}。`);
   }
@@ -133,7 +133,7 @@ async function authLoginApiKey(args: string[], json: boolean, readFromStdin: boo
       console.log(`Credentials: ${status.credentialsFile}`);
       console.log('');
       console.log('Next:');
-      console.log('  octopus task list');
+      console.log('  bazhuayu task list');
     }
     return EXIT_OK;
   } catch (error) {
@@ -188,7 +188,7 @@ async function authLoginOAuth(args: string[]): Promise<number> {
       console.log(`Credentials: ${status.credentialsFile}`);
       console.log('');
       console.log('Next:');
-      console.log('  octopus task list');
+      console.log('  bazhuayu task list');
     }
     return EXIT_OK;
   } catch (error) {
@@ -308,7 +308,7 @@ async function authStatus(args: string[]): Promise<number> {
       return printAuthRequired(true);
     }
     console.log('Not authenticated');
-    console.log('Run: octopus auth login');
+    console.log('Run: bazhuayu auth login');
     return EXIT_OPERATION_FAILED;
   }
 
@@ -359,7 +359,7 @@ async function authStatus(args: string[]): Promise<number> {
     } else {
       console.error(`认证失败: ${message}`);
       if (code === 'AUTH_INVALID') {
-        console.error(`可重新登录: octopus auth login`);
+        console.error(`可重新登录: bazhuayu auth login`);
       }
     }
     return EXIT_OPERATION_FAILED;
@@ -402,7 +402,7 @@ async function authInfo(args: string[]): Promise<number> {
     } else {
       console.error(`获取账号信息失败: ${message}`);
       if (code === 'AUTH_INVALID') {
-        console.error(`可重新登录: octopus auth login`);
+        console.error(`可重新登录: bazhuayu auth login`);
       }
     }
     return EXIT_OPERATION_FAILED;

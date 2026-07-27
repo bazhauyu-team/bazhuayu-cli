@@ -33,7 +33,7 @@ export async function runInlineAgentDetect(options: {
     return printUsageError(
       options.json,
       '缺少 Agent 命令：请传 --agent-command，或设置 OCTOPUS_AGENT_COMMAND。',
-      '示例: octopus detect URL --agent --agent-command "node make-plan.mjs" --output task.json',
+      '示例: bazhuayu detect URL --agent --agent-command "node make-plan.mjs" --output task.json',
       'USAGE_ERROR'
     );
   }
@@ -116,8 +116,8 @@ export async function runInlineAgentDetect(options: {
     else if (!options.quiet) {
       console.log(`Generated task: ${file}`);
       if (sampleRun) console.log(`Sample run: exit=${sampleRun.exitCode} maxRows=${sampleRun.requestedRows}`);
-      console.log(`Validate: octopus task validate ${taskId} --task-file ${file}`);
-      console.log(`Run: octopus run ${taskId} --task-file ${file}`);
+      console.log(`Validate: bazhuayu task validate ${taskId} --task-file ${file}`);
+      console.log(`Run: bazhuayu run ${taskId} --task-file ${file}`);
       if (hasFlag(options.args, '--keep-agent-files')) {
         console.log(`Agent context: ${contextFile}`);
         console.log(`Agent plan: ${planFile}`);

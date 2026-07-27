@@ -288,7 +288,7 @@ async function apiRequest(options: {
   bodyFormat?: 'json' | 'form';
 }): Promise<unknown> {
   const auth = await resolveAuth();
-  if (!auth.credential) throw new ApiRequestError('Authentication required. Run "octopus auth login".', 'AUTH_REQUIRED');
+  if (!auth.credential) throw new ApiRequestError('Authentication required. Run "bazhuayu auth login".', 'AUTH_REQUIRED');
   const baseUrl = await resolveApiBaseUrl();
   const url = new URL(options.endpoint, `${baseUrl}/`);
   for (const [key, value] of Object.entries(options.query ?? {})) {

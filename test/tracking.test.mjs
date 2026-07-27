@@ -53,6 +53,40 @@ test('tracking uploads encrypted CLI payload to CN production endpoint', async (
   }
 });
 
+test('tracking close aborts stalled uploads', async () => {
+  const originalDisabled = process.env.OCTOPUS_TRACKING_DISABLED;
+  const originalUrl = process.env.OCTOPUS_TRACKING_URL;
+  delete process.env.OCTOPUS_TRACKING_DISABLED;
+  process.env.OCTOPUS_TRACKING_URL = 'http://127.0.0.1:1';
+  let uploadSignal;
+  const client = new TrackingClient({}, async (_url, init) => {
+    uploadSignal = init.signal;
+    return await new Promise((_resolve, reject) => {
+      if (uploadSignal.aborted) {
+        reject(uploadSignal.reason);
+        return;
+      }
+      uploadSignal.addEventListener('abort', () => reject(uploadSignal.reason), { once: true });
+    });
+  });
+
+  try {
+    client.send({
+      time: 'Mon, 18 May 2026 00:00:00 GMT',
+      name: 'TrackCollectEnd',
+      content: { taskId: 'task-1' }
+    });
+    await waitFor(() => Boolean(uploadSignal));
+    await client.close(10);
+    assert.equal(uploadSignal.aborted, true);
+  } finally {
+    if (originalDisabled === undefined) delete process.env.OCTOPUS_TRACKING_DISABLED;
+    else process.env.OCTOPUS_TRACKING_DISABLED = originalDisabled;
+    if (originalUrl === undefined) delete process.env.OCTOPUS_TRACKING_URL;
+    else process.env.OCTOPUS_TRACKING_URL = originalUrl;
+  }
+});
+
 function decryptTrackingPayload(value) {
   const keyBuffer = Buffer.alloc(16);
   keyBuffer.write('Octopus1');
