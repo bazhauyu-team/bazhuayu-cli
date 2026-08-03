@@ -12,6 +12,7 @@ import {
   fetchUserDefaultTaskGroupId,
   updateTemplateTaskMapping,
   type RemoteTaskInfo,
+  type TemplateSearchOptions,
   type TemplateTaskMappingBody
 } from '../runtime/api-client.js';
 import { resolveAuth } from '../runtime/auth.js';
@@ -43,6 +44,21 @@ interface NormalizedTemplateParameters {
   parameterExample: Record<string, unknown>;
 }
 
+interface PublicTemplateSummary {
+  templateId: string | number;
+  name: string;
+}
+
+interface PublicTemplateSearchResult {
+  pageIndex: number;
+  pageSize: number;
+  total: number;
+  currentTotal: number;
+  templates: PublicTemplateSummary[];
+}
+
+const TEMPLATE_SCAN_PAGE_SIZE = 100;
+
 export async function templateCommand(subcommand: string | undefined, args: string[]): Promise<number> {
   const json = hasFlag([subcommand ?? '', ...args], '--json');
   if (subcommand === 'search') return templateSearch(args);
@@ -71,15 +87,17 @@ export async function templateTaskCommand(subcommand: string | undefined, args: 
 async function templateSearch(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
   const keyword = valueAfter(args, '--keyword') ?? firstPositionalArg(args, templateSearchValueFlags()) ?? '';
+  const pageIndex = parsePositiveInt(valueAfter(args, '--page'), 1);
+  const pageSize = parsePositiveInt(valueAfter(args, '--page-size') ?? valueAfter(args, '--limit'), 20);
   const auth = await resolveAuth();
   if (!auth.authenticated || !auth.credential) return printAuthRequired(json);
 
   try {
-    const result = await fetchTemplateList({
+    const output = await fetchPublicTemplateSearchResult({
       auth: auth.credential,
       baseUrl: valueAfter(args, '--api-base-url'),
-      pageIndex: parsePositiveInt(valueAfter(args, '--page'), 1),
-      pageSize: parsePositiveInt(valueAfter(args, '--page-size') ?? valueAfter(args, '--limit'), 20),
+      pageIndex,
+      pageSize,
       keyword,
       kindId: valueAfter(args, '--kind-id'),
       free: parseOptionalBoolean(valueAfter(args, '--free')),
@@ -91,12 +109,13 @@ async function templateSearch(args: string[]): Promise<number> {
       scope: valueAfter(args, '--scope')
     });
     if (json) {
-      printEnvelope(true, result);
-    } else if (!result.templates.length) {
+      printEnvelope(true, output);
+    } else if (!output.templates.length) {
       console.log('暂无模板');
     } else {
-      console.log(`Templates: ${result.currentTotal || result.templates.length}/${result.total}  page=${result.pageIndex} pageSize=${result.pageSize}`);
-      for (const template of result.templates) console.log(formatTemplateLine(template));
+      console.log(`Templates: ${output.currentTotal}/${output.total}  page=${output.pageIndex} pageSize=${output.pageSize}`);
+      console.log('  Template ID  Name');
+      for (const template of output.templates) console.log(formatTemplateLine(template));
     }
     return EXIT_OK;
   } catch (error) {
@@ -120,22 +139,9 @@ async function templateView(args: string[]): Promise<number> {
       baseUrl: valueAfter(args, '--api-base-url'),
       templateRegistrationId: templateId
     });
-    const normalized = normalizeTemplateParameters(result.data);
-    if (json) {
-      printEnvelope(true, {
-        ...result,
-        templateId: result.data.templateRegistrationId ?? templateId,
-        templateVersionId: result.data.id ?? result.data.templateId,
-        name: result.data.name,
-        version: result.data.version,
-        currentTemplateVersion: result.data.currentTemplateVersion,
-        parameters: publicTemplateParameters(normalized.parameters),
-        parameterExample: normalized.parameterExample,
-        parameterSource: normalized.parameterSource,
-        createExamples: buildTemplateCreateExamples(templateId, normalized)
-      });
-    }
-    else console.log(JSON.stringify(result.data, null, 2));
+    const output = publicTemplateDetail(templateId, result.data);
+    if (json) printEnvelope(true, output);
+    else console.log(JSON.stringify(output, null, 2));
     return EXIT_OK;
   } catch (error) {
     return printApiError(json, '获取模板详情失败', error, 'TEMPLATE_VIEW_FAILED');
@@ -158,18 +164,9 @@ async function templateVersion(args: string[]): Promise<number> {
       baseUrl: valueAfter(args, '--api-base-url'),
       templateRegistrationId: templateId
     });
-    const data = detail.data;
-    const result = {
-      templateId: data.templateRegistrationId ?? templateId,
-      templateVersionId: data.id ?? data.templateId,
-      version: data.version,
-      currentTemplateVersion: data.currentTemplateVersion,
-      name: data.name,
-      status: data.status,
-      raw: data
-    };
-    if (json) printEnvelope(true, result);
-    else console.log(JSON.stringify(result, null, 2));
+    const output = publicTemplateVersion(templateId, detail.data);
+    if (json) printEnvelope(true, output);
+    else console.log(JSON.stringify(output, null, 2));
     return EXIT_OK;
   } catch (error) {
     return printApiError(json, '获取模板版本失败', error, 'TEMPLATE_VERSION_FAILED');
@@ -197,6 +194,7 @@ async function templateTaskCreate(args: string[]): Promise<number> {
     if (typeof userInputParameters === 'number') return userInputParameters;
     const defaultGroupId = await fetchUserDefaultTaskGroupId({ auth: auth.credential, baseUrl }).catch(() => undefined);
     const body = buildCreateTemplateTaskBody(args, templateId, detail.data, defaultGroupId, userInputParameters);
+    const request = publicTemplateTaskRequest(body);
     const normalized = normalizeTemplateParameters(detail.data);
     const normalizedParams = normalizeParamArgs(args);
     if (typeof normalizedParams === 'number') return normalizedParams;
@@ -206,18 +204,27 @@ async function templateTaskCreate(args: string[]): Promise<number> {
           action: 'create',
           dryRun: true,
           templateId,
-          request: body,
-          normalizedParams,
+          request,
+          normalizedParams: publicJsonValue(normalizedParams),
           parameters: publicTemplateParameters(normalized.parameters),
           parameterSource: normalized.parameterSource
         });
       } else {
-        console.log(JSON.stringify(body, null, 2));
+        console.log(JSON.stringify(request, null, 2));
       }
       return EXIT_OK;
     }
     const result = await createTemplateTaskMapping({ auth: auth.credential, baseUrl, body });
-    if (json) printEnvelope(true, { action: 'create', templateId, request: body, parameters: publicTemplateParameters(normalized.parameters), parameterSource: normalized.parameterSource, ...result });
+    if (json) {
+      printEnvelope(true, {
+        action: 'create',
+        templateId,
+        request,
+        parameters: publicTemplateParameters(normalized.parameters),
+        parameterSource: normalized.parameterSource,
+        data: publicTemplateTaskResult(result.data)
+      });
+    }
     else console.log(`Created template task from templateId=${templateId}`);
     return EXIT_OK;
   } catch (error) {
@@ -227,12 +234,19 @@ async function templateTaskCreate(args: string[]): Promise<number> {
 
 async function templateTaskUpdate(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
+  if (hasFlag(args, '--template-registration-id')) {
+    return printUsageError(
+      json,
+      '错误: 不支持该模板标识参数，请使用 --template-id <templateId>',
+      '用法: bazhuayu template-task update <taskId> [--template-id <templateId>] [--params <json>] --yes [--json]'
+    );
+  }
   const taskId = firstPositionalArg(args, templateTaskUpdateValueFlags());
   if (!taskId) {
     return printUsageError(
       json,
       '错误: 缺少 taskId',
-      '用法: bazhuayu template-task update <taskId> [--params <json>] --yes [--json]'
+      '用法: bazhuayu template-task update <taskId> [--template-id <templateId>] [--params <json>] --yes [--json]'
     );
   }
   const guard = requireExplicitYes(args, json, '更新模板任务参数', `taskId=${taskId}`);
@@ -253,11 +267,18 @@ async function templateTaskUpdate(args: string[]): Promise<number> {
       return printUsageError(
         json,
         '错误: 无法确定任务组，请传 --task-group <groupId>',
-        '用法: bazhuayu template-task update <taskId> [--task-group <groupId>] [--params <json>] --yes [--json]'
+        '用法: bazhuayu template-task update <taskId> [--template-id <templateId>] [--task-group <groupId>] [--params <json>] --yes [--json]'
       );
     }
     const result = await updateTemplateTaskMapping({ auth: auth.credential, baseUrl, taskId, body });
-    if (json) printEnvelope(true, { action: 'update', taskId, request: body, ...result });
+    if (json) {
+      printEnvelope(true, {
+        action: 'update',
+        taskId,
+        request: publicTemplateTaskRequest(body),
+        data: publicTemplateTaskResult(result.data)
+      });
+    }
     else console.log(`Updated template task: ${taskId}`);
     return EXIT_OK;
   } catch (error) {
@@ -306,7 +327,7 @@ function buildUpdateTemplateTaskBody(
     ?? numericValue(task.taskGroupId)
     ?? numericValue(task.TaskGroupId);
   body.taskName = valueAfter(args, '--name') ?? stringValue(body.taskName) ?? stringValue(body.TaskName) ?? stringValue(task.taskName) ?? stringValue(task.TaskName) ?? '';
-  const templateId = numericValue(valueAfter(args, '--template-id') ?? valueAfter(args, '--template-registration-id'));
+  const templateId = numericValue(valueAfter(args, '--template-id'));
   body.templateId = templateId ?? numericValue(body.templateId) ?? numericValue(body.templateRegistrationId) ?? numericValue(task.templateId) ?? '';
   body.templateRegistrationId = templateId ?? numericValue(body.templateRegistrationId) ?? numericValue(body.templateId) ?? numericValue(task.templateId) ?? '';
   body.templateType = numericValue(valueAfter(args, '--template-type')) ?? numericValue(body.templateType) ?? 0;
@@ -396,15 +417,137 @@ function templateTaskCreateValueFlags(): string[] {
 }
 
 function templateTaskUpdateValueFlags(): string[] {
-  return ['--api-base-url', '--name', '--task-group', '--group-id', '--template-id', '--template-registration-id', '--template-version-id', '--template-version', '--template-type', '--params', '--params-file', '--url-source-task-id', '--url-source-task-field'];
+  return ['--api-base-url', '--name', '--task-group', '--group-id', '--template-id', '--template-version-id', '--template-version', '--template-type', '--params', '--params-file', '--url-source-task-id', '--url-source-task-field'];
 }
 
-function formatTemplateLine(template: unknown): string {
-  const item = template && typeof template === 'object' ? template as Record<string, unknown> : {};
-  const id = item.templateRegistrationId ?? item.id ?? '';
-  const name = item.name ?? '';
-  const status = item.status === undefined ? '' : ` status=${item.status}`;
-  return `  ${id}  ${name}${status}`;
+async function fetchPublicTemplateSearchResult(options: TemplateSearchOptions): Promise<PublicTemplateSearchResult> {
+  const pageIndex = options.pageIndex ?? 1;
+  const pageSize = options.pageSize ?? 20;
+  const templates: PublicTemplateSummary[] = [];
+  const seenTemplateIds = new Set<string>();
+  const seenPageFingerprints = new Set<string>();
+  let backendPageIndex = 1;
+
+  while (true) {
+    const result = await fetchTemplateList({
+      ...options,
+      pageIndex: backendPageIndex,
+      pageSize: TEMPLATE_SCAN_PAGE_SIZE
+    });
+    if (!result.templates.length) break;
+
+    const publicPage = result.templates.map((value) => {
+      const item = toRecord(value);
+      return {
+        templateId: publicTemplateId(item),
+        name: stringValue(item.name) ?? ''
+      };
+    });
+    const pageFingerprint = JSON.stringify(publicPage.map(publicTemplateIdentity));
+    if (seenPageFingerprints.has(pageFingerprint)) break;
+    seenPageFingerprints.add(pageFingerprint);
+
+    for (const template of publicPage) {
+      const templateId = String(template.templateId);
+      if (seenTemplateIds.has(templateId)) continue;
+      seenTemplateIds.add(templateId);
+      templates.push(template);
+    }
+    backendPageIndex += 1;
+  }
+
+  const start = (pageIndex - 1) * pageSize;
+  const page = templates.slice(start, start + pageSize);
+  return {
+    pageIndex,
+    pageSize,
+    total: templates.length,
+    currentTotal: page.length,
+    templates: page
+  };
+}
+
+function publicTemplateDetail(templateId: string, detail: Record<string, unknown>): Record<string, unknown> {
+  const normalized = normalizeTemplateParameters(detail);
+  return {
+    templateId: publicTemplateId(detail, templateId),
+    templateVersionId: detail.id ?? detail.templateId,
+    name: detail.name,
+    version: detail.version,
+    currentTemplateVersion: detail.currentTemplateVersion,
+    parameters: publicTemplateParameters(normalized.parameters),
+    parameterExample: publicJsonValue(normalized.parameterExample),
+    parameterSource: normalized.parameterSource,
+    createExamples: buildTemplateCreateExamples(templateId, normalized)
+  };
+}
+
+function publicTemplateVersion(templateId: string, detail: Record<string, unknown>): Record<string, unknown> {
+  return {
+    templateId: publicTemplateId(detail, templateId),
+    templateVersionId: detail.id ?? detail.templateId,
+    version: detail.version,
+    currentTemplateVersion: detail.currentTemplateVersion,
+    name: detail.name
+  };
+}
+
+function publicTemplateTaskRequest(body: TemplateTaskMappingBody): Record<string, unknown> {
+  return {
+    taskGroupId: body.taskGroupId,
+    taskId: body.taskId,
+    taskName: body.taskName,
+    templateId: body.templateRegistrationId ?? body.templateId,
+    templateType: body.templateType,
+    templateVersion: body.templateVersion,
+    templateVersionId: body.templateVersionId,
+    userInputParameters: body.userInputParameters,
+    urlSourceTaskId: body.urlSourceTaskId,
+    urlSourceTaskField: body.urlSourceTaskField
+  };
+}
+
+function publicTemplateTaskResult(value: unknown): Record<string, unknown> {
+  const data = toRecord(value);
+  const result: Record<string, unknown> = {};
+  const taskId = data.taskId ?? data.TaskId;
+  const taskName = data.taskName ?? data.TaskName;
+  if (taskId !== undefined) result.taskId = taskId;
+  if (taskName !== undefined) result.taskName = taskName;
+  if (data.templateRegistrationId !== undefined || data.templateId !== undefined) {
+    result.templateId = publicTemplateId(data);
+  }
+  return result;
+}
+
+function publicTemplateId(item: Record<string, unknown>, fallback: string | number = ''): string | number {
+  const value = item.templateRegistrationId ?? item.templateId ?? item.id;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') return value;
+  return fallback;
+}
+
+function publicTemplateIdentity(template: PublicTemplateSummary): [string, string] {
+  return [String(template.templateId), template.name];
+}
+
+function publicJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(publicJsonValue);
+  if (!value || typeof value !== 'object') return value;
+  const source = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(source)) {
+    if (key === 'templateRegistrationId' || key === 'status' || key === 'raw') continue;
+    result[key] = publicJsonValue(nested);
+  }
+  if (result.templateId === undefined && source.templateRegistrationId !== undefined) {
+    result.templateId = publicJsonValue(source.templateRegistrationId);
+  }
+  return result;
+}
+
+function formatTemplateLine(template: PublicTemplateSummary): string {
+  return `  ${template.templateId}  ${template.name}`;
 }
 
 function parseOptionalBoolean(value: string | undefined): boolean | undefined {
@@ -498,7 +641,11 @@ function normalizeParameterArray(items: unknown[], source: InternalTemplateParam
 }
 
 function publicTemplateParameters(parameters: InternalTemplateParameter[]): NormalizedTemplateParameter[] {
-  return parameters.map(({ rawKey: _rawKey, raw: _raw, ...parameter }) => parameter);
+  return parameters.map(({ rawKey: _rawKey, raw: _raw, defaultValue, options, ...parameter }) => ({
+    ...parameter,
+    defaultValue: publicJsonValue(defaultValue),
+    options: options.map(publicJsonValue)
+  }));
 }
 
 function parameterSource(parameters: InternalTemplateParameter[]): TemplateParameterSource {
@@ -654,9 +801,6 @@ function printApiError(json: boolean, label: string, error: unknown, fallbackCod
     printEnvelope(false, undefined, code, message);
   } else {
     console.error(`${label}: ${message}`);
-    if (error instanceof ApiRequestError && error.body && code !== 'AUTH_INVALID') {
-      console.error(`响应: ${error.body}`);
-    }
   }
   return EXIT_OPERATION_FAILED;
 }

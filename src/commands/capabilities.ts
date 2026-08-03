@@ -1,5 +1,6 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { internalCommandMetadata } from '../cli/command-visibility.js';
 import { printEnvelope } from '../cli/output.js';
 import { API_BASE_URL_ENV } from '../runtime/api-client.js';
 import { ACCESS_TOKEN_ENV, API_KEY_ENV } from '../runtime/auth.js';
@@ -423,7 +424,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
       { command: 'doctor', risk: 'low', json: true, authRequired: false },
       { command: 'browser use/status/install/close/profiles', risk: 'medium', json: true, authRequired: false },
       { command: 'auth login/status/info/logout', risk: 'medium', json: true, authRequired: false },
-      { command: 'env prod/online/status', risk: 'medium', json: true, hidden: true, authRequired: false },
+      { command: 'env prod/online/status', risk: 'medium', json: true, ...internalCommandMetadata('env'), authRequired: false },
       { command: 'task list', risk: 'low', json: true, authRequired: true },
       { command: 'task show/copy <taskId>', risk: 'low', json: true, authRequired: true },
       { command: 'task rename/move/delete <taskId>', risk: 'high', json: true, authRequired: true, requiresConfirmation: true },
@@ -446,8 +447,8 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
       { command: 'data history <taskId>', risk: 'low', json: true, authRequired: true },
       { command: 'data count/preview <taskId>', risk: 'low', json: true, authRequired: true },
       { command: 'data export <taskId>', risk: 'medium', json: true, authRequired: true },
-      { command: 'runs list/status/logs/data', risk: 'low', json: true, internal: true, authRequired: true },
-      { command: 'runs cleanup', risk: 'low', json: true, internal: true, authRequired: true }
+      { command: 'runs list/status/logs/data', risk: 'low', json: true, ...internalCommandMetadata('runs'), authRequired: true },
+      { command: 'runs cleanup', risk: 'low', json: true, ...internalCommandMetadata('runs'), authRequired: true }
     ],
     dataSources: ['local', 'cloud'],
     exportFormats: ['xlsx', 'csv', 'html', 'json', 'xml'],

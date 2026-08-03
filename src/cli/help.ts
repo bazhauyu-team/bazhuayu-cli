@@ -1,6 +1,7 @@
 import { API_BASE_URL_ENV } from '../runtime/api-client.js';
 import { ACCESS_TOKEN_ENV, API_KEY_ENV } from '../runtime/auth.js';
 import { API_KEYS_URL } from '../commands/auth.js';
+import { INTERNAL_COMMAND_HELP, isInternalCommandRoot } from './command-visibility.js';
 
 const BRAND_BLUE = '\u001b[38;2;37;99;235m';
 const ANSI_RESET = '\u001b[0m';
@@ -20,6 +21,11 @@ function commandLine(command: string, description: string): string {
 }
 
 export function printCommandHelp(command: string, subcommand?: string): void {
+  if (isInternalCommandRoot(command)) {
+    console.log(INTERNAL_COMMAND_HELP);
+    return;
+  }
+
   const key = subcommand && !subcommand.startsWith('-') ? `${command} ${subcommand}` : command;
   const help: Record<string, string> = {
     capabilities: `Usage:
@@ -64,14 +70,6 @@ Agent notes:
   ${API_KEY_ENV} overrides stored credentials.
   ${ACCESS_TOKEN_ENV} can provide a bearer access token for CI.
   Functional commands require configured credentials, including local task-file and OTD runs.
-`,
-    env: `Usage:
-  bazhuayu env prod [--json]
-  bazhuayu env online [--json]
-  bazhuayu env status [--json]
-
-Purpose:
-  Switch API environment. Internal command.
 `,
     task: `Usage:
   bazhuayu task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
@@ -405,19 +403,6 @@ Defaults:
 Notes:
   --source defaults to local. --local and --cloud are supported aliases.
   --unexported reads cloud unexported rows but does not mark them as exported.
-`,
-    runs: `Usage:
-  bazhuayu runs list [--output <dir>] [--json]
-  bazhuayu runs status <runId> [--output <dir>] [--json]
-  bazhuayu runs logs <runId> [--output <dir>] [--limit 100] [--json]
-  bazhuayu runs data <runId> [--output <dir>] [--limit 100] [--json]
-  bazhuayu runs cleanup [--output <dir>] [--json]
-
-Purpose:
-  Internal local artifact inspection. User workflows should use taskId/lotId commands:
-  bazhuayu data history <taskId> --source local
-  bazhuayu data export <taskId> --source local --lot-id <lotId>
-  cleanup removes stale control files whose local control socket is gone.
 `,
     doctor: `Usage:
   bazhuayu doctor [--chrome-path <path>] [--output <runsDir>] [--api-base-url <url>] [--json]

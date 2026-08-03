@@ -91,13 +91,13 @@ async function main(argv: string[]): Promise<number> {
     return EXIT_OK;
   }
 
-  if (command === 'capabilities') {
-    return capabilitiesCommand(VERSION, hasFlag(argv, '--json'));
-  }
-
   if (hasFlag(argv, '--help') || hasFlag(argv, '-h')) {
     printCommandHelp(command, subcommand);
     return EXIT_OK;
+  }
+
+  if (command === 'capabilities') {
+    return capabilitiesCommand(VERSION, hasFlag(argv, '--json'));
   }
 
   if (requiresAuthentication(argv)) {

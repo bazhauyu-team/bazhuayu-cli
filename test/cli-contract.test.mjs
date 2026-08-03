@@ -578,6 +578,132 @@ test('capabilities is available before authentication and documents API key cont
   }
 });
 
+test('capabilities help aliases show detailed help without executing capabilities data', async () => {
+  const outputs = [];
+  for (const alias of ['--help', '-h']) {
+    const result = await runCli(['capabilities', alias]);
+    assert.equal(result.code, 0, formatCliResult(result, ['capabilities', alias]));
+    assert.equal(result.stderr, '');
+    assert.match(result.stdout, /^Usage:\n  bazhuayu capabilities \[--json\]/);
+    assert.match(result.stdout, /Purpose:\n  Print machine-readable CLI capabilities/);
+    assert.match(result.stdout, /Agent notes:\n  Agents should inspect this command/);
+    assert.doesNotMatch(result.stdout, /"agentContractVersion"|"ok"\s*:/);
+    assert.throws(() => parseJson(result.stdout));
+    outputs.push(result.stdout);
+  }
+  assert.equal(outputs[0], outputs[1]);
+});
+
+test('capabilities plain and json modes remain public and machine-readable', async () => {
+  const plain = await runCli(['capabilities']);
+  assert.equal(plain.code, 0, formatCliResult(plain, ['capabilities']));
+  assert.equal(plain.stderr, '');
+  const plainPayload = parseJson(plain.stdout);
+  assert.equal(plainPayload.name, 'bazhuayu');
+  assert.equal(plainPayload.agentContractVersion, 1);
+  assert.equal(Object.hasOwn(plainPayload, 'ok'), false);
+
+  const json = await runCli(['capabilities', '--json']);
+  const jsonPayload = assertJsonSuccess(json, ['capabilities', '--json']);
+  assert.equal(jsonPayload.data.name, plainPayload.name);
+  assert.equal(jsonPayload.data.agentContractVersion, plainPayload.agentContractVersion);
+});
+
+test('internal command help aliases expose only the root help pointer', async () => {
+  const genericHelp = 'Use bazhuayu --help to view available commands\n';
+  const commands = [
+    ['env'],
+    ['env', 'prod'],
+    ['env', 'online'],
+    ['env', 'production'],
+    ['env', 'status'],
+    ['runs'],
+    ['runs', 'list'],
+    ['runs', 'status'],
+    ['runs', 'pause'],
+    ['runs', 'resume'],
+    ['runs', 'stop'],
+    ['runs', 'logs'],
+    ['runs', 'data'],
+    ['runs', 'export'],
+    ['runs', 'cleanup']
+  ];
+
+  for (const command of commands) {
+    for (const alias of ['--help', '-h']) {
+      const args = [...command, alias];
+      const result = await runCli(args);
+      assert.equal(result.code, 0, formatCliResult(result, args));
+      assert.equal(result.stdout, genericHelp, formatCliResult(result, args));
+      assert.equal(result.stderr, '', formatCliResult(result, args));
+    }
+  }
+});
+
+test('root help aliases remain identical and omit internal command roots', async () => {
+  const longHelp = await runCli(['--help']);
+  const shortHelp = await runCli(['-h']);
+  assert.equal(longHelp.code, 0, formatCliResult(longHelp, ['--help']));
+  assert.equal(shortHelp.code, 0, formatCliResult(shortHelp, ['-h']));
+  assert.equal(longHelp.stdout, shortHelp.stdout);
+  assert.equal(longHelp.stderr, '');
+  assert.equal(shortHelp.stderr, '');
+  assert.doesNotMatch(longHelp.stdout, /^\s+env\s/m);
+  assert.doesNotMatch(longHelp.stdout, /^\s+runs\s/m);
+});
+
+test('internal commands remain executable without help flags', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'octo-internal-dispatch-'));
+  const home = join(root, 'home');
+  const output = join(root, 'runs');
+  const envRoot = await runCli(['env'], { home });
+  assert.equal(envRoot.code, 0, formatCliResult(envRoot, ['env']));
+  assert.match(envRoot.stdout, /^API env: prod/m);
+
+  for (const subcommand of ['prod', 'online', 'production', 'status']) {
+    const args = ['env', subcommand, '--json'];
+    const result = await runCli(args, { home });
+    assertJsonSuccess(result, args);
+    assert.doesNotMatch(result.stdout, /Use bazhuayu --help/);
+  }
+
+  const runsCases = [
+    { args: ['runs', 'list', '--output', output, '--json'], error: undefined },
+    { args: ['runs', 'status', '--output', output, '--json'], error: 'USAGE_ERROR' },
+    { args: ['runs', 'pause', '--output', output, '--json'], error: 'USAGE_ERROR' },
+    { args: ['runs', 'resume', '--output', output, '--json'], error: 'USAGE_ERROR' },
+    { args: ['runs', 'stop', '--output', output, '--json'], error: 'USAGE_ERROR' },
+    { args: ['runs', 'logs', '--output', output, '--json'], error: 'USAGE_ERROR' },
+    { args: ['runs', 'data', '--output', output, '--json'], error: 'USAGE_ERROR' },
+    { args: ['runs', 'export', '--output', output, '--json'], error: 'USAGE_ERROR' },
+    { args: ['runs', 'cleanup', '--output', output, '--json'], error: undefined }
+  ];
+  for (const item of runsCases) {
+    const result = await runCli(item.args, { apiKey: 'dummy', home });
+    if (item.error) assertJsonFailure(result, item.error, 1, item.args);
+    else assertJsonSuccess(result, item.args);
+    assert.doesNotMatch(result.stdout, /Use bazhuayu --help/);
+  }
+});
+
+test('internal capabilities metadata remains schema-compatible', async () => {
+  const result = await runCli(['capabilities', '--json']);
+  const payload = assertJsonSuccess(result, ['capabilities', '--json']);
+  const env = payload.data.commands.find((item) => item.command === 'env prod/online/status');
+  const runs = payload.data.commands.filter((item) => item.command.startsWith('runs '));
+  assert.equal(env.hidden, true);
+  assert.equal(Object.hasOwn(env, 'internal'), false);
+  assert.equal(runs.length, 2);
+  assert.ok(runs.every((item) => item.internal === true));
+  assert.ok(runs.every((item) => !Object.hasOwn(item, 'hidden')));
+  assert.ok(payload.data.authentication.diagnosticCommandsWithoutAuth.includes('capabilities'));
+
+  const schema = JSON.parse(await readFile(resolve('schemas/capabilities-v1.schema.json'), 'utf8'));
+  const commandProperties = schema.properties.data.properties.commands.items.properties;
+  assert.deepEqual(commandProperties.hidden, { type: 'boolean' });
+  assert.deepEqual(commandProperties.internal, { type: 'boolean' });
+});
+
 test('auth login verifies API key before saving', async () => {
   const home = await mkdtemp(join(tmpdir(), 'octo-auth-invalid-'));
   const result = await runCliWithStdin(
@@ -1316,12 +1442,18 @@ test('template catalog commands use domestic simpletemplate APIs', async () => {
     const parsed = new URL(String(url));
     seen.push({ url: String(url), init, path: parsed.pathname, search: parsed.searchParams });
     if (parsed.pathname === '/api/simpletemplate/templateRegistration/templates') {
+      const pageIndex = Number(parsed.searchParams.get('pageIndex'));
       return new Response(JSON.stringify({
         isSuccess: true,
         data: {
-          total: 1,
-          currentTotal: 1,
-          items: [{ id: 101, name: '电商模板', status: 1 }]
+          total: 999,
+          currentTotal: 0,
+          items: pageIndex === 1 ? [
+            { templateRegistrationId: 102, name: '首个模板', status: 1 },
+            { templateRegistrationId: 101, name: '电商模板', status: 2 },
+            { templateRegistrationId: '102', name: 'First Template', status: 3 },
+            { templateRegistrationId: 103, name: '第三模板', status: 4 }
+          ] : []
         }
       }), {
         status: 200,
@@ -1339,10 +1471,32 @@ test('template catalog commands use domestic simpletemplate APIs', async () => {
           version: 3,
           currentTemplateVersion: 3,
           status: 1,
+          raw: { templateRegistrationId: 101 },
+          metadata: { templateRegistrationId: 101, status: 'internal' },
           userInputParameters: JSON.stringify({
             UIParameters: [
               { Id: 'q', name: 'keyword', label: '关键词', Value: '', required: true },
-              { Id: 'city', name: 'city', label: '城市', Value: '上海' }
+              {
+                Id: 'city',
+                name: 'city',
+                label: '城市',
+                Value: {
+                  templateRegistrationId: 301,
+                  name: '上海门店',
+                  status: 'enabled',
+                  raw: { source: 'internal-default' }
+                },
+                Options: [
+                  {
+                    label: '上海门店',
+                    value: {
+                      templateRegistrationId: 301,
+                      status: 'enabled',
+                      raw: { source: 'internal-option' }
+                    }
+                  }
+                ]
+              }
             ]
           })
         }
@@ -1362,33 +1516,264 @@ test('template catalog commands use domestic simpletemplate APIs', async () => {
 
   try {
     assert.equal(await templateCommand('search', ['电商', '--page-size', '5', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    const searchPayload = parseJson(lines.at(-1));
+
+    const humanSearchStart = lines.length;
+    assert.equal(await templateCommand('search', ['电商', '--page-size', '5', '--api-base-url', 'https://example.invalid']), 0);
+    const humanSearchLines = lines.slice(humanSearchStart);
+
     assert.equal(await templateCommand('view', ['101', '--api-base-url', 'https://example.invalid', '--json']), 0);
+    const viewPayload = parseJson(lines.at(-1));
+    assert.equal(await templateCommand('view', ['101', '--api-base-url', 'https://example.invalid']), 0);
+    const humanView = lines.at(-1);
+
     assert.equal(await templateCommand('version', ['101', '--api-base-url', 'https://example.invalid', '--json']), 0);
-    const searchPayload = parseJson(lines[0]);
-    const viewPayload = parseJson(lines[1]);
-    const versionPayload = parseJson(lines[2]);
-    assert.equal(searchPayload.ok, true);
-    assert.equal(searchPayload.data.templates[0].id, 101);
-    assert.equal(viewPayload.data.data.name, '电商模板');
+    const versionPayload = parseJson(lines.at(-1));
+    assert.equal(await templateCommand('version', ['101', '--api-base-url', 'https://example.invalid']), 0);
+    const humanVersion = lines.at(-1);
+
+    assert.deepEqual(searchPayload.data.templates, [
+      { templateId: 102, name: '首个模板' },
+      { templateId: 101, name: '电商模板' },
+      { templateId: 103, name: '第三模板' }
+    ]);
+    assert.equal(searchPayload.data.currentTotal, 3);
+    assert.equal(searchPayload.data.total, 3);
+    assert.equal(humanSearchLines[1], '  Template ID  Name');
+    assert.deepEqual(humanSearchLines.slice(2), [
+      '  102  首个模板',
+      '  101  电商模板',
+      '  103  第三模板'
+    ]);
+    assert.doesNotMatch(humanSearchLines.join('\n'), /status|templateRegistrationId|raw/);
+
+    assert.equal(viewPayload.data.name, '电商模板');
     assert.equal(viewPayload.data.templateId, 101);
-    assert.equal(viewPayload.data.templateRegistrationId, undefined);
     assert.equal(viewPayload.data.parameterSource, 'UIParameters');
     assert.deepEqual(viewPayload.data.parameters.map((item) => item.name), ['keyword', 'city']);
     assert.equal(viewPayload.data.parameters[0].required, true);
-    assert.equal(viewPayload.data.parameterExample.city, '上海');
+    assert.deepEqual(viewPayload.data.parameters[1].defaultValue, { templateId: 301, name: '上海门店' });
+    assert.deepEqual(viewPayload.data.parameters[1].options, [
+      { label: '上海门店', value: { templateId: 301 } }
+    ]);
+    assert.deepEqual(viewPayload.data.parameterExample.city, { templateId: 301, name: '上海门店' });
     assert.match(viewPayload.data.createExamples.simple, /template-task create 101 --param keyword=value --json/);
     assert.equal(versionPayload.data.templateId, 101);
     assert.equal(versionPayload.data.templateRegistrationId, undefined);
     assert.equal(versionPayload.data.templateVersionId, 202);
     assert.equal(versionPayload.data.currentTemplateVersion, 3);
-    assert.equal(seen[0].path, '/api/simpletemplate/templateRegistration/templates');
-    assert.equal(seen[0].search.get('keyword'), '电商');
-    assert.equal(seen[0].search.get('pageSize'), '5');
-    assert.equal(seen[1].path, '/api/simpletemplate/templateRegistration/101/currentTemplate');
-    assert.equal(seen[2].path, '/api/simpletemplate/templateRegistration/101/currentTemplate');
+    for (const output of [searchPayload, viewPayload, versionPayload]) {
+      assert.doesNotMatch(JSON.stringify(output), /templateRegistrationId|"status"\s*:|"raw"\s*:/);
+    }
+    for (const output of [humanView, humanVersion]) {
+      assert.doesNotMatch(output, /templateRegistrationId|"status"\s*:|"raw"\s*:/);
+    }
+
+    const searchCalls = seen.filter((item) => item.path === '/api/simpletemplate/templateRegistration/templates');
+    assert.equal(searchCalls.length, 4);
+    assert.deepEqual(searchCalls.map((item) => item.search.get('pageIndex')), ['1', '2', '1', '2']);
+    assert.ok(searchCalls.every((item) => item.search.get('pageSize') === '100'));
+    assert.ok(searchCalls.every((item) => item.search.get('keyword') === '电商'));
+    assert.equal(seen.filter((item) => item.path === '/api/simpletemplate/templateRegistration/101/currentTemplate').length, 4);
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('template search paginates the globally deduplicated public sequence', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  const rawPages = [
+    [
+      { templateRegistrationId: 1001, name: '首个模板', status: 1 },
+      { templateRegistrationId: '1001', name: '首个模板', status: 2, raw: { duplicate: true } },
+      { templateRegistrationId: 1002, name: '第二模板', status: 3 }
+    ],
+    [
+      { templateRegistrationId: '1002', name: '第二模板', status: 4, raw: { duplicate: true } },
+      { templateRegistrationId: 1002, name: 'Second Template', status: 5 },
+      { templateRegistrationId: 1003, name: '第三模板', status: 5 },
+      { templateRegistrationId: 1004, name: '第四模板', status: 6 }
+    ],
+    [
+      { templateRegistrationId: 1005, name: '第五模板', status: 7 },
+      { templateRegistrationId: 1006, name: '第六模板', status: 8 },
+      { templateRegistrationId: 1007, name: '第七模板', status: 9 }
+    ]
+  ];
+  process.env.OCTOPUS_API_KEY = 'template-key';
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url));
+    assert.equal(parsed.pathname, '/api/simpletemplate/templateRegistration/templates');
+    const backendPageIndex = Number(parsed.searchParams.get('pageIndex'));
+    const templates = rawPages[backendPageIndex - 1] ?? [];
+    seen.push({
+      pageIndex: backendPageIndex,
+      pageSize: Number(parsed.searchParams.get('pageSize')),
+      keyword: parsed.searchParams.get('keyword'),
+      sort: parsed.searchParams.get('sort')
+    });
+    const data = backendPageIndex === 2
+      ? { currentTotal: 999, dataList: templates }
+      : { total: backendPageIndex === 1 ? 1 : 999, currentTotal: 0, dataList: templates };
+    return new Response(JSON.stringify({ isSuccess: true, data }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    const pages = [];
+    for (const pageIndex of [1, 2, 3, 4]) {
+      assert.equal(await templateCommand('search', [
+        '电商',
+        '--page', String(pageIndex),
+        '--page-size', '3',
+        '--api-base-url', 'https://example.invalid',
+        '--json'
+      ]), 0);
+      pages.push(parseJson(lines.at(-1)).data);
+    }
+
+    assert.deepEqual(pages.map((page) => page.templates), [
+      [
+        { templateId: 1001, name: '首个模板' },
+        { templateId: 1002, name: '第二模板' },
+        { templateId: 1003, name: '第三模板' }
+      ],
+      [
+        { templateId: 1004, name: '第四模板' },
+        { templateId: 1005, name: '第五模板' },
+        { templateId: 1006, name: '第六模板' }
+      ],
+      [
+        { templateId: 1007, name: '第七模板' }
+      ],
+      []
+    ]);
+    assert.deepEqual(pages.map((page) => page.pageIndex), [1, 2, 3, 4]);
+    assert.deepEqual(pages.map((page) => page.pageSize), [3, 3, 3, 3]);
+    assert.deepEqual(pages.map((page) => page.currentTotal), [3, 3, 1, 0]);
+    assert.deepEqual(pages.map((page) => page.total), [7, 7, 7, 7]);
+    assert.deepEqual(pages.flatMap((page) => page.templates).filter((item) => String(item.templateId) === '1002'), [
+      { templateId: 1002, name: '第二模板' },
+    ]);
+    assert.ok(pages.flatMap((page) => page.templates).every((item) => item.name !== 'Second Template'));
+    assert.doesNotMatch(JSON.stringify(pages), /templateRegistrationId|"status"\s*:|"raw"\s*:/);
+
+    assert.equal(seen.length, 16);
+    for (let offset = 0; offset < seen.length; offset += 4) {
+      assert.deepEqual(seen.slice(offset, offset + 4).map((call) => call.pageIndex), [1, 2, 3, 4]);
+    }
+    assert.ok(seen.every((call) => call.pageSize === 100));
+    assert.ok(seen.every((call) => call.keyword === '电商'));
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('template search stops before appending a repeated non-empty backend page', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalLog = console.log;
+  const seen = [];
+  const lines = [];
+  const firstPage = [
+    { templateRegistrationId: 2001, name: '首个模板', status: 1 },
+    { templateRegistrationId: 2002, name: '第二模板', status: 2 }
+  ];
+  const repeatedPage = [
+    { templateRegistrationId: 2003, name: '第三模板', status: 3 },
+    { templateRegistrationId: 2004, name: '第四模板', status: 4 }
+  ];
+  process.env.OCTOPUS_API_KEY = 'template-key';
+  globalThis.fetch = async (url) => {
+    assert.ok(seen.length < 3, '模板搜索超过重复页调用保护');
+    const parsed = new URL(String(url));
+    assert.equal(parsed.pathname, '/api/simpletemplate/templateRegistration/templates');
+    const pageIndex = Number(parsed.searchParams.get('pageIndex'));
+    seen.push({ pageIndex, pageSize: Number(parsed.searchParams.get('pageSize')) });
+    const templates = pageIndex === 1
+      ? firstPage
+      : repeatedPage.map((template) => pageIndex === 2 ? template : {
+        ...template,
+        status: Number(template.status) + pageIndex,
+        raw: { backendPage: pageIndex },
+        metadata: { requestCount: seen.length }
+      });
+    return new Response(JSON.stringify({
+      isSuccess: true,
+      data: { total: 999 + pageIndex, currentTotal: templates.length + pageIndex, dataList: templates }
+    }), {
+      status: 200,
+      statusText: 'OK',
+      headers: { 'content-type': 'application/json' }
+    });
+  };
+  console.log = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await templateCommand('search', [
+      '电商',
+      '--page-size', '10',
+      '--api-base-url', 'https://example.invalid',
+      '--json'
+    ]), 0);
+    const result = parseJson(lines.at(-1)).data;
+    assert.deepEqual(result.templates, [
+      { templateId: 2001, name: '首个模板' },
+      { templateId: 2002, name: '第二模板' },
+      { templateId: 2003, name: '第三模板' },
+      { templateId: 2004, name: '第四模板' }
+    ]);
+    assert.equal(result.total, 4);
+    assert.equal(result.currentTotal, 4);
+    assert.deepEqual(seen.map((call) => call.pageIndex), [1, 2, 3]);
+    assert.ok(seen.every((call) => call.pageSize === 100));
+    assert.doesNotMatch(JSON.stringify(result), /templateRegistrationId|"status"\s*:|"raw"\s*:/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.log = originalLog;
+    if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
+    else process.env.OCTOPUS_API_KEY = originalApiKey;
+  }
+});
+
+test('template human API errors retain Chinese context without backend response fields', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.OCTOPUS_API_KEY;
+  const originalError = console.error;
+  const lines = [];
+  process.env.OCTOPUS_API_KEY = 'template-key';
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    templateRegistrationId: 1001,
+    status: 'internal',
+    raw: { private: true }
+  }), {
+    status: 500,
+    statusText: 'Server Error',
+    headers: { 'content-type': 'application/json' }
+  });
+  console.error = (line = '') => { lines.push(String(line)); };
+
+  try {
+    assert.equal(await templateCommand('search', ['电商', '--api-base-url', 'https://example.invalid']), 1);
+    assert.match(lines.join('\n'), /搜索模板失败: API request failed: HTTP 500/);
+    assert.doesNotMatch(lines.join('\n'), /templateRegistrationId|"status"\s*:|"raw"\s*:/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    console.error = originalError;
     if (originalApiKey === undefined) delete process.env.OCTOPUS_API_KEY;
     else process.env.OCTOPUS_API_KEY = originalApiKey;
   }
@@ -1428,7 +1813,10 @@ test('template-task create builds domestic TemplateConfig request body', async (
       });
     }
     if (parsed.pathname === '/api/tasks/templateMapping') {
-      return new Response(JSON.stringify({ isSuccess: true, data: { taskId: 'task-template-1' } }), {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: { taskId: 'task-template-1', templateRegistrationId: 101, status: 'internal', raw: { private: true } }
+      }), {
         status: 200,
         statusText: 'OK',
         headers: { 'content-type': 'application/json' }
@@ -1457,8 +1845,10 @@ test('template-task create builds domestic TemplateConfig request body', async (
     const payload = parseJson(lines[0]);
     assert.equal(payload.ok, true);
     assert.equal(payload.data.templateId, '101');
-    assert.equal(payload.data.templateRegistrationId, undefined);
+    assert.equal(payload.data.request.templateId, 101);
     assert.equal(payload.data.data.taskId, 'task-template-1');
+    assert.equal(payload.data.data.templateId, 101);
+    assert.doesNotMatch(JSON.stringify(payload), /templateRegistrationId|"status"\s*:|"raw"\s*:/);
     assert.equal(seen[0].path, '/api/simpletemplate/templateRegistration/101/currentTemplate');
     assert.equal(seen[1].path, '/api/TaskGroup/Default');
     assert.equal(seen[2].path, '/api/tasks/templateMapping');
@@ -1506,7 +1896,27 @@ test('template-task create accepts normalized --param values and supports dry-ru
           userInputParameters: JSON.stringify({
             UIParameters: [
               { Id: 'q', name: 'keyword', label: '关键词', Value: '', required: true },
-              { Id: 'city', name: 'city', label: '城市', Value: '上海' }
+              {
+                Id: 'city',
+                name: 'city',
+                label: '城市',
+                Value: {
+                  templateRegistrationId: 401,
+                  name: '默认门店',
+                  status: 'internal',
+                  raw: { source: 'default' }
+                },
+                Options: [
+                  {
+                    label: '默认门店',
+                    value: {
+                      templateRegistrationId: 401,
+                      status: 'internal',
+                      raw: { source: 'option' }
+                    }
+                  }
+                ]
+              }
             ]
           })
         }
@@ -1564,7 +1974,10 @@ test('template-task create accepts normalized --param values and supports dry-ru
       });
     }
     if (parsed.pathname === '/api/tasks/templateMapping') {
-      return new Response(JSON.stringify({ isSuccess: true, data: { taskId: 'task-template-param' } }), {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: { taskId: 'task-template-param', templateRegistrationId: 101, status: 'internal' }
+      }), {
         status: 200,
         statusText: 'OK',
         headers: { 'content-type': 'application/json' }
@@ -1595,6 +2008,8 @@ test('template-task create accepts normalized --param values and supports dry-ru
       '101',
       '--param',
       'keyword=laptop',
+      '--param',
+      'city=杭州',
       '--dry-run',
       '--api-base-url',
       'https://example.invalid',
@@ -1669,6 +2084,15 @@ test('template-task create accepts normalized --param values and supports dry-ru
     const unsupportedPayload = parseJson(lines[8]);
     assert.equal(createdPayload.data.data.taskId, 'task-template-param');
     assert.equal(dryRunPayload.data.dryRun, true);
+    assert.equal(dryRunPayload.data.request.templateId, 101);
+    for (const payload of [createdPayload, dryRunPayload]) {
+      assert.deepEqual(payload.data.parameters[1].defaultValue, { templateId: 401, name: '默认门店' });
+      assert.deepEqual(payload.data.parameters[1].options, [
+        { label: '默认门店', value: { templateId: 401 } }
+      ]);
+    }
+    assert.doesNotMatch(JSON.stringify(createdPayload), /templateRegistrationId|"status"\s*:|"raw"\s*:/);
+    assert.doesNotMatch(JSON.stringify(dryRunPayload), /templateRegistrationId|"status"\s*:|"raw"\s*:/);
     assert.equal(missingPayload.error.code, 'TEMPLATE_PARAM_UNKNOWN');
     assert.equal(missingValuePayload.error.code, 'USAGE_ERROR');
     assert.equal(emptyRequiredPayload.error.code, 'TEMPLATE_PARAMS_REQUIRED');
@@ -1680,9 +2104,11 @@ test('template-task create accepts normalized --param values and supports dry-ru
     assert.equal(mappingCalls.length, 2);
 
     const createBody = JSON.parse(mappingCalls[0].init.body);
+    assert.equal(createBody.templateRegistrationId, 101);
     assert.equal(createBody.userInputParameters, '{"UIParameters":[{"Id":"q","Value":"phone"},{"Id":"city","Value":"New York"}]}');
-    assert.equal(dryRunPayload.data.request.userInputParameters, '{"UIParameters":[{"Id":"q","Value":"laptop"},{"Id":"city","Value":"上海"}]}');
+    assert.equal(dryRunPayload.data.request.userInputParameters, '{"UIParameters":[{"Id":"q","Value":"laptop"},{"Id":"city","Value":"杭州"}]}');
     const templateParametersBody = JSON.parse(mappingCalls[1].init.body);
+    assert.equal(templateParametersBody.templateRegistrationId, 102);
     assert.equal(templateParametersBody.userInputParameters, '{"TemplateParameters":[{"ParamName":"q","Value":"book"}]}');
   } finally {
     globalThis.fetch = originalFetch;
@@ -1712,6 +2138,8 @@ test('template-task update requires confirmation and merges existing mapping', a
           templateVersion: 2,
           templateVersionId: 202,
           templateRegistrationId: 101,
+          status: 'internal',
+          raw: { private: true },
           userInputParameters: '{}',
           urlSourceTaskId: '',
           urlSourceTaskField: ''
@@ -1739,7 +2167,10 @@ test('template-task update requires confirmation and merges existing mapping', a
       });
     }
     if (parsed.pathname === '/api/tasks/task-1/templateMapping' && init.method === 'POST') {
-      return new Response(JSON.stringify({ isSuccess: true, data: true }), {
+      return new Response(JSON.stringify({
+        isSuccess: true,
+        data: { taskId: 'task-1', templateRegistrationId: 303, status: 'internal', raw: { private: true } }
+      }), {
         status: 200,
         statusText: 'OK',
         headers: { 'content-type': 'application/json' }
@@ -1756,6 +2187,23 @@ test('template-task update requires confirmation and merges existing mapping', a
   try {
     assert.equal(await templateTaskCommand('update', ['task-1', '--params', '{"TemplateParameters":[{"ParamName":"q","Value":"phone"}]}', '--json']), 1);
     assert.equal(parseJson(lines[0]).error.code, 'CONFIRMATION_REQUIRED');
+    assert.equal(seen.length, 0);
+
+    const callsBeforeLegacyAlias = seen.length;
+    assert.equal(await templateTaskCommand('update', [
+      'task-1',
+      '--template-registration-id',
+      '9000',
+      '--yes',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 1);
+    const legacyAliasPayload = parseJson(lines[1]);
+    assert.equal(legacyAliasPayload.error.code, 'USAGE_ERROR');
+    assert.match(legacyAliasPayload.error.message, /--template-id <templateId>/);
+    assert.equal(seen.length, callsBeforeLegacyAlias);
+
     assert.equal(await templateTaskCommand('update', [
       'task-1',
       '--name',
@@ -1769,8 +2217,11 @@ test('template-task update requires confirmation and merges existing mapping', a
       'https://example.invalid',
       '--json'
     ]), 0);
-    const payload = parseJson(lines[1]);
+    const payload = parseJson(lines[2]);
     assert.equal(payload.ok, true);
+    assert.equal(payload.data.request.templateId, 303);
+    assert.equal(payload.data.data.templateId, 303);
+    assert.doesNotMatch(JSON.stringify(payload), /templateRegistrationId|"status"\s*:|"raw"\s*:/);
     assert.equal(seen[0].path, '/api/tasks/task-1/templateMapping');
     assert.equal(seen[0].init.method, 'GET');
     assert.equal(seen[1].path, '/api/task/getTask');
@@ -1784,18 +2235,6 @@ test('template-task update requires confirmation and merges existing mapping', a
     assert.equal(body.templateVersionId, 202);
     assert.equal(body.userInputParameters, '{"TemplateParameters":[{"ParamName":"q","Value":"phone"}]}');
 
-    assert.equal(await templateTaskCommand('update', [
-      'task-1',
-      '--template-registration-id',
-      '404',
-      '--yes',
-      '--api-base-url',
-      'https://example.invalid',
-      '--json'
-    ]), 0);
-    const legacyBody = JSON.parse(seen[5].init.body);
-    assert.equal(legacyBody.templateId, 404);
-    assert.equal(legacyBody.templateRegistrationId, 404);
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
