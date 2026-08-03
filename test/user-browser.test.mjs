@@ -201,6 +201,7 @@ test('browser help documents install and user-mode workflow', async () => {
   assert.match(result.stdout, /browser install.*--profile/);
   assert.match(result.stdout, /status -> profiles -> install -> reopen\/enable -> status -> use user/);
   assert.match(result.stdout, /nextActions/);
+  assert.match(result.stdout, /Selection priority: --browser > OCTOPUS_BROWSER > saved browser use setting > independent/);
   assert.match(result.stdout, /config\.json/);
 });
 
@@ -208,8 +209,9 @@ test('run help documents --browser user flags', async () => {
   const result = await runCli(['run', '--help']);
   assert.equal(result.code, 0, result.stdout || result.stderr);
   assert.match(result.stdout, /--browser independent\|user/);
-  assert.match(result.stdout, /bazhuayu browser use/);
-  assert.match(result.stdout, /bazhuayu browser install/);
+  assert.match(result.stdout, /System Chrome\/Edge with existing cookies and login state/);
+  assert.match(result.stdout, /--force-close-browser/);
+  assert.match(result.stdout, /browser selection priority/);
   assert.match(result.stdout, /setupRecipe/);
 });
 
@@ -219,6 +221,7 @@ test('detect help documents --browser user flags', async () => {
   assert.match(result.stdout, /--browser user/);
   assert.match(result.stdout, /bazhuayu browser use/);
   assert.match(result.stdout, /bazhuayu browser install/);
+  assert.match(result.stdout, /browser --help for selection priority and setup/);
   assert.match(result.stdout, /setupRecipe/);
   assert.match(result.stdout, /session window/i);
 });
@@ -226,9 +229,9 @@ test('detect help documents --browser user flags', async () => {
 test('root help documents browser command and user mode', async () => {
   const result = await runCli(['--help']);
   assert.equal(result.code, 0, result.stdout || result.stderr);
-  assert.match(result.stdout, /browser use independent\|user/);
-  assert.match(result.stdout, /--browser independent\|user/);
-  assert.match(result.stdout, /detect URL --browser user/);
+  assert.match(result.stdout, /Config:/);
+  assert.match(result.stdout, /browser\s+Choose independent or signed-in browser mode/);
+  assert.match(result.stdout, /bazhuayu <command> --help/);
 });
 
 test('buildDetectorBootstrapUrl embeds sessionId and wsUrl', async () => {

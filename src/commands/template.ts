@@ -106,9 +106,9 @@ async function templateSearch(args: string[]): Promise<number> {
 
 async function templateView(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
-  const templateRegistrationId = firstPositionalArg(args, ['--api-base-url']);
-  if (!templateRegistrationId) {
-    return printUsageError(json, '错误: 缺少 templateRegistrationId', '用法: bazhuayu template view <templateRegistrationId> [--json]');
+  const templateId = firstPositionalArg(args, ['--api-base-url']);
+  if (!templateId) {
+    return printUsageError(json, '错误: 缺少 templateId', '用法: bazhuayu template view <templateId> [--json]');
   }
 
   const auth = await resolveAuth();
@@ -118,13 +118,13 @@ async function templateView(args: string[]): Promise<number> {
     const result = await fetchTemplateDetail({
       auth: auth.credential,
       baseUrl: valueAfter(args, '--api-base-url'),
-      templateRegistrationId
+      templateRegistrationId: templateId
     });
     const normalized = normalizeTemplateParameters(result.data);
     if (json) {
       printEnvelope(true, {
         ...result,
-        templateRegistrationId: result.data.templateRegistrationId ?? templateRegistrationId,
+        templateId: result.data.templateRegistrationId ?? templateId,
         templateVersionId: result.data.id ?? result.data.templateId,
         name: result.data.name,
         version: result.data.version,
@@ -132,7 +132,7 @@ async function templateView(args: string[]): Promise<number> {
         parameters: publicTemplateParameters(normalized.parameters),
         parameterExample: normalized.parameterExample,
         parameterSource: normalized.parameterSource,
-        createExamples: buildTemplateCreateExamples(templateRegistrationId, normalized)
+        createExamples: buildTemplateCreateExamples(templateId, normalized)
       });
     }
     else console.log(JSON.stringify(result.data, null, 2));
@@ -144,9 +144,9 @@ async function templateView(args: string[]): Promise<number> {
 
 async function templateVersion(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
-  const templateRegistrationId = firstPositionalArg(args, ['--api-base-url']);
-  if (!templateRegistrationId) {
-    return printUsageError(json, '错误: 缺少 templateRegistrationId', '用法: bazhuayu template version <templateRegistrationId> [--json]');
+  const templateId = firstPositionalArg(args, ['--api-base-url']);
+  if (!templateId) {
+    return printUsageError(json, '错误: 缺少 templateId', '用法: bazhuayu template version <templateId> [--json]');
   }
 
   const auth = await resolveAuth();
@@ -156,11 +156,11 @@ async function templateVersion(args: string[]): Promise<number> {
     const detail = await fetchTemplateDetail({
       auth: auth.credential,
       baseUrl: valueAfter(args, '--api-base-url'),
-      templateRegistrationId
+      templateRegistrationId: templateId
     });
     const data = detail.data;
     const result = {
-      templateRegistrationId: data.templateRegistrationId ?? templateRegistrationId,
+      templateId: data.templateRegistrationId ?? templateId,
       templateVersionId: data.id ?? data.templateId,
       version: data.version,
       currentTemplateVersion: data.currentTemplateVersion,
@@ -178,12 +178,12 @@ async function templateVersion(args: string[]): Promise<number> {
 
 async function templateTaskCreate(args: string[]): Promise<number> {
   const json = hasFlag(args, '--json');
-  const templateRegistrationId = firstPositionalArg(args, templateTaskCreateValueFlags());
-  if (!templateRegistrationId) {
+  const templateId = firstPositionalArg(args, templateTaskCreateValueFlags());
+  if (!templateId) {
     return printUsageError(
       json,
-      '错误: 缺少 templateRegistrationId',
-      '用法: bazhuayu template-task create <templateRegistrationId> [--name <taskName>] [--task-group <groupId>] [--param key=value]... [--params <json>|--params-file <file>] [--dry-run] [--json]'
+      '错误: 缺少 templateId',
+      '用法: bazhuayu template-task create <templateId> [--name <taskName>] [--task-group <groupId>] [--param key=value]... [--params <json>|--params-file <file>] [--dry-run] [--json]'
     );
   }
 
@@ -192,11 +192,11 @@ async function templateTaskCreate(args: string[]): Promise<number> {
 
   try {
     const baseUrl = valueAfter(args, '--api-base-url');
-    const detail = await fetchTemplateDetail({ auth: auth.credential, baseUrl, templateRegistrationId });
+    const detail = await fetchTemplateDetail({ auth: auth.credential, baseUrl, templateRegistrationId: templateId });
     const userInputParameters = await readCreateUserInputParameters(args, json, detail.data);
     if (typeof userInputParameters === 'number') return userInputParameters;
     const defaultGroupId = await fetchUserDefaultTaskGroupId({ auth: auth.credential, baseUrl }).catch(() => undefined);
-    const body = buildCreateTemplateTaskBody(args, templateRegistrationId, detail.data, defaultGroupId, userInputParameters);
+    const body = buildCreateTemplateTaskBody(args, templateId, detail.data, defaultGroupId, userInputParameters);
     const normalized = normalizeTemplateParameters(detail.data);
     const normalizedParams = normalizeParamArgs(args);
     if (typeof normalizedParams === 'number') return normalizedParams;
@@ -205,7 +205,7 @@ async function templateTaskCreate(args: string[]): Promise<number> {
         printEnvelope(true, {
           action: 'create',
           dryRun: true,
-          templateRegistrationId,
+          templateId,
           request: body,
           normalizedParams,
           parameters: publicTemplateParameters(normalized.parameters),
@@ -217,8 +217,8 @@ async function templateTaskCreate(args: string[]): Promise<number> {
       return EXIT_OK;
     }
     const result = await createTemplateTaskMapping({ auth: auth.credential, baseUrl, body });
-    if (json) printEnvelope(true, { action: 'create', templateRegistrationId, request: body, parameters: publicTemplateParameters(normalized.parameters), parameterSource: normalized.parameterSource, ...result });
-    else console.log(`Created template task from templateRegistrationId=${templateRegistrationId}`);
+    if (json) printEnvelope(true, { action: 'create', templateId, request: body, parameters: publicTemplateParameters(normalized.parameters), parameterSource: normalized.parameterSource, ...result });
+    else console.log(`Created template task from templateId=${templateId}`);
     return EXIT_OK;
   } catch (error) {
     return printApiError(json, '创建模板任务失败', error, 'TEMPLATE_TASK_CREATE_FAILED');
@@ -267,7 +267,7 @@ async function templateTaskUpdate(args: string[]): Promise<number> {
 
 function buildCreateTemplateTaskBody(
   args: string[],
-  templateRegistrationId: string,
+  templateId: string,
   detail: Record<string, unknown>,
   defaultGroupId: number | undefined,
   userInputParameters: string
@@ -277,12 +277,12 @@ function buildCreateTemplateTaskBody(
   return {
     taskGroupId,
     taskId: valueAfter(args, '--task-id') ?? '',
-    taskName: valueAfter(args, '--name') ?? stringValue(detail.name) ?? `Template ${templateRegistrationId}`,
-    templateId: numericValue(templateRegistrationId) ?? templateRegistrationId,
+    taskName: valueAfter(args, '--name') ?? stringValue(detail.name) ?? `Template ${templateId}`,
+    templateId: numericValue(templateId) ?? templateId,
     templateType: numericValue(valueAfter(args, '--template-type')) ?? numericValue(detail.type) ?? 0,
     templateVersion: numericValue(valueAfter(args, '--template-version')) ?? numericValue(detail.currentTemplateVersion) ?? numericValue(detail.version) ?? 0,
     templateVersionId,
-    templateRegistrationId: numericValue(templateRegistrationId) ?? templateRegistrationId,
+    templateRegistrationId: numericValue(templateId) ?? templateId,
     userInputParameters,
     urlSourceTaskId: valueAfter(args, '--url-source-task-id') ?? '',
     urlSourceTaskField: valueAfter(args, '--url-source-task-field') ?? ''
@@ -306,8 +306,9 @@ function buildUpdateTemplateTaskBody(
     ?? numericValue(task.taskGroupId)
     ?? numericValue(task.TaskGroupId);
   body.taskName = valueAfter(args, '--name') ?? stringValue(body.taskName) ?? stringValue(body.TaskName) ?? stringValue(task.taskName) ?? stringValue(task.TaskName) ?? '';
-  body.templateId = numericValue(valueAfter(args, '--template-registration-id')) ?? numericValue(body.templateId) ?? numericValue(body.templateRegistrationId) ?? numericValue(task.templateId) ?? '';
-  body.templateRegistrationId = numericValue(valueAfter(args, '--template-registration-id')) ?? numericValue(body.templateRegistrationId) ?? numericValue(body.templateId) ?? numericValue(task.templateId) ?? '';
+  const templateId = numericValue(valueAfter(args, '--template-id') ?? valueAfter(args, '--template-registration-id'));
+  body.templateId = templateId ?? numericValue(body.templateId) ?? numericValue(body.templateRegistrationId) ?? numericValue(task.templateId) ?? '';
+  body.templateRegistrationId = templateId ?? numericValue(body.templateRegistrationId) ?? numericValue(body.templateId) ?? numericValue(task.templateId) ?? '';
   body.templateType = numericValue(valueAfter(args, '--template-type')) ?? numericValue(body.templateType) ?? 0;
   body.templateVersion = numericValue(valueAfter(args, '--template-version')) ?? numericValue(body.templateVersion) ?? numericValue(body.TemplateVersion) ?? 0;
   body.templateVersionId = numericValue(valueAfter(args, '--template-version-id')) ?? numericValue(body.templateVersionId) ?? numericValue(body.TemplateVersionId) ?? numericValue(task.templateVersionId) ?? numericValue(task.TemplateVersionId) ?? '';
@@ -395,7 +396,7 @@ function templateTaskCreateValueFlags(): string[] {
 }
 
 function templateTaskUpdateValueFlags(): string[] {
-  return ['--api-base-url', '--name', '--task-group', '--group-id', '--template-registration-id', '--template-version-id', '--template-version', '--template-type', '--params', '--params-file', '--url-source-task-id', '--url-source-task-field'];
+  return ['--api-base-url', '--name', '--task-group', '--group-id', '--template-id', '--template-registration-id', '--template-version-id', '--template-version', '--template-type', '--params', '--params-file', '--url-source-task-id', '--url-source-task-field'];
 }
 
 function formatTemplateLine(template: unknown): string {
@@ -518,17 +519,17 @@ function buildParameterExample(parameters: InternalTemplateParameter[]): Record<
   return example;
 }
 
-function buildTemplateCreateExamples(templateRegistrationId: string, normalized: NormalizedTemplateParameters): Record<string, string> {
+function buildTemplateCreateExamples(templateId: string, normalized: NormalizedTemplateParameters): Record<string, string> {
   const firstRequired = normalized.parameters.find((parameter) => parameter.required) ?? normalized.parameters[0];
   const simple = firstRequired
-    ? `bazhuayu template-task create ${templateRegistrationId} --param ${firstRequired.name}=${shellExampleValue(firstRequired)} --json`
-    : `bazhuayu template-task create ${templateRegistrationId} --json`;
+    ? `bazhuayu template-task create ${templateId} --param ${firstRequired.name}=${shellExampleValue(firstRequired)} --json`
+    : `bazhuayu template-task create ${templateId} --json`;
   return {
     simple,
-    file: `bazhuayu template-task create ${templateRegistrationId} --params-file params.json --json`,
+    file: `bazhuayu template-task create ${templateId} --params-file params.json --json`,
     dryRun: firstRequired
-      ? `bazhuayu template-task create ${templateRegistrationId} --param ${firstRequired.name}=${shellExampleValue(firstRequired)} --dry-run --json`
-      : `bazhuayu template-task create ${templateRegistrationId} --dry-run --json`
+      ? `bazhuayu template-task create ${templateId} --param ${firstRequired.name}=${shellExampleValue(firstRequired)} --dry-run --json`
+      : `bazhuayu template-task create ${templateId} --dry-run --json`
   };
 }
 

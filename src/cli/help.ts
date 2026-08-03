@@ -2,6 +2,23 @@ import { API_BASE_URL_ENV } from '../runtime/api-client.js';
 import { ACCESS_TOKEN_ENV, API_KEY_ENV } from '../runtime/auth.js';
 import { API_KEYS_URL } from '../commands/auth.js';
 
+const BRAND_BLUE = '\u001b[38;2;37;99;235m';
+const ANSI_RESET = '\u001b[0m';
+
+function colorEnabled(): boolean {
+  if (process.env.NO_COLOR) return false;
+  if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') return true;
+  return Boolean(process.stdout.isTTY);
+}
+
+function commandName(value: string): string {
+  return colorEnabled() ? `${BRAND_BLUE}${value}${ANSI_RESET}` : value;
+}
+
+function commandLine(command: string, description: string): string {
+  return `    ${commandName(command.padEnd(12))} ${description}`;
+}
+
 export function printCommandHelp(command: string, subcommand?: string): void {
   const key = subcommand && !subcommand.startsWith('-') ? `${command} ${subcommand}` : command;
   const help: Record<string, string> = {
@@ -9,19 +26,16 @@ export function printCommandHelp(command: string, subcommand?: string): void {
   bazhuayu capabilities [--json]
 
 Purpose:
-  Print machine-readable CLI capabilities for agents.
-  Agents should call this before planning multi-step workflows such as creating
-  a scraping task from a URL. The response includes machineContract.recipes with
-  the recommended detect/plan/preview/apply/validate sequence.
-  For user requests like "use bazhuayu-cli to create a task for this URL",
-  LLM/agent tools should choose machineContract.recipes.createTaskFromUrlWithAgent
-  and run the CLI workflow themselves.
-  Agent task creation context includes the user goal and a full-page screenshot
-  by default.
+  Print machine-readable CLI capabilities for automation and agent workflows.
+  The response includes supported commands, auth requirements, output formats,
+  error codes, browser modes, and recommended task-creation recipes.
+
+Agent notes:
+  Agents should inspect this command before planning multi-step workflows such
+  as creating a scraping task from a URL. For that workflow, follow
+  machineContract.recipes.createTaskFromUrlWithAgent instead of guessing detect
+  flags from human help text.
   bazhuayu-cli is the npm package name; bazhuayu is the installed binary.
-  If a user says "use bazhuayu-cli to create a task for this URL", agents should
-  inspect this command and then execute the recipe without asking the user to
-  explain internal detect flags.
 
 Authentication:
   Does not require login. Functional commands do.
@@ -38,7 +52,7 @@ Authentication:
 Login methods:
   Interactive login lets you choose OAuth or API key.
   OAuth opens the browser and stores an access/refresh token locally.
-  Create one at ${API_KEYS_URL}
+  Create an API key at ${API_KEYS_URL}
   API key login opens this page automatically, then verifies and stores the key.
   If the browser does not open, copy the URL above and open it manually.
 
@@ -57,7 +71,7 @@ Agent notes:
   bazhuayu env status [--json]
 
 Purpose:
-  Hidden internal command for switching API environment.
+  Switch API environment. Internal command.
 `,
     task: `Usage:
   bazhuayu task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
@@ -71,6 +85,7 @@ Purpose:
 
 Notes:
   rename/move/delete modify remote tasks and require --yes.
+  When --task-file is used, <taskId> provides a fallback ID if the file does not contain one.
 `,
     'task list': `Usage:
   bazhuayu task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
@@ -84,9 +99,7 @@ Options:
   --status <value>              Filter tasks by platform status.
   --task-type <value>           Filter tasks by platform task type.
   --scheduled <true|false>      Filter scheduled or unscheduled tasks.
-  --template-id <id>            Filter tasks created from a template registration.
-  --template-registration-id <id>
-                                Alias for --template-id.
+  --template-id <id>            Filter tasks created from a template.
   --template-version-id <id>    Filter tasks by template version.
   --json                        Print a machine-readable JSON envelope.
 
@@ -98,9 +111,15 @@ Examples:
 `,
     'task inspect': `Usage:
   bazhuayu task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+
+Notes:
+  When --task-file is used, <taskId> provides a fallback ID if the file does not contain one.
 `,
     'task validate': `Usage:
   bazhuayu task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
+
+Notes:
+  When --task-file is used, <taskId> provides a fallback ID if the file does not contain one.
 `,
     'task-group': `Usage:
   bazhuayu task-group list [--json]
@@ -113,31 +132,42 @@ Notes:
   update/delete/set-default modify remote task group state and require --yes.
 `,
     template: `Usage:
-  bazhuayu template search <keyword> [--page <n>] [--page-size <n>] [--json]
-  bazhuayu template view <templateRegistrationId> [--json]
-  bazhuayu template version <templateRegistrationId> [--json]
+  bazhuayu template search <keyword> [--page <n>] [--page-size <n>] [--sort <n>] [--json]
+  bazhuayu template view <templateId> [--json]
+  bazhuayu template version <templateId> [--json]
 
 Notes:
-  Domestic template APIs use templateRegistrationId for catalog detail lookup.
+  Requires configured credentials. Run "bazhuayu auth login" first.
+  Template search uses the same catalog and default ranking as the Bazhuayu website.
 `,
     'template search': `Usage:
-  bazhuayu template search <keyword> [--page <n>] [--page-size <n>] [--kind-id <id>] [--free true|false] [--run-on <n>] [--scope <n>] [--json]
+  bazhuayu template search <keyword> [--page <n>] [--page-size <n>] [--sort <n>] [--kind-id <id>] [--free true|false] [--run-on <n>] [--scope <n>] [--json]
+
+Notes:
+  Requires configured credentials. Run "bazhuayu auth login" first.
+  Uses the same template catalog and default ranking as the Bazhuayu website.
 `,
     'template view': `Usage:
-  bazhuayu template view <templateRegistrationId> [--json]
+  bazhuayu template view <templateId> [--json]
 
-JSON output includes normalized parameters, parameterExample, parameterSource, and
-createExamples for agent/template-task creation workflows.
+JSON output includes normalized parameters, parameterExample, parameterSource,
+and createExamples for agent/template-task creation workflows.
+
+Notes:
+  Requires configured credentials. Run "bazhuayu auth login" first.
 `,
     'template version': `Usage:
-  bazhuayu template version <templateRegistrationId> [--json]
+  bazhuayu template version <templateId> [--json]
+
+Notes:
+  Requires configured credentials. Run "bazhuayu auth login" first.
 `,
     'template-task': `Usage:
-  bazhuayu template-task create <templateRegistrationId> [--name <taskName>] [--task-group <groupId>] [--param key=value]... [--params <json>|--params-file <file>] [--dry-run] [--json]
+  bazhuayu template-task create <templateId> [--name <taskName>] [--task-group <groupId>] [--param key=value]... [--params <json>|--params-file <file>] [--dry-run] [--json]
   bazhuayu template-task update <taskId> [--params <json>|--params-file <file>] --yes [--json]
 
 Notes:
-  Prefer --param key=value for agent-friendly template creation when template view
+  Prefer --param key=value for simple template creation when template view
   returns normalized parameters.
   --params must be the domestic template userInputParameters JSON object.
   --dry-run builds and prints the request without creating a task.
@@ -156,8 +186,7 @@ Schedule types:
 Notes:
   cloud update/start/stop modify remote schedule state and require --yes.
   cloud next uses the domestic nextexecutiontime API and returns nextExecutionTimes.
-  Local schedule is not exposed in the CLI because it depends on the desktop client's
-  local SQLite/node-schedule queue.
+  Local schedules are managed in the Bazhuayu desktop app and are not available in the CLI.
 `,
     'schedule cloud': `Usage:
   bazhuayu schedule cloud get <taskId> [--json]
@@ -201,6 +230,7 @@ Notes:
   Recommended order: status -> profiles -> install -> reopen/enable -> status -> use user.
   In --json mode, follow data.nextActions (or error.details.nextActions) until
   status reports readyForUserBrowserRun=true; only then persist user mode.
+  Selection priority: --browser > OCTOPUS_BROWSER > saved browser use setting > independent.
   Saved default lives in ~/.octopus/config.json and applies to both run and detect.
   Override once with: bazhuayu run|detect ... --browser independent|user
   Env override: OCTOPUS_BROWSER=user|independent (optional OCTOPUS_BROWSER_ID / OCTOPUS_BROWSER_PROFILE)
@@ -212,126 +242,118 @@ Notes:
   After install, reopen the browser once and confirm the extension is enabled.
 `,
     run: `Usage:
-  bazhuayu run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
+  bazhuayu run <taskId> [options]
 
-Agent notes:
-  Requires configured credentials even when --task-file points to a local JSON, XML, or OTD file.
-  Use --detach for background local collection.
-  Use --max-rows <n> to stop automatically after saving n rows.
-  Use --jsonl for foreground event streams.
-  JSONL now includes captcha and proxy request events when the runtime asks for them.
-  run only starts local collection. Use data export <taskId> --lot-id <lotId> for files.
-  Local Chrome execution supports macOS x64/arm64, Windows x64, and Linux x64.
-  Linux arm64 is not supported because Chrome for Testing has no Linux arm64 browser package.
-  Browser selection (priority): --browser flag > OCTOPUS_BROWSER env > bazhuayu browser use > independent.
-  Set default once: bazhuayu browser use user|independent
-  --browser independent launches a temporary Chrome for Testing profile.
-  --browser user reuses system Chrome/Edge with the permanently installed extension.
-  User browser setup includes: bazhuayu browser install (full verified flow: bazhuayu browser --help)
-  Agents should follow browserRuntime.modes.user.setupRecipe from capabilities --json.
-  User browser mode does not support --headless.
+Purpose:
+  Run a Bazhuayu task locally.
+
+Task and output:
+  --task-file <file.json|file.xml|file.otd>
+      Load a local task definition instead of fetching <taskId>.
+      <taskId> is used as a fallback when the file does not contain one.
+  --output <dir>            Store run artifacts under this directory.
+  --max-rows <n>            Stop after saving n rows.
+
+Execution:
+  --detach                  Start in the background. Foreground is the default.
+  --timeout-ms <ms>         Set the foreground run timeout. Default: 600000.
+  --headless                Run the independent browser without a visible window.
+  --json                    Print one machine-readable result.
+  --jsonl                   Stream foreground run events as JSON Lines.
+
+Browser:
+  --browser independent|user
+                            Choose a browser mode for this run.
+  --browser-id chrome|edge  Select Chrome or Edge for user mode.
+  --profile <name>          Select a Chromium profile for user mode.
+  --chrome-path <path>      Override the Chrome executable for independent mode.
+  --force-close-browser     Allow the CLI to close the selected user browser if needed.
+
+Browser modes:
+  independent  Chrome for Testing with a temporary profile.
+  user         System Chrome/Edge with existing cookies and login state.
+  User mode is supported on Windows and macOS and does not support --headless.
+  See bazhuayu browser --help for browser selection priority and setup.
+
+Examples:
+  bazhuayu run task-123
+  bazhuayu run task-123 --max-rows 100 --json
+  bazhuayu run task-123 --detach
+  bazhuayu run local-task --task-file task.json --browser user --profile "Default"
+
+Notes:
+  Requires configured credentials, including runs from local task files.
+  --jsonl includes row, log, captcha, proxy, download, and lifecycle events.
+  This command starts local collection only. Export results with
+  bazhuayu data export <taskId> --lot-id <lotId>.
+  Browser-based local execution supports macOS x64/arm64, Windows x64, and Linux x64.
+  Linux arm64 browser-based execution is not supported because Chrome for Testing
+  has no Linux arm64 package.
+  Agents using user mode should follow browserRuntime.modes.user.setupRecipe from
+  bazhuayu capabilities --json.
 `,
     detect: `Usage:
+  bazhuayu detect <url> --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
+  bazhuayu detect <url> --manual [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups]
+  bazhuayu detect <url> --agent --agent-command <cmd> [--goal <text>] [--output task.json] [--run-sample <n>] [--json]
+
+Agent workflow:
   bazhuayu detect <url> --prepare-agent --json [--goal <text>] [--output context.json]
   bazhuayu detect --preview-agent-plan plan.json --agent-context context.json [--json]
   bazhuayu detect --apply-agent-plan plan.json --agent-context context.json --output task.json [--json]
-  bazhuayu detect <url> --agent --agent-command <cmd> [--goal <text>] [--output task.json] [--run-sample <n>]
-  bazhuayu detect <url> --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
-  bazhuayu detect <url> --manual [--goal <text>] [--llm-rank] [--no-dismiss-popups]
-  bazhuayu detect <url> --browser independent|user [--browser-id chrome|edge] [--profile <name>] [--force-close-browser] --auto|--manual|--agent ...
 
 Purpose:
-  Open the Octopus extension browser, inspect the page, and list candidate data regions
-  such as tables, repeated cards, search results, link collections, and forms.
+  Create a local collection task by inspecting a web page and identifying its
+  primary data region, fields, and pagination.
+
+Modes:
+  --auto    Choose the best detected region and generate a task automatically.
+  --manual  Open a guided browser flow to choose the region and handle login or popups.
+  --agent   Let a trusted external agent review the page context and generate a task plan.
+
+Browser:
+  Use --browser independent|user, with optional --browser-id chrome|edge and
+  --profile <name>. See bazhuayu browser --help for selection priority and setup.
+  independent uses a temporary Chrome for Testing profile.
+  user reuses system Chrome/Edge and its signed-in profile on Windows or macOS.
+  Configure user mode with bazhuayu browser install and bazhuayu browser use.
+  User mode opens a dedicated session window and does not require closing an
+  already-open browser. Agents should follow browserRuntime.modes.user.setupRecipe
+  and JSON nextActions. Use --force-close-browser only when explicitly needed.
+
+Search and login:
+  Use --query <keyword> or --input <name=value> to search before detecting data.
+  Manual mode can pause for login, captcha, or paywall handling. Use --save-session
+  to reuse supported same-site cookies in later local runs.
+
+Output:
+  If --output is omitted, detect creates detected_<host>.json.
+  --run-sample <n> generates the task, runs up to n local rows, and returns the
+  task and sample result in one JSON response.
+
+Examples:
+  bazhuayu detect https://example.com/products --auto --output products.json
+  bazhuayu detect 'https://example.com/search?q=laptop' --manual --save-session
+  bazhuayu detect https://example.com/products --browser user --auto
+  bazhuayu detect https://example.com/products --agent --agent-command "my-agent" --run-sample 5 --json
 
 Notes:
-  Quote URLs that contain '&', '?' or other shell metacharacters, for example:
-  bazhuayu detect 'https://example.com/page?a=1&b=2' --manual
-  The first pass is deterministic and does not require an LLM. For direct
-  CLI-only use, --auto chooses the best candidate and generates a task.
-  --manual opens a guided flow for login,
-  popup handling, choosing the highlighted data region, optional session save,
-  and task-file generation.
-  Browser selection matches run: --browser flag > OCTOPUS_BROWSER env >
-  bazhuayu browser use default > independent.
-  Set default once: bazhuayu browser use user|independent
-  --browser independent launches temporary Chrome for Testing.
-  --browser user reuses system Chrome/Edge + permanently installed extension
-  (Windows/macOS). Setup includes bazhuayu browser install; see: bazhuayu browser --help
-  Agents should follow browserRuntime.modes.user.setupRecipe and JSON nextActions.
-  User-browser detect/run does not require closing an already-open Chrome;
-  it opens a dedicated session window and closes only that window when finished.
-  Only browser install needs the browser closed (or --force-close).
-  On Linux servers without DISPLAY/WAYLAND_DISPLAY, non-manual detection
-  automatically uses Xvfb when installed. Manual detection needs a visible
-  desktop/VNC display because the user must interact with the browser overlay.
-  Use --query <keyword> or --input <name=value> to search first, then detect
-  and generate a task from the result page. Generated tasks preserve the search
-  input XPath and submit action before extracting results.
-  If a search page opens a login/captcha/paywall gate, detect pauses in
-  interactive/manual mode so the user can complete login in the browser. Use
-  --save-session to store same-site cookies; generated tasks inject that session
-  before replaying the search.
-  detect uses the protected SmartProxy runtime by default. It requires a
-  bundled private @octopus/octopus-protect native module. Protected Smart resources are
-  fetched encrypted, decrypted in memory, and never written to task files.
-  Use --legacy-detector only for debugging the previous heuristic detector.
-  If --output is omitted when generating a task, a detected_<host>.json file is created automatically.
-  Login/cookie/ad overlays are dismissed automatically when a safe close control is found.
-  Use --no-dismiss-popups to inspect the page without this cleanup.
-  The manual session-save option stores same-site cookies locally and writes only
-  a session reference in generated task files; later local runs load that session automatically.
-  Cookie sessions do not cover every site, especially pages that require localStorage,
-  device binding, or fresh verification.
-  Agents should discover this workflow via "bazhuayu capabilities --json" and
-  machineContract.recipes.createTaskFromUrlWithAgent; users should not need to
-  explain the prepare/plan/preview/apply sequence manually.
-  If an LLM/agent is helping the user create a scraping task, prefer that recipe
-  over handwritten task JSON. For the shortest path, use --agent with a trusted
-  --agent-command; add --run-sample <n> to generate the task and immediately run
-  a small local sample in the same JSON response. For audit or repair, use the
-  low-level prepare/preview/apply commands. Agents must open
-  context.visualArtifacts.annotatedScreenshotPath or context.screenshot.path
-  before writing the plan and include visualReview evidence/checks when a
-  screenshot is present.
-  Before choosing a candidate, infer the primary task target from the user goal
-  and live visible page structure. Honor explicit goals; when the goal is vague
-  or absent, use page structure. Do not default to details or the largest list.
-  Prefer selection.fields entries such as {"elementId":"<context.visualElements id>","as":"title"}
-  when context.visualElements is available; fall back to existing field names
-  or source/as pairs when no elementId is available.
-  context.visualElements includes source=detected_field and extra source=visible_dom
-  entries from candidate rows. Screenshots may show V* labels that match
-  visualElements[].annotationLabel. Use visible_dom ids when detector fields miss
-  visible titles/prices/images/links/metrics; set kind="href" or kind="src" when
-  the selected element should extract a URL or image source.
-  If the correct visible region is not present in context.candidates, use
-  context.pageVisualElements to write selection.customCandidate with xpath/itemXPath
-  and fieldElementIds; the CLI previews that synthetic candidate before applying it.
-  Do not treat --auto examples as the default LLM/agent workflow; --auto skips
-  agent planning and is only for direct CLI automatic selection.
-  Agent workflows generate a full-page screenshot, an annotated screenshot, and
-  top candidate crop screenshots when boxes are available. Paths are exposed in
-  context.screenshot, context.visualArtifacts, and context.decisionSummary. Pass
-  the user request through --goal so the agent can judge candidates against both
-  the natural-language intent and the screenshot.
-  Local Chrome execution supports macOS x64/arm64, Windows x64, and Linux x64.
-  Linux arm64 is not supported because Chrome for Testing has no Linux arm64 browser package.
-  --agent is a one-shot wrapper for external LLM/agent tools. The CLI writes a
-  temporary context JSON, runs --agent-command (or OCTOPUS_AGENT_COMMAND), expects
-  a plan JSON at OCTOPUS_AGENT_PLAN or stdout, previews risk, then generates the
-  task when preview passes. Use --confirm-agent-plan to ask before writing the
-  task. --agent-command executes a local
-  shell command; only pass a trusted agent runner. --yes is accepted for
-  backward compatibility but is no longer required. --run-sample <n> runs the
-  generated task with --max-rows <n> and embeds the run envelope in the detect
-  JSON response without printing a second top-level JSON document. Use
-  --keep-agent-files to retain the context/plan for audit. Low-level --prepare-agent/--preview-agent-plan/
-  --apply-agent-plan commands remain available for automation and debugging.
-  Plans generated from a context with screenshot.path must include
-  visualReview.reviewed=true, visualReview.evidence, and preferably
-  visualReview.checks; preview fails when the agent has not recorded visual
-  verification.
+  Requires configured credentials. Run "bazhuayu auth login" first.
+  Quote URLs containing '&', '?' or other shell metacharacters.
+  Safe login, cookie, and ad overlays are dismissed automatically; use
+  --no-dismiss-popups to leave them unchanged.
+  Detect uses Bazhuayu's protected detector by default. Use --legacy-detector
+  only when troubleshooting the previous detector.
+  Independent local detection supports macOS x64/arm64, Windows x64, and Linux x64.
+  Linux arm64 is not supported. On headless Linux x64, auto and agent modes can
+  use Xvfb when installed; manual mode requires a visible desktop or VNC display.
+  Agents should use --agent or the prepare/preview/apply workflow, not --auto;
+  --auto is for direct CLI automatic selection.
+  Agent tools should inspect bazhuayu capabilities --json and follow
+  machineContract.recipes.createTaskFromUrlWithAgent. Only pass a trusted command
+  to --agent-command. The runner uses OCTOPUS_AGENT_CONTEXT and OCTOPUS_AGENT_PLAN.
+  Use --confirm-agent-plan for interactive confirmation and --keep-agent-files
+  to retain context and plan files for audit.
 `,
     cloud: `Usage:
   bazhuayu cloud start <taskId> [--json]
@@ -350,33 +372,38 @@ Notes:
   bazhuayu local history <taskId> [--output <dir>] [--json]
   bazhuayu local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]
   bazhuayu local cleanup [--json]
-`,
-    data: `Usage:
-  bazhuayu data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
-  bazhuayu data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
-  bazhuayu data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
-  bazhuayu data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
-
-Defaults:
-  --source local
-  data preview returns the latest rows unless --offset is provided.
-  --unexported reads cloud unexported rows but does not mark them as exported.
-  --format xlsx, unless inferred from --file extension
-  --file task-name.<format>, with Windows-style duplicate suffixes
-`,
-    'data history': `Usage:
-  bazhuayu data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
-`,
-    'data count': `Usage:
-  bazhuayu data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
-`,
-    'data preview': `Usage:
-  bazhuayu data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
-`,
-    'data export': `Usage:
-  bazhuayu data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
 
 Notes:
+  For exports, prefer bazhuayu data export <taskId> --source local.
+  local export remains available for compatibility.
+`,
+    data: `Usage:
+  bazhuayu data history <taskId> [--source local|cloud] [--output <dir>] [--json]
+  bazhuayu data count <taskId> [--source local|cloud] [--unexported] [--json]
+  bazhuayu data preview <taskId> [--source local|cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
+  bazhuayu data export <taskId> [--source local|cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
+
+Defaults:
+  --source local. --local and --cloud are supported aliases.
+  data preview returns the latest rows unless --offset is provided.
+  --unexported reads cloud unexported rows but does not mark them as exported.
+  --format xlsx, unless inferred from --file extension.
+  If --file is omitted, the CLI creates task-name.<format> and avoids overwriting existing files.
+`,
+    'data history': `Usage:
+  bazhuayu data history <taskId> [--source local|cloud] [--output <dir>] [--json]
+`,
+    'data count': `Usage:
+  bazhuayu data count <taskId> [--source local|cloud] [--unexported] [--json]
+`,
+    'data preview': `Usage:
+  bazhuayu data preview <taskId> [--source local|cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
+`,
+    'data export': `Usage:
+  bazhuayu data export <taskId> [--source local|cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
+
+Notes:
+  --source defaults to local. --local and --cloud are supported aliases.
   --unexported reads cloud unexported rows but does not mark them as exported.
 `,
     runs: `Usage:
@@ -407,126 +434,42 @@ Purpose:
 }
 
 export function printRootHelp(version: string): void {
-  console.log(`bazhuayu ${version}
-
-Standalone Octoparse engine CLI.
-
-Usage:
-  bazhuayu capabilities [--json]
-  bazhuayu doctor [--chrome-path <path>] [--output <runsDir>] [--api-base-url <url>] [--json]
-  bazhuayu browser use independent|user [--browser-id chrome|edge] [--profile <name>] [--json]
-  bazhuayu browser status|install|close|profiles [--browser-id chrome|edge] [--profile <name>] [--json]
-  bazhuayu auth login <apiKey> [--api-base-url <url>] [--json]
-  bazhuayu auth login [--stdin] [--no-open] [--api-base-url <url>] [--json]
-  bazhuayu auth status [--json]
-  bazhuayu auth info [--json]
-  bazhuayu auth logout [--json]
-  bazhuayu task list [--page <n>] [--page-size <n>] [--limit <n>] [--keyword <text>] [--task-group <groupId>] [--template-id <id>] [--template-version-id <id>] [--json]
-  bazhuayu task show <taskId> [--json]
-  bazhuayu task copy <taskId> [--task-group <groupId>] [--json]
-  bazhuayu task rename <taskId> --name <name> --yes [--json]
-  bazhuayu task move <taskId> --task-group <groupId> --yes [--json]
-  bazhuayu task delete <taskId> --yes [--json]
-  bazhuayu task inspect <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
-  bazhuayu task validate <taskId> [--task-file <file.json|file.xml|file.otd>] [--json]
-  bazhuayu task-group list/create/update/delete/set-default [--json]
-  bazhuayu template search/view/version [--json]
-  bazhuayu template-task create/update [--json]
-  bazhuayu schedule cloud get/update/start/stop/next [--json]
-  bazhuayu detect URL --prepare-agent --json --goal <text> --output context.json
-  bazhuayu detect --preview-agent-plan plan.json --agent-context context.json [--json]
-  bazhuayu detect --apply-agent-plan plan.json --agent-context context.json --output task.json
-  bazhuayu detect URL --agent --agent-command <cmd> [--output task.json] [--run-sample <n>]
-  bazhuayu detect URL --auto [--goal <text>] [--output task.json] [--llm-rank] [--no-dismiss-popups] [--json]
-  bazhuayu detect URL --manual [--goal <text>] [--llm-rank] [--no-dismiss-popups]
-  bazhuayu detect URL --browser user [--profile <name>] --auto|--manual|--agent ...
-  bazhuayu run <taskId> [--task-file <file.json|file.xml|file.otd>] [--output <dir>] [--browser independent|user] [--browser-id chrome|edge] [--profile <name>] [--chrome-path <path>] [--headless] [--max-rows <n>] [--detach] [--json|--jsonl]
-  bazhuayu cloud start <taskId> [--json]
-  bazhuayu cloud stop <taskId> [--json]
-  bazhuayu cloud status <taskId> [--json]
-  bazhuayu cloud history <taskId> [--json]
-  bazhuayu local status <taskId> [--output <dir>] [--json]
-  bazhuayu local pause <taskId> [--json]
-  bazhuayu local resume <taskId> [--json]
-  bazhuayu local stop <taskId> [--json]
-  bazhuayu local history <taskId> [--output <dir>] [--json]
-  bazhuayu local export <taskId> [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--json]
-  bazhuayu local cleanup [--json]
-  bazhuayu data history <taskId> [--source local|cloud|--local|--cloud] [--output <dir>] [--json]
-  bazhuayu data count <taskId> [--source local|cloud|--local|--cloud] [--unexported] [--json]
-  bazhuayu data preview <taskId> [--source local|cloud|--local|--cloud] [--limit <n>] [--offset <n>] [--unexported] [--json]
-  bazhuayu data export <taskId> [--source local|cloud|--local|--cloud] [--file <result.xlsx>] [--lot-id <lotId>] [--output <dir>] [--format xlsx|csv|html|json|xml] [--unexported] [--json]
-
-Task file format:
-  {
-    "taskId": "abc123",
-    "taskName": "Example",
-    "xml": "... original OTD XML ...",
-    "xoml": "... transformed BPMN XOML ...",
-    "fieldNames": ["title", "url"],
-    "workflowSetting": {},
-    "brokerSettings": {},
-    "userAgent": "Mozilla/5.0 ...",
-    "disableAD": false
-  }
-
-Design:
-  - Runs embedded @octopus/browser-runtime directly.
-  - Default local mode uses independent Chrome for Testing (override with bazhuayu browser use user).
-  - Optional --browser user reuses system Chrome/Edge + permanently installed extension (Windows/macOS).
-  - Supports local Chrome execution on macOS x64/arm64, Windows x64, and Linux x64.
-  - Does not support Linux arm64 local execution because Chrome for Testing has no Linux arm64 browser package.
-  - Does not require the Electron client.
-  - Cloud collection is controlled through backend APIs; local collection is controlled by the local engine.
-  - Does not support kernel browser or legacy workflow in v1.
-
-Authentication:
-  OAuth or API key credentials are required for all functional commands, including local --task-file and .otd runs.
-  Only setup/diagnostic commands can run without it: --help, --version, capabilities, doctor, browser, auth, env.
-  API key page:                   ${API_KEYS_URL}
-  bazhuayu auth login --oauth   open browser OAuth login and store tokens
-  bazhuayu auth login <key>     verify and store a copied API key directly
-  bazhuayu auth login          choose OAuth or API key interactively
-  bazhuayu auth login --stdin  read API key from stdin, verify it, then store it
-  bazhuayu auth login --no-open do not open the browser during interactive login
-  ${API_KEY_ENV}                  overrides stored credentials
-  ${ACCESS_TOKEN_ENV}             uses a bearer access token instead of stored credentials
-  ${API_BASE_URL_ENV}             overrides API base URL; default is the production API
-
-Run diagnostics:
-  --timeout-ms <ms>            overall foreground run timeout, default 600000
-  --extension-timeout-ms <ms>  runtime extension registration timeout, default 15000
-  --max-rows <n>               stop local collection after saving n rows
-  --browser independent|user   browser launch mode (default: saved preference or independent)
-  --browser-id chrome|edge     target browser for --browser user
-  --profile <name>             Chromium profile directory for --browser user
-  --force-close-browser        optional: force-close user browser before user-mode launch (not required; default reuses running browser)
-  bazhuayu browser use ...      set default browser for run/detect (saved in ~/.octopus/config.json)
-  --debug-bridge              include extension bridge command/response logs
-
-Agent contract:
-  For LLM/agent task creation, run capabilities --json. Prefer detect --agent
-  with a trusted --agent-command for the shortest create-task path; add
-  --run-sample <n> when the user wants immediate sample rows. Use prepare,
-  preview, apply, and validate as the lower-level auditable workflow. Agents
-  must open context.screenshot.path and record visualReview evidence before
-  writing plan.json.
-  Before choosing a candidate, first judge the live page primary target from the
-  user goal, title, first viewport, active tab/navigation, semantic purpose, and
-  main content prominence; do not default to details or the largest list.
-  If candidates miss the visible target, use context.pageVisualElements with
-  selection.customCandidate instead of forcing the wrong candidate.
-  Do not treat --auto examples as the default LLM/agent workflow; --auto is only for
-  direct CLI automatic selection.
-  --json   return one stable JSON envelope: {"ok":true,"data":...} or {"ok":false,"error":...}
-  --jsonl  stream long-running run events as one JSON object per line
-  stdout   reserved for requested data/output; diagnostics and failures go to stderr in human mode
-  exit 0   success; non-zero means the command did not complete as requested
-
-Exit codes:
-  0  success
-  1  operation failed
-  2  runtime/environment failure
-  3  unsupported task definition
-`);
+  console.log([
+    `bazhuayu ${version}`,
+    '',
+    'Run and manage Bazhuayu collection tasks from the command line.',
+    '',
+    `Run ${commandName('bazhuayu auth login')} to sign in.`,
+    '',
+    'Create:',
+    commandLine('detect', 'Create a local task from a URL'),
+    commandLine('template', 'Search and inspect task templates'),
+    '',
+    'Run:',
+    commandLine('run', 'Run a task locally (shortcut)'),
+    commandLine('cloud', 'Manage cloud runs (start / stop / status / history)'),
+    commandLine('local', 'Manage local runs (status / pause / resume / stop / history / cleanup)'),
+    '',
+    'Manage:',
+    commandLine('task', 'List, inspect, copy, rename, move, or delete tasks'),
+    commandLine('schedule', 'View and update cloud schedules'),
+    '',
+    'Data:',
+    commandLine('data', 'Preview, count, and export collected data'),
+    '',
+    'Config:',
+    commandLine('auth', 'Log in, show account status, or log out'),
+    commandLine('browser', 'Choose independent or signed-in browser mode'),
+    commandLine('doctor', 'Check your local environment and API access'),
+    '',
+    `Run ${commandName('bazhuayu <command> --help')} for details on any command.`,
+    `Run ${commandName('bazhuayu capabilities --json')} for machine-readable automation metadata.`,
+    '',
+    'Authentication:',
+    '  OAuth or API key credentials are required for functional commands.',
+    `  API key page: ${API_KEYS_URL}`,
+    `  ${API_KEY_ENV} overrides stored credentials.`,
+    `  ${ACCESS_TOKEN_ENV} uses a bearer access token for CI.`,
+    `  ${API_BASE_URL_ENV} overrides the domestic production API base URL.`
+  ].join('\n'));
 }

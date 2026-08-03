@@ -24,7 +24,7 @@ export async function scheduleCommand(domain: string | undefined, args: string[]
     return printError(
       json,
       'UNSUPPORTED_OPERATION',
-      'CLI 不支持本地定时。客户端本地定时依赖桌面客户端的本机 SQLite/node-schedule 队列，不能只通过远端 localScheduleConfig 接口实现。请使用桌面客户端设置本地定时。'
+      '本地定时任务由八爪鱼桌面客户端管理，CLI 不提供此功能。'
     );
   }
 

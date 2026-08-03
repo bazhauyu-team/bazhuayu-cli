@@ -146,15 +146,18 @@ async function fakeHealthyChrome() {
   return fakeChrome;
 }
 
-function assertDetectHelpPrefersAgentWorkflow(stdout) {
-  const prepareMatch = stdout.match(/bazhuayu detect (?:URL|<url>) --prepare-agent/);
-  const autoMatch = stdout.match(/bazhuayu detect (?:URL|<url>) --auto/);
-  const prepareIndex = prepareMatch?.index ?? -1;
-  const autoIndex = autoMatch?.index ?? -1;
-  assert.ok(prepareIndex >= 0, stdout);
-  assert.ok(autoIndex >= 0, stdout);
-  assert.ok(prepareIndex < autoIndex, stdout);
-  assert.match(stdout, /Do not treat --auto examples as the default\s+LLM\/agent workflow/);
+function assertDetectHelpExplainsModes(stdout) {
+  assert.match(stdout, /bazhuayu detect (?:URL|<url>) --auto/);
+  assert.match(stdout, /bazhuayu detect (?:URL|<url>) --manual/);
+  assert.match(stdout, /bazhuayu detect (?:URL|<url>) --agent --agent-command/);
+  assert.match(stdout, /Agent workflow:/);
+  assert.match(stdout, /--prepare-agent/);
+  assert.match(stdout, /--preview-agent-plan/);
+  assert.match(stdout, /--apply-agent-plan/);
+  assert.match(stdout, /Modes:\s+--auto\s+Choose the best detected region/s);
+  assert.match(stdout, /machineContract\.recipes\.createTaskFromUrlWithAgent/);
+  assert.match(stdout, /Agents should use --agent or the prepare\/preview\/apply workflow, not --auto/);
+  assert.match(stdout, /OCTOPUS_AGENT_CONTEXT and OCTOPUS_AGENT_PLAN/);
 }
 
 test('package exposes only the bazhuayu executable', async () => {
@@ -441,6 +444,18 @@ test('functional commands require API key even for local task files', async () =
   assert.match(payload.error.message, /bazhuayu auth login/);
 });
 
+test('template browse commands require authentication', async () => {
+  for (const args of [
+    ['template', 'search', '电商', '--json'],
+    ['template', 'view', '101', '--json'],
+    ['template', 'version', '101', '--json']
+  ]) {
+    const result = await runCli(args);
+    const payload = assertJsonFailure(result, 'AUTH_REQUIRED', 1, args);
+    assert.match(payload.error.message, /bazhuayu auth login/);
+  }
+});
+
 test('capabilities is available before authentication and documents API key contract', async () => {
   const result = await runCli(['capabilities', '--json']);
   assert.equal(result.code, 0);
@@ -474,6 +489,8 @@ test('capabilities is available before authentication and documents API key cont
   assert.ok(payload.data.commands.find((item) => item.command === 'task-group update/delete/set-default')?.requiresConfirmation);
   assert.equal(payload.data.commands.some((item) => item.command.includes('task-url')), false);
   assert.ok(payload.data.commands.find((item) => item.command === 'template search/view/version')?.authRequired);
+  assert.ok(payload.data.commands.find((item) => item.command === 'template-task create <templateId>')?.authRequired);
+  assert.equal(payload.data.commands.some((item) => item.command.includes('templateRegistrationId')), false);
   assert.ok(payload.data.commands.find((item) => item.command === 'template-task update <taskId>')?.requiresConfirmation);
   assert.ok(payload.data.commands.find((item) => item.command === 'schedule cloud update/start/stop <taskId>')?.requiresConfirmation);
   assert.equal(payload.data.commands.some((item) => item.command.includes('schedule local')), false);
@@ -1353,12 +1370,15 @@ test('template catalog commands use domestic simpletemplate APIs', async () => {
     assert.equal(searchPayload.ok, true);
     assert.equal(searchPayload.data.templates[0].id, 101);
     assert.equal(viewPayload.data.data.name, '电商模板');
-    assert.equal(viewPayload.data.templateRegistrationId, 101);
+    assert.equal(viewPayload.data.templateId, 101);
+    assert.equal(viewPayload.data.templateRegistrationId, undefined);
     assert.equal(viewPayload.data.parameterSource, 'UIParameters');
     assert.deepEqual(viewPayload.data.parameters.map((item) => item.name), ['keyword', 'city']);
     assert.equal(viewPayload.data.parameters[0].required, true);
     assert.equal(viewPayload.data.parameterExample.city, '上海');
     assert.match(viewPayload.data.createExamples.simple, /template-task create 101 --param keyword=value --json/);
+    assert.equal(versionPayload.data.templateId, 101);
+    assert.equal(versionPayload.data.templateRegistrationId, undefined);
     assert.equal(versionPayload.data.templateVersionId, 202);
     assert.equal(versionPayload.data.currentTemplateVersion, 3);
     assert.equal(seen[0].path, '/api/simpletemplate/templateRegistration/templates');
@@ -1436,6 +1456,8 @@ test('template-task create builds domestic TemplateConfig request body', async (
     assert.equal(code, 0);
     const payload = parseJson(lines[0]);
     assert.equal(payload.ok, true);
+    assert.equal(payload.data.templateId, '101');
+    assert.equal(payload.data.templateRegistrationId, undefined);
     assert.equal(payload.data.data.taskId, 'task-template-1');
     assert.equal(seen[0].path, '/api/simpletemplate/templateRegistration/101/currentTemplate');
     assert.equal(seen[1].path, '/api/TaskGroup/Default');
@@ -1738,6 +1760,8 @@ test('template-task update requires confirmation and merges existing mapping', a
       'task-1',
       '--name',
       '新名称',
+      '--template-id',
+      '303',
       '--params',
       '{"TemplateParameters":[{"ParamName":"q","Value":"phone"}]}',
       '--yes',
@@ -1755,9 +1779,23 @@ test('template-task update requires confirmation and merges existing mapping', a
     const body = JSON.parse(seen[2].init.body);
     assert.equal(body.taskGroupId, 7);
     assert.equal(body.taskName, '新名称');
-    assert.equal(body.templateId, 101);
+    assert.equal(body.templateId, 303);
+    assert.equal(body.templateRegistrationId, 303);
     assert.equal(body.templateVersionId, 202);
     assert.equal(body.userInputParameters, '{"TemplateParameters":[{"ParamName":"q","Value":"phone"}]}');
+
+    assert.equal(await templateTaskCommand('update', [
+      'task-1',
+      '--template-registration-id',
+      '404',
+      '--yes',
+      '--api-base-url',
+      'https://example.invalid',
+      '--json'
+    ]), 0);
+    const legacyBody = JSON.parse(seen[5].init.body);
+    assert.equal(legacyBody.templateId, 404);
+    assert.equal(legacyBody.templateRegistrationId, 404);
   } finally {
     globalThis.fetch = originalFetch;
     console.log = originalLog;
@@ -1893,7 +1931,8 @@ test('local schedule is not exposed because it requires the desktop local schedu
     const payload = parseJson(lines[0]);
     assert.equal(payload.ok, false);
     assert.equal(payload.error.code, 'UNSUPPORTED_OPERATION');
-    assert.match(payload.error.message, /node-schedule/);
+    assert.match(payload.error.message, /八爪鱼桌面客户端管理/);
+    assert.doesNotMatch(payload.error.message, /SQLite|node-schedule|localScheduleConfig/);
   } finally {
     console.log = originalLog;
   }
@@ -2429,10 +2468,19 @@ test('cloud start maps balance and proxy failures to stable json errors', async 
 test('root and run help clearly state authentication requirement', async () => {
   const root = await runCli(['--help']);
   assert.equal(root.code, 0);
-  assert.match(root.stdout, /OAuth or API key credentials are required for all functional commands/);
+  assert.match(root.stdout, /Run and manage Bazhuayu collection tasks from the command line/);
+  assert.match(root.stdout, /OAuth or API key credentials are required for functional commands/);
   assert.match(root.stdout, /bazhuayu\.com\/console\/account-center\/api-keys/);
+  assert.match(root.stdout, /Create:\s+detect\s+Create a local task from a URL/s);
+  assert.match(root.stdout, /Run:\s+run\s+Run a task locally \(shortcut\)/s);
+  assert.match(root.stdout, /cloud\s+Manage cloud runs \(start \/ stop \/ status \/ history\)/);
+  assert.match(root.stdout, /local\s+Manage local runs \(status \/ pause \/ resume \/ stop \/ history \/ cleanup\)/);
+  assert.match(root.stdout, /Manage:\s+task\s+List, inspect, copy, rename, move, or delete tasks/s);
+  assert.match(root.stdout, /Data:\s+data\s+Preview, count, and export collected data/s);
+  assert.match(root.stdout, /Config:\s+auth\s+Log in, show account status, or log out/s);
   assert.doesNotMatch(root.stdout, /run-url/);
-  assertDetectHelpPrefersAgentWorkflow(root.stdout);
+  assert.doesNotMatch(root.stdout, /Standalone Octoparse engine CLI/);
+  assert.doesNotMatch(root.stdout, /--source local\|cloud\|--local\|--cloud/);
 
   const auth = await runCli(['auth', '--help']);
   assert.equal(auth.code, 0);
@@ -2443,14 +2491,60 @@ test('root and run help clearly state authentication requirement', async () => {
   const run = await runCli(['run', '--help']);
   assert.equal(run.code, 0);
   assert.match(run.stdout, /Requires configured credentials/);
-  assert.match(run.stdout, /run only starts local collection/);
-  assert.match(run.stdout, /data export <taskId> --lot-id <lotId>/);
-  assert.match(root.stdout, /--llm-rank/);
-  assert.match(root.stdout, /--no-dismiss-popups/);
+  assert.match(run.stdout, /Foreground is the default/);
+  assert.match(run.stdout, /--timeout-ms <ms>\s+Set the foreground run timeout\. Default: 600000/);
+  assert.match(run.stdout, /--jsonl includes row, log, captcha, proxy, download, and lifecycle events/);
+  assert.doesNotMatch(run.stdout, /JSONL now includes/);
+  assert.match(run.stdout, /This command starts local collection only/);
+  assert.match(run.stdout, /bazhuayu data export <taskId> --lot-id <lotId>/);
+  assert.match(run.stdout, /browser selection priority and setup/);
+
+  const local = await runCli(['local', '--help']);
+  assert.equal(local.code, 0);
+  assert.match(local.stdout, /bazhuayu local pause <taskId>/);
+  assert.match(local.stdout, /bazhuayu local resume <taskId>/);
+  assert.match(local.stdout, /prefer bazhuayu data export <taskId> --source local/i);
+  assert.match(local.stdout, /local export remains available for compatibility/);
+  assert.doesNotMatch(local.stdout, /bazhuayu local start <taskId>/);
+
+  const task = await runCli(['task', '--help']);
+  assert.equal(task.code, 0);
+  assert.match(task.stdout, /<taskId> provides a fallback ID if the file does not contain one/);
+  assert.match(task.stdout, /--template-id <id>/);
+  assert.doesNotMatch(task.stdout, /template-registration-id|template registration/);
+
+  const template = await runCli(['template', '--help']);
+  assert.equal(template.code, 0);
+  assert.match(template.stdout, /Requires configured credentials/);
+  assert.match(template.stdout, /same catalog and default ranking as the Bazhuayu website/);
+  assert.match(template.stdout, /template view <templateId>/);
+  assert.match(template.stdout, /template version <templateId>/);
+  assert.doesNotMatch(template.stdout, /templateRegistrationId/);
+
+  const templateView = await runCli(['template', 'view', '--help']);
+  assert.equal(templateView.code, 0);
+  assert.match(templateView.stdout, /Notes:/);
+  assert.match(templateView.stdout, /Requires configured credentials/);
+  assert.match(templateView.stdout, /template view <templateId>/);
+  assert.doesNotMatch(templateView.stdout, /templateRegistrationId/);
+
+  const schedule = await runCli(['schedule', '--help']);
+  assert.equal(schedule.code, 0);
+  assert.match(schedule.stdout, /Local schedules are managed in the Bazhuayu desktop app/);
+  assert.doesNotMatch(schedule.stdout, /SQLite|node-schedule/);
+
+  const data = await runCli(['data', '--help']);
+  assert.equal(data.code, 0);
+  assert.match(data.stdout, /--source local\|cloud/);
+  assert.match(data.stdout, /--local and --cloud are supported aliases/);
+  assert.doesNotMatch(data.stdout, /Windows-style duplicate suffixes/);
 
   const detect = await runCli(['detect', '--help']);
   assert.equal(detect.code, 0);
-  assertDetectHelpPrefersAgentWorkflow(detect.stdout);
+  assertDetectHelpExplainsModes(detect.stdout);
+  assert.match(detect.stdout, /Bazhuayu's protected detector/);
+  assert.match(detect.stdout, /--save-session/);
+  assert.match(detect.stdout, /--confirm-agent-plan/);
 });
 
 test('usage failures honor --json envelopes', async () => {
@@ -2543,6 +2637,7 @@ test('agent-facing commands expose json envelopes for key contract paths', async
     { args: ['task', 'inspect', '--task-file', 'examples/minimal-task.json', '--json'], code: 'USAGE_ERROR' },
     { args: ['cloud', 'pause', 'task-1', '--json'], code: 'USAGE_ERROR' },
     { args: ['cloud', 'status', '--api-base-url', 'http://127.0.0.1:9', '--json'], code: 'USAGE_ERROR' },
+    { args: ['local', 'start', '--json'], code: 'USAGE_ERROR' },
     { args: ['local', 'status', '--json'], code: 'USAGE_ERROR' },
     { args: ['local', 'stop', 'missing-task', '--json'], code: 'LOCAL_RUN_CONTROL_FAILED' },
     { args: ['local', 'export', 'missing-task', '--output', output, '--json'], code: 'LOCAL_LOT_NOT_FOUND' },
@@ -2762,6 +2857,18 @@ test('minimal example validates with API key', async () => {
   assert.equal(payload.ok, true);
   assert.equal(payload.data.actionCount, 1);
   assert.deepEqual(payload.data.actionTypes, ['NavigateAction']);
+
+  const inspection = await runCli([
+    'task',
+    'inspect',
+    'minimal',
+    '--task-file',
+    'examples/minimal-task.json'
+  ], { apiKey: 'dummy' });
+  assert.equal(inspection.code, 0, formatCliResult(inspection));
+  assert.match(inspection.stdout, /Local browser support: supported/);
+  assert.match(inspection.stdout, /Task is valid for local CLI execution/);
+  assert.doesNotMatch(inspection.stdout, /Kernel browser|standalone engine/);
 });
 
 test('run rejects --format and points users to data export', async () => {
@@ -2770,7 +2877,7 @@ test('run rejects --format and points users to data export', async () => {
   const payload = parseJson(result.stdout);
   assert.equal(payload.ok, false);
   assert.equal(payload.error.code, 'RUN_FORMAT_UNSUPPORTED');
-  assert.match(payload.error.message, /data export --format/);
+  assert.match(payload.error.message, /bazhuayu data export <taskId> --format <format>/);
 
   const jsonl = await runCli(['run', 'minimal', '--format', 'csv', '--jsonl'], { apiKey: 'dummy' });
   assert.equal(jsonl.code, 1);

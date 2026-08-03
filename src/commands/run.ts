@@ -78,13 +78,13 @@ export async function runTask(taskId: string | undefined, args: string[]): Promi
   if (taskId === 'export') {
     return printUsageError(
       json,
-      'run 没有 export 子命令；run 只负责启动本地采集。',
+      'bazhuayu run 仅启动本地采集，不提供 export 子命令。',
       '导出数据请使用: bazhuayu data export <taskId> [--source local|cloud] [--lot-id <lotId>] [--file <result.xlsx>] [--format xlsx|csv|html|json|xml]'
     );
   }
 
   if (hasFlag(args, '--format')) {
-    const message = 'run 不支持 --format；请使用 --json 或 --jsonl。数据文件导出请使用 data export --format。';
+    const message = 'bazhuayu run 不支持 --format。命令输出请使用 --json 或 --jsonl；如需生成文件，请使用 bazhuayu data export <taskId> --format <format>。';
     if (hasFlag(args, '--json') || hasFlag(args, '--jsonl')) {
       printEnvelope(false, undefined, 'RUN_FORMAT_UNSUPPORTED', message);
     } else {

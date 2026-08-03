@@ -368,7 +368,7 @@ function validateTask(task: TaskDefinition): void {
     throw new Error('taskFile xoml 没有可执行 actionType，engine 会报 Nothing to execute');
   }
   if (/useKernelBrowser="true"/i.test(task.xml)) {
-    throw new Error('taskFile 使用 kernel browser；standalone CLI v1 只支持独立 Chrome');
+    throw new Error('此任务需要八爪鱼桌面浏览器，无法在 CLI 中本地运行。请使用桌面客户端，或选择支持独立 Chrome 的任务。');
   }
 }
 

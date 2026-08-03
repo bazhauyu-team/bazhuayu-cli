@@ -431,7 +431,7 @@ export async function capabilitiesCommand(version: string, json: boolean): Promi
       { command: 'task-group list/create', risk: 'low', json: true, authRequired: true },
       { command: 'task-group update/delete/set-default', risk: 'high', json: true, authRequired: true, requiresConfirmation: true },
       { command: 'template search/view/version', risk: 'low', json: true, authRequired: true },
-      { command: 'template-task create <templateRegistrationId>', risk: 'medium', json: true, authRequired: true },
+      { command: 'template-task create <templateId>', risk: 'medium', json: true, authRequired: true },
       { command: 'template-task update <taskId>', risk: 'high', json: true, authRequired: true, requiresConfirmation: true },
       { command: 'schedule cloud get/next', risk: 'low', json: true, authRequired: true },
       { command: 'schedule cloud update/start/stop <taskId>', risk: 'high', json: true, authRequired: true, requiresConfirmation: true },

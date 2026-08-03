@@ -209,8 +209,8 @@ export async function taskInspect(command: string, args: string[]): Promise<numb
       console.log(`Mode: ${inspection.mode}`);
       console.log(`Actions: ${inspection.actionCount} (${inspection.actionTypes.join(', ') || 'none'})`);
       console.log(`Fields: ${inspection.fields.join(', ') || 'none'}`);
-      console.log(`Kernel browser: ${inspection.usesKernelBrowser ? 'yes' : 'no'}`);
-      console.log(command === 'validate' ? 'Validation: ok' : 'Task file is runnable by standalone engine v1.');
+      console.log(`Local browser support: ${inspection.usesKernelBrowser ? 'unsupported' : 'supported'}`);
+      console.log(command === 'validate' ? 'Validation: ok' : 'Task is valid for local CLI execution.');
     }
     return EXIT_OK;
   } catch (error) {
